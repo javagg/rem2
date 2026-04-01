@@ -100,6 +100,13 @@ const ringsConfig = {
   Solver: { Linear: { Tol: 1e-10, MaxIter: 500 } }
 };
 
+const adapterConfig = { Problem: { Type: 'Driven' }, Model: { Mesh: 'adapter.msh' } };
+const antennaConfig = { Problem: { Type: 'Driven' }, Model: { Mesh: 'antenna.msh' } };
+const coaxialConfig = { Problem: { Type: 'Electrostatic' }, Model: { Mesh: 'coaxial.msh' } };
+const cpwConfig = { Problem: { Type: 'Driven' }, Model: { Mesh: 'cpw.msh' } };
+const cylinderConfig = { Problem: { Type: 'Magnetostatic' }, Model: { Mesh: 'cylinder.msh' } };
+const transmonConfig = { Problem: { Type: 'Eigenmode' }, Model: { Mesh: 'transmon.msh' } };
+
 const selectedExample = ref('spheres');
 const size = ref(1);
 const running = ref(false);
@@ -147,13 +154,10 @@ onMounted(async () => {
     hljs.highlightElement(codeBlock.value);
   }
 });
-
-const adapterConfig = { Problem: { Type: 'Driven' }, Model: { Mesh: 'adapter.msh' } };
 const antennaConfig = { Problem: { Type: 'Driven' }, Model: { Mesh: 'antenna.msh' } };
 const coaxialConfig = { Problem: { Type: 'Electrostatic' }, Model: { Mesh: 'coaxial.msh' } };
 const cpwConfig = { Problem: { Type: 'Driven' }, Model: { Mesh: 'cpw.msh' } };
 const cylinderConfig = { Problem: { Type: 'Magnetostatic' }, Model: { Mesh: 'cylinder.msh' } };
-const transmonConfig = { Problem: { Type: 'Eigenmode' }, Model: { Mesh: 'transmon.msh' } };
 
 function maxMagnitude(vectors) {
   let max = 0;
