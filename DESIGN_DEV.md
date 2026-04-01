@@ -1173,4 +1173,9 @@ writer.finish()?;
 
 ---
 
-*最后更新: 2026-03-31 | 作者: Claude (AI Agent 开发指南)*
+### 常见问题与排查 (Web/WASM)
+
+- **TypeError: jsmpi.Init is not a function**: 确保 `worker.js` 中 `self.jsmpi` 完整实现了 `Init`, `Finalize`, `Comm_size`, `Comm_rank` 等桩函数。由于 `wasm-bindgen` 的命名空间绑定，这些函数必须存在于 JavaScript 对象中。
+- **文件路径无法访问**: WASM 运行在浏览器沙箱中，无法直接读取 `Model.Mesh` 指定的本地路径。建议通过 JavaScript 层 `fetch` 或 `FileReader` 获取字节流后传入 WASM 接口。
+
+*最后更新: 2026-04-01 | 作者: Claude (AI Agent 开发指南)*

@@ -1,0 +1,38 @@
+{
+  "Problem": {
+    "Type": "Driven",
+    "Verbose": 1,
+    "Output": "./output/adapter"
+  },
+  "Model": {
+    "Mesh": "examples/adapter/mesh/adapter.msh",
+    "L0": 1.0
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [1],
+        "Permittivity": 1.0,
+        "Permeability": 1.0
+      }
+    ]
+  },
+  "Boundaries": {
+    "PEC": { "Attributes": [2] },
+    "LumpedPort": [
+      {
+        "Index": 1,
+        "Attributes": [3],
+        "R": 50.0
+      }
+    ]
+  },
+  "Solver": {
+    "Order": 1,
+    "Driven": {
+      "FreqStart": 1.0e9,
+      "FreqEnd": 10.0e9,
+      "FreqStep": 0.1e9
+    }
+  }
+}

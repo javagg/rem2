@@ -1180,7 +1180,7 @@ wasm-parallel   = ["wasm", "dep:web-sys", "dep:js-sys"]
 | `cargo build` | `SerialComm` | 1 进程 |
 | `cargo build --features parallel/mpi` | `MpiComm` | N 进程（mpirun） |
 | `cargo build --target wasm32-unknown-unknown` | `SerialComm` | 1 Worker |
-| `cargo build --target wasm32-unknown-unknown --features parallel/wasm-parallel` | `WorkerComm` | N Workers |
+| `cargo build --target wasm32-unknown-unknown --features parallel/wasm-parallel` | `WorkerComm` | N Workers (via jsmpi stubs) |
 
 ---
 

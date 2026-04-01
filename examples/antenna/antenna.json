@@ -1,0 +1,38 @@
+{
+  "Problem": {
+    "Type": "Driven",
+    "Verbose": 1,
+    "Output": "./output/antenna"
+  },
+  "Model": {
+    "Mesh": "examples/antenna/mesh/antenna.msh",
+    "L0": 1.0e-3
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [1],
+        "Permittivity": 1.0,
+        "Permeability": 1.0
+      }
+    ]
+  },
+  "Boundaries": {
+    "Absorbing": { "Attributes": [2] },
+    "LumpedPort": [
+      {
+        "Index": 1,
+        "Attributes": [3],
+        "R": 50.0
+      }
+    ]
+  },
+  "Solver": {
+    "Order": 2,
+    "Driven": {
+      "FreqStart": 2.0e9,
+      "FreqEnd": 3.0e9,
+      "FreqStep": 0.05e9
+    }
+  }
+}

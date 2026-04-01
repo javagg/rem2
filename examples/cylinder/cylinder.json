@@ -1,0 +1,33 @@
+{
+  "Problem": {
+    "Type": "Magnetostatic",
+    "Verbose": 1,
+    "Output": "./output/cylinder"
+  },
+  "Model": {
+    "Mesh": "examples/cylinder/mesh/cylinder.msh",
+    "L0": 1.0e-3
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [1],
+        "Permeability": 1000.0
+      }
+    ]
+  },
+  "Boundaries": {
+    "Source": {
+      "Current": [
+        {
+          "Index": 1,
+          "Attributes": [2],
+          "Value": 1.0
+        }
+      ]
+    }
+  },
+  "Solver": {
+    "Order": 1
+  }
+}
