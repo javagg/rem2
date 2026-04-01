@@ -3,14 +3,33 @@ import init, { init_panic_hook, init_logger, run_simulation } from '../pkg/rem_w
 self.onmessage = async (event) => {
     const { rank, size, config, mesh } = event.data;
 
+    let wasmInstance;
     self.jsmpi = {
-        rank,
-        size,
-        Barrier: () => { console.log(`Worker ${rank} at barrier`); },
-        Allreduce: (sendptr, recvptr, count, datatype, op) => {}
+        Init: () => 0,
+        Finalize: () => 0,
+        Comm_size: (comm, ptr) => {
+            if (wasmInstance) {
+                new Int32Array(wasmInstance.memory.buffer)[ptr / 4] = size;
+            }
+            return 0;
+        },
+        Comm_rank: (comm, ptr) => {
+            if (wasmInstance) {
+                new Int32Array(wasmInstance.memory.buffer)[ptr / 4] = rank;
+            }
+            return 0;
+        },
+        Barrier: () => {
+            console.log(`Worker ${rank} at barrier`);
+            return 0;
+        },
+        Allreduce: (sendptr, recvptr, count, datatype, op) => 0,
+        Bcast: (ptr, count, datatype, root) => 0,
+        Send: () => 0,
+        Recv: () => 0,
     };
 
-    await init();
+    wasmInstance = await init();
     init_panic_hook();
     init_logger();
 
