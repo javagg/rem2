@@ -1,0 +1,15 @@
+[package]
+name    = "rem-magnetostatic"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rem-core          = { workspace = true }
+rem-config        = { workspace = true }
+rem-mesh          = { workspace = true }
+rem-materials     = { workspace = true }
+rem-parallel      = { workspace = true }
+rem-bc            = { workspace = true }
+rem-result        = { workspace = true }
+rem-electrostatic = { workspace = true }
+log               = { workspace = true }

@@ -1,0 +1,27 @@
+Problem:
+  Type: Electrostatic
+  Verbose: 1
+  Output: ./output/parallel_plate
+
+Model:
+  Mesh: tests/meshes/unit_square.msh
+  L0: 1.0e-3
+
+Domains:
+  Materials:
+    - Attributes: [1]
+      Permittivity: 4.5
+      LossTan: 0.02
+
+Boundaries:
+  PEC:
+    Attributes: [3, 4]
+  Ground:
+    Attributes: [1, 2]
+
+Solver:
+  Order: 1
+  Linear:
+    Type: GMRES
+    Tol: 1.0e-8
+    MaxIter: 500

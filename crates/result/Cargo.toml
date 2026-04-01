@@ -1,0 +1,8 @@
+[package]
+name    = "rem-result"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rem-core = { workspace = true }
+log      = { workspace = true }

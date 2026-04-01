@@ -1,0 +1,9 @@
+[package]
+name    = "rem-materials"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rem-core   = { workspace = true }
+rem-config = { workspace = true }
+log        = { workspace = true }

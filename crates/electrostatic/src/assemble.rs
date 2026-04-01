@@ -1,0 +1,283 @@
+/// P1 finite element stiffness matrix assembly.
+///
+/// Supports:
+///  - 2-D: Tri3 (linear triangle)
+///  - 3-D: Tet4 (linear tetrahedron)
+///
+/// The assembled system is:
+///   K_ij = Σ_e  ε_e · ∫_Ωe  ∇φ_i · ∇φ_j  dΩ
+///
+/// No external dependencies (WASM-compatible).
+
+use rem_core::{TripletMatrix, RemError, RemResult};
+use rem_mesh::{RemMesh, ElementKind};
+use rem_materials::DomainMap;
+
+/// Assemble the global stiffness (diffusion) matrix for Poisson's equation.
+///
+/// `coeff_fn` maps physical group tag → diffusion coefficient (e.g. ε_abs).
+pub fn assemble_stiffness(
+    mesh: &RemMesh,
+    coeff_fn: impl Fn(u32) -> f64,
+) -> RemResult<TripletMatrix> {
+    let n = mesh.n_nodes();
+    // Upper bound on nnz: each Tri3 contributes 9 entries, Tet4 contributes 16.
+    let cap = mesh.n_volume_elements() * 16;
+    let mut triplet = TripletMatrix::with_capacity(n, n, cap);
+
+    for elem in &mesh.volume_elements {
+        if mesh.size > 1 && elem.rank != mesh.rank {
+            continue;
+        }
+        let eps = coeff_fn(elem.tag);
+        match elem.kind {
+            ElementKind::Tri3 => {
+                assemble_tri3(mesh, elem, eps, &mut triplet)?;
+            }
+            ElementKind::Tet4 => {
+                assemble_tet4(mesh, elem, eps, &mut triplet)?;
+            }
+            other => {
+                log::warn!(
+                    "Element kind {:?} not supported in P1 assembly — skipping",
+                    other
+                );
+            }
+        }
+    }
+
+    Ok(triplet)
+}
+
+/// Local stiffness for a linear triangle (Tri3).
+///
+/// Basis function gradients are constant; area integration is exact.
+fn assemble_tri3(
+    mesh: &RemMesh,
+    elem: &rem_mesh::Element,
+    eps: f64,
+    triplet: &mut TripletMatrix,
+) -> RemResult<()> {
+    debug_assert_eq!(elem.node_ids.len(), 3);
+    let [n0, n1, n2] = [elem.node_ids[0], elem.node_ids[1], elem.node_ids[2]];
+    let (x0, y0) = (mesh.nodes[n0].x, mesh.nodes[n0].y);
+    let (x1, y1) = (mesh.nodes[n1].x, mesh.nodes[n1].y);
+    let (x2, y2) = (mesh.nodes[n2].x, mesh.nodes[n2].y);
+
+    // det(J) = (x1-x0)(y2-y0) - (x2-x0)(y1-y0)
+    let det_j = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
+    let area = 0.5 * det_j.abs();
+    if area < 1e-300 {
+        return Err(RemError::Mesh(format!(
+            "Degenerate Tri3 element {} (area ≈ 0)", elem.id
+        )));
+    }
+
+    // Gradients of the three P1 basis functions (constant per element)
+    // ∇λ_i = (1/(2A)) * [y_{j} - y_{k}, x_{k} - x_{j}]
+    let inv2a = 1.0 / (2.0 * area);
+    let grads = [
+        [(y1 - y2) * inv2a, (x2 - x1) * inv2a],
+        [(y2 - y0) * inv2a, (x0 - x2) * inv2a],
+        [(y0 - y1) * inv2a, (x1 - x0) * inv2a],
+    ];
+    let nodes = [n0, n1, n2];
+
+    // K_ij^e = eps * area * (∇λ_i · ∇λ_j)
+    for i in 0..3 {
+        for j in 0..3 {
+            let k_ij = eps * area * (grads[i][0] * grads[j][0] + grads[i][1] * grads[j][1]);
+            triplet.add(nodes[i], nodes[j], k_ij);
+        }
+    }
+    Ok(())
+}
+
+/// Local stiffness for a linear tetrahedron (Tet4).
+fn assemble_tet4(
+    mesh: &RemMesh,
+    elem: &rem_mesh::Element,
+    eps: f64,
+    triplet: &mut TripletMatrix,
+) -> RemResult<()> {
+    debug_assert_eq!(elem.node_ids.len(), 4);
+    let [n0, n1, n2, n3] = [
+        elem.node_ids[0], elem.node_ids[1],
+        elem.node_ids[2], elem.node_ids[3],
+    ];
+    let nodes = [n0, n1, n2, n3];
+    let x = [
+        mesh.nodes[n0].x, mesh.nodes[n1].x, mesh.nodes[n2].x, mesh.nodes[n3].x,
+    ];
+    let y = [
+        mesh.nodes[n0].y, mesh.nodes[n1].y, mesh.nodes[n2].y, mesh.nodes[n3].y,
+    ];
+    let z = [
+        mesh.nodes[n0].z, mesh.nodes[n1].z, mesh.nodes[n2].z, mesh.nodes[n3].z,
+    ];
+
+    // Jacobian columns: J = [x1-x0, x2-x0, x3-x0; y1-y0, ...; z1-z0, ...]
+    let j = [
+        [x[1]-x[0], x[2]-x[0], x[3]-x[0]],
+        [y[1]-y[0], y[2]-y[0], y[3]-y[0]],
+        [z[1]-z[0], z[2]-z[0], z[3]-z[0]],
+    ];
+
+    let det = det3(&j);
+    let vol = det.abs() / 6.0;
+    if vol < 1e-300 {
+        return Err(RemError::Mesh(format!(
+            "Degenerate Tet4 element {} (volume ≈ 0)", elem.id
+        )));
+    }
+
+    // J^{-T} rows: the gradients of ξ, η, ζ w.r.t. x, y, z
+    // Each column of J^{-1} gives ∇_x ξ, ∇_x η, ∇_x ζ
+    let j_inv = inv3(&j, det);
+
+    // Gradients in reference coordinates:
+    // ∇_ξ λ_0 = (-1,-1,-1),  ∇_ξ λ_1 = (1,0,0),
+    // ∇_ξ λ_2 = (0,1,0),     ∇_ξ λ_3 = (0,0,1)
+    let ref_grads = [
+        [-1.0f64, -1.0, -1.0],
+        [ 1.0,     0.0,  0.0],
+        [ 0.0,     1.0,  0.0],
+        [ 0.0,     0.0,  1.0],
+    ];
+
+    // Physical gradients: ∇_x λ_i = J^{-T} * ∇_ξ λ_i
+    let mut grads = [[0.0f64; 3]; 4];
+    for i in 0..4 {
+        for row in 0..3 {
+            for col in 0..3 {
+                grads[i][row] += j_inv[col][row] * ref_grads[i][col];
+            }
+        }
+    }
+
+    // K_ij^e = eps * vol * (∇λ_i · ∇λ_j)
+    for i in 0..4 {
+        for j in 0..4 {
+            let k_ij = eps * vol * dot3(&grads[i], &grads[j]);
+            triplet.add(nodes[i], nodes[j], k_ij);
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 3×3 matrix helpers (pub for use in postprocess.rs)
+// ---------------------------------------------------------------------------
+
+pub fn det3_pub(m: &[[f64; 3]; 3]) -> f64 { det3(m) }
+pub fn inv3_pub(m: &[[f64; 3]; 3], det: f64) -> [[f64; 3]; 3] { inv3(m, det) }
+
+fn det3(m: &[[f64; 3]; 3]) -> f64 {
+    m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+  - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+  + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
+}
+
+fn inv3(m: &[[f64; 3]; 3], det: f64) -> [[f64; 3]; 3] {
+    let inv_det = 1.0 / det;
+    [
+        [
+            (m[1][1]*m[2][2] - m[1][2]*m[2][1]) * inv_det,
+            (m[0][2]*m[2][1] - m[0][1]*m[2][2]) * inv_det,
+            (m[0][1]*m[1][2] - m[0][2]*m[1][1]) * inv_det,
+        ],
+        [
+            (m[1][2]*m[2][0] - m[1][0]*m[2][2]) * inv_det,
+            (m[0][0]*m[2][2] - m[0][2]*m[2][0]) * inv_det,
+            (m[0][2]*m[1][0] - m[0][0]*m[1][2]) * inv_det,
+        ],
+        [
+            (m[1][0]*m[2][1] - m[1][1]*m[2][0]) * inv_det,
+            (m[0][1]*m[2][0] - m[0][0]*m[2][1]) * inv_det,
+            (m[0][0]*m[1][1] - m[0][1]*m[1][0]) * inv_det,
+        ],
+    ]
+}
+
+#[inline]
+fn dot3(a: &[f64; 3], b: &[f64; 3]) -> f64 {
+    a[0]*b[0] + a[1]*b[1] + a[2]*b[2]
+}
+
+/// Build per-element epsilon from the domain map.
+pub fn element_epsilon(mesh: &RemMesh, domain_map: &DomainMap) -> Vec<f64> {
+    mesh.volume_elements
+        .iter()
+        .map(|e| domain_map.get(e.tag).epsilon_abs())
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    use rem_core::CsrMatrix;
+
+    /// Build a trivial 2-node, 1-triangle mesh for testing.
+    /// Triangle: (0,0), (1,0), (0,1) — tag 1
+    pub fn unit_triangle_mesh() -> RemMesh {
+        use rem_mesh::{Node, Element};
+        RemMesh {
+            nodes: vec![
+                Node { id: 0, x: 0.0, y: 0.0, z: 0.0 },
+                Node { id: 1, x: 1.0, y: 0.0, z: 0.0 },
+                Node { id: 2, x: 0.0, y: 1.0, z: 0.0 },
+            ],
+            volume_elements: vec![
+                Element { id: 1, kind: ElementKind::Tri3, tag: 1, node_ids: vec![0, 1, 2] },
+            ],
+            boundary_elements: vec![],
+            domain_tags: Default::default(),
+            boundary_tags: Default::default(),
+            dim: 2,
+        }
+    }
+
+    #[test]
+    fn tri3_stiffness_row_sum_zero() {
+        // For a constant-coefficient problem, the row sums of K must be zero
+        // (partition of unity: Σ_j K_ij = 0 for interior nodes).
+        let mesh = unit_triangle_mesh();
+        let triplet = assemble_stiffness(&mesh, |_| 1.0).unwrap();
+        let csr = triplet.to_csr();
+        let n = mesh.n_nodes();
+        let mut x = vec![1.0; n];
+        let mut y = vec![0.0; n];
+        csr.matvec(&x, &mut y, &rem_parallel::NoComm);
+        for &yi in &y {
+            assert!(yi.abs() < 1e-13, "row sum = {}", yi);
+        }
+    }
+
+    #[test]
+    fn tri3_stiffness_symmetry() {
+        let mesh = unit_triangle_mesh();
+        let triplet = assemble_stiffness(&mesh, |_| 2.5).unwrap();
+        let csr = triplet.to_csr();
+        // K[i,j] == K[j,i] for all i,j
+        let n = csr.nrows;
+        for i in 0..n {
+            for k in csr.row_ptr[i]..csr.row_ptr[i + 1] {
+                let j = csr.col_idx[k];
+                let kij = csr.values[k];
+                // find K[j,i]
+                let kji = {
+                    let mut v = None;
+                    for kk in csr.row_ptr[j]..csr.row_ptr[j + 1] {
+                        if csr.col_idx[kk] == i { v = Some(csr.values[kk]); break; }
+                    }
+                    v.unwrap_or(0.0)
+                };
+                assert!((kij - kji).abs() < 1e-13, "K[{},{}]={} != K[{},{}]={}", i, j, kij, j, i, kji);
+            }
+        }
+    }
+}

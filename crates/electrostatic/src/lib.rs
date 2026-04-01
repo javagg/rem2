@@ -1,0 +1,253 @@
+//! Electrostatic solver — Phase 3.
+//!
+//! Solves: −∇·(ε ∇φ) = ρ  with Dirichlet BCs on conductors.
+//!
+//! Pipeline:
+//!   1. Load mesh + build domain/boundary maps
+//!   2. Assemble stiffness matrix (P1, variable ε)
+//!   3. Apply Dirichlet BCs (PEC → φ=0, Ground → φ=0, excitation → φ=V)
+//!   4. Solve with PCG + Jacobi preconditioner
+//!   5. Recover E = −∇φ (nodal average)
+//!   6. Compute electrostatic energy
+//!   7. Output CSV + VTK
+
+pub mod assemble;
+pub mod bc;
+pub mod postprocess;
+pub mod output;
+
+use rem_config::PalaceConfig;
+use rem_core::{RemResult, solve_pcg};
+use rem_parallel::{Comm, NoComm};
+use rem_materials::DomainMap;
+use rem_mesh::{RemMesh, BoundaryTag};
+use rem_mesh::gmsh::read_msh_file;
+use std::path::Path;
+
+/// Entry point called from rem-cli.
+pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
+    log::info!("=== Electrostatic solver ===");
+
+    // 1. Load mesh
+    let mesh_path = Path::new(&config.model.mesh);
+    log::info!("Loading mesh: {}", mesh_path.display());
+    let raw = read_msh_file(mesh_path)?;
+    let mut mesh = RemMesh::from_raw(raw, config)?;
+    mesh.set_comm(comm.rank(), comm.size());
+    mesh.partition_geometric();
+    log::info!(
+        "Mesh: {} nodes, {} volume elements, {} boundary elements (dim={})",
+        mesh.n_nodes(), mesh.n_volume_elements(), mesh.n_boundary_elements(), mesh.dim
+    );
+
+    // 2. Build material map
+    let domain_map = DomainMap::from_config(config)?;
+
+    // 3. Identify excited conductor from boundary tags
+    let excited_port = find_excited_port(&mesh);
+    let output_dir = Path::new(config.problem.output_dir());
+
+    // 4. Solve
+    if let Some(exc_tag) = excited_port {
+        log::info!("Excited port tag: {}", exc_tag);
+        let phi = solve_one(config, &mesh, &domain_map, Some(exc_tag), 1.0, comm)?;
+        finalize(config, &mesh, &domain_map, &phi, output_dir, None)?;
+    } else {
+        let phi = solve_one(config, &mesh, &domain_map, None, 0.0, comm)?;
+        finalize(config, &mesh, &domain_map, &phi, output_dir, None)?;
+    }
+
+    Ok(())
+}
+
+/// Solve a single electrostatic problem with one conductor excited.
+pub fn solve_one(
+    config: &PalaceConfig,
+    mesh: &RemMesh,
+    domain_map: &DomainMap,
+    excitation_tag: Option<u32>,
+    excitation_val: f64,
+    comm: &dyn Comm,
+) -> RemResult<Vec<f64>> {
+    let n = mesh.n_nodes();
+
+    // Assemble stiffness matrix
+    let eps_fn = |tag: u32| domain_map.get(tag).epsilon_abs();
+    let triplet = assemble::assemble_stiffness(mesh, eps_fn)?;
+    let mut mat = triplet.to_csr();
+    let mut rhs = vec![0.0f64; n];
+
+    // Apply Dirichlet BCs
+    let dofs = bc::collect_dirichlet_dofs(mesh, excitation_tag, excitation_val);
+    log::info!("Dirichlet DOFs: {}", dofs.len());
+    bc::apply_dirichlet(&mut mat, &mut rhs, &dofs);
+
+    // Solve
+    let lin = &config.solver.linear;
+    let result = solve_pcg(&mat, &rhs, lin.tol, lin.max_iter, comm);
+    if result.converged {
+        log::info!("PCG converged in {} iterations (|r|={:.2e})", result.iterations, result.residual_norm);
+    } else {
+        log::warn!(
+            "PCG did NOT converge after {} iterations (|r|={:.2e})",
+            result.iterations, result.residual_norm
+        );
+    }
+
+    Ok(result.solution)
+}
+
+/// Post-process and write output files.
+fn finalize(
+    _config: &PalaceConfig,
+    mesh: &RemMesh,
+    domain_map: &DomainMap,
+    phi: &[f64],
+    output_dir: &Path,
+    c_matrix: Option<&[Vec<f64>]>,
+) -> RemResult<()> {
+    let eps_fn = |tag: u32| domain_map.get(tag).epsilon_abs();
+
+    // E-field recovery
+    let e_field = postprocess::gradient_recovery(phi, mesh);
+
+    // Electrostatic energy
+    let energy = postprocess::electrostatic_energy(phi, mesh, eps_fn);
+    log::info!("Electrostatic energy: {:.6e} J", energy);
+
+    // CSV outputs
+    output::write_domain_energy(output_dir, energy)?;
+    if let Some(c) = c_matrix {
+        output::write_capacitance_matrix(output_dir, c)?;
+    }
+
+    // VTK
+    output::write_vtk(output_dir, mesh, phi, &e_field)?;
+
+    Ok(())
+}
+
+/// Return the INDEX of the first Terminal or LumpedPort boundary.
+fn find_excited_port(mesh: &RemMesh) -> Option<u32> {
+    for bc in mesh.boundary_tags.values() {
+        match bc {
+            BoundaryTag::Terminal { index } => return Some(*index),
+            BoundaryTag::LumpedPort { index, .. } => return Some(*index),
+            _ => {}
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Integration tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rem_config::{load_config_from_str, ConfigFormat};
+    use rem_mesh::{Node, Element, ElementKind};
+    use std::collections::HashMap;
+
+    /// Unit square: 4 nodes, 2 triangles (tag=1).
+    /// Bottom edge (y=0) nodes 0,1 → tag=10 (Ground)
+    /// Top    edge (y=1) nodes 2,3 → tag=11 (LumpedPort index=1)
+    fn unit_square_mesh() -> RemMesh {
+        let nodes = vec![
+            Node { id: 0, x: 0.0, y: 0.0, z: 0.0 },
+            Node { id: 1, x: 1.0, y: 0.0, z: 0.0 },
+            Node { id: 2, x: 1.0, y: 1.0, z: 0.0 },
+            Node { id: 3, x: 0.0, y: 1.0, z: 0.0 },
+        ];
+        let volume_elements = vec![
+            Element { id: 1, kind: ElementKind::Tri3, tag: 1, node_ids: vec![0, 1, 2] },
+            Element { id: 2, kind: ElementKind::Tri3, tag: 1, node_ids: vec![0, 2, 3] },
+        ];
+        let boundary_elements = vec![
+            Element { id: 3, kind: ElementKind::Line2, tag: 10, node_ids: vec![0, 1] },
+            Element { id: 4, kind: ElementKind::Line2, tag: 11, node_ids: vec![2, 3] },
+        ];
+        let mut boundary_tags: HashMap<u32, BoundaryTag> = HashMap::new();
+        boundary_tags.insert(10, BoundaryTag::Ground);
+        boundary_tags.insert(11, BoundaryTag::LumpedPort { index: 1, r: 0.0 });
+
+        RemMesh {
+            nodes,
+            volume_elements,
+            boundary_elements,
+            domain_tags: Default::default(),
+            boundary_tags,
+            dim: 2,
+        }
+    }
+
+    fn default_config() -> PalaceConfig {
+        load_config_from_str(
+            r#"{"Problem":{"Type":"Electrostatic"},"Model":{"Mesh":"x.msh"},
+                "Solver":{"Linear":{"Tol":1e-12,"MaxIter":200}}}"#,
+            ConfigFormat::Json,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn parallel_plate_linear_phi() {
+        // Exact solution: φ(x,y) = y  (Poisson in 2D, linear E-field)
+        let mesh = unit_square_mesh();
+        let config = default_config();
+        let domain_map = DomainMap::from_config(&config).unwrap();
+
+        // Excite LumpedPort index=1 (top edge, physical tag 11) with V=1
+        let phi = solve_one(&config, &mesh, &domain_map, Some(1), 1.0).unwrap();
+
+        for (i, node) in mesh.nodes.iter().enumerate() {
+            let exact = node.y;
+            let err = (phi[i] - exact).abs();
+            assert!(
+                err < 1e-10,
+                "node {} ({:.1},{:.1}): phi={:.6}, exact={:.6}, err={:.2e}",
+                i, node.x, node.y, phi[i], exact, err
+            );
+        }
+    }
+
+    #[test]
+    fn e_field_recovery_unit_square() {
+        // φ = y → E = (0, -1, 0) everywhere
+        let mesh = unit_square_mesh();
+        let phi: Vec<f64> = mesh.nodes.iter().map(|n| n.y).collect();
+        let e = postprocess::gradient_recovery(&phi, &mesh);
+        for (i, ev) in e.iter().enumerate() {
+            assert!(ev[0].abs() < 1e-12, "node {}: E_x={:.2e}", i, ev[0]);
+            assert!((ev[1] + 1.0).abs() < 1e-12, "node {}: E_y={:.6}", i, ev[1]);
+        }
+    }
+
+    #[test]
+    fn energy_parallel_plate_vacuum() {
+        // φ=y, ε=ε₀, unit square → U = ε₀/2  [J/m (2D per unit depth)]
+        use rem_core::constants::EPS0;
+        let mesh = unit_square_mesh();
+        let phi: Vec<f64> = mesh.nodes.iter().map(|n| n.y).collect();
+        let energy = postprocess::electrostatic_energy(&phi, &mesh, |_| EPS0);
+        assert!(
+            (energy - EPS0 / 2.0).abs() < 1e-30,
+            "energy={:.6e}, expected={:.6e}", energy, EPS0 / 2.0
+        );
+    }
+
+    #[test]
+    fn energy_dielectric_medium() {
+        // Same as above but ε = 4.5 ε₀ (SiO₂)
+        use rem_core::constants::EPS0;
+        let mesh = unit_square_mesh();
+        let phi: Vec<f64> = mesh.nodes.iter().map(|n| n.y).collect();
+        let eps_r = 4.5_f64;
+        let energy = postprocess::electrostatic_energy(&phi, &mesh, |_| eps_r * EPS0);
+        assert!(
+            (energy - eps_r * EPS0 / 2.0).abs() < 1e-28,
+            "energy={:.6e}, expected={:.6e}", energy, eps_r * EPS0 / 2.0
+        );
+    }
+}

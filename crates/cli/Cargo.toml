@@ -1,0 +1,21 @@
+[package]
+name    = "rem-cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "rem"
+path = "src/main.rs"
+
+[dependencies]
+rem-core          = { workspace = true }
+rem-config        = { workspace = true }
+rem-mesh          = { workspace = true }
+rem-materials     = { workspace = true }
+rem-parallel      = { workspace = true }
+rem-electrostatic = { workspace = true }
+rem-magnetostatic = { workspace = true }
+clap              = { workspace = true }
+anyhow            = { workspace = true }
+env_logger        = { workspace = true }
+log               = { workspace = true }

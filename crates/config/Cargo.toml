@@ -1,0 +1,14 @@
+[package]
+name    = "rem-config"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rem-core   = { workspace = true }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+log        = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:awslabs.github.io)",
+      "WebSearch",
+      "Bash(wc -l /tmp/fem-rs/crates/*/src/lib.rs)",
+      "Bash(for crate:*)",
+      "Bash(do)",
+      "Bash(dir=\"c:/Users/lilu/works/rem2/crates/$crate\")",
+      "Bash(mkdir -p \"$dir/src\")",
+      "Bash(done)",
+      "Bash(ls -d crates/*)",
+      "Bash(wasm-pack build:*)"
+    ]
+  }
+}
