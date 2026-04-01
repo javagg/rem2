@@ -9,6 +9,12 @@
           <select id="example-select" v-model="selectedExample" :disabled="running" title="Select a simulation example">
             <option value="spheres">Spheres (Electrostatic)</option>
             <option value="rings">Rings (Magnetostatic)</option>
+            <option value="adapter">Adapter (Driven)</option>
+            <option value="antenna">Antenna (Driven)</option>
+            <option value="coaxial">Coaxial (Electrostatic)</option>
+            <option value="cpw">CPW (Driven)</option>
+            <option value="cylinder">Cylinder (Magnetostatic)</option>
+            <option value="transmon">Transmon (Eigenmode)</option>
           </select>
         </div>
 
@@ -54,7 +60,16 @@
 
 <script setup>
 import { ref, watch, onMounted, computed, nextTick } from 'vue';
-import init, { get_spheres_mesh, get_rings_mesh } from '../pkg/rem_wasm.js';
+import init, {
+  get_spheres_mesh,
+  get_rings_mesh,
+  get_adapter_mesh,
+  get_antenna_mesh,
+  get_coaxial_mesh,
+  get_cpw_mesh,
+  get_cylinder_mesh,
+  get_transmon_mesh
+} from '../pkg/rem_wasm.js';
 import hljs from 'highlight.js';
 import 'highlight.js/styles/github-dark.css';
 
@@ -99,7 +114,17 @@ const ringsSource = ref('');
 
 const currentCode = computed(() => {
   if (activeTab.value === 'config') {
-    return JSON.stringify(selectedExample.value === 'spheres' ? spheresConfig : ringsConfig, null, 2);
+    const configs = {
+      spheres: spheresConfig,
+      rings: ringsConfig,
+      adapter: adapterConfig,
+      antenna: antennaConfig,
+      coaxial: coaxialConfig,
+      cpw: cpwConfig,
+      cylinder: cylinderConfig,
+      transmon: transmonConfig
+    };
+    return JSON.stringify(configs[selectedExample.value], null, 2);
   } else {
     return selectedExample.value === 'spheres' ? spheresSource.value : ringsSource.value;
   }
@@ -122,6 +147,13 @@ onMounted(async () => {
     hljs.highlightElement(codeBlock.value);
   }
 });
+
+const adapterConfig = { Problem: { Type: 'Driven' }, Model: { Mesh: 'adapter.msh' } };
+const antennaConfig = { Problem: { Type: 'Driven' }, Model: { Mesh: 'antenna.msh' } };
+const coaxialConfig = { Problem: { Type: 'Electrostatic' }, Model: { Mesh: 'coaxial.msh' } };
+const cpwConfig = { Problem: { Type: 'Driven' }, Model: { Mesh: 'cpw.msh' } };
+const cylinderConfig = { Problem: { Type: 'Magnetostatic' }, Model: { Mesh: 'cylinder.msh' } };
+const transmonConfig = { Problem: { Type: 'Eigenmode' }, Model: { Mesh: 'transmon.msh' } };
 
 function maxMagnitude(vectors) {
   let max = 0;
@@ -158,8 +190,30 @@ async function runSim() {
     workers.push(worker);
   }
 
-  const configStr = JSON.stringify(selectedExample.value === 'spheres' ? spheresConfig : ringsConfig);
-  const mesh = selectedExample.value === 'spheres' ? get_spheres_mesh() : get_rings_mesh();
+  const configMap = {
+    spheres: spheresConfig,
+    rings: ringsConfig,
+    adapter: adapterConfig,
+    antenna: antennaConfig,
+    coaxial: coaxialConfig,
+    cpw: cpwConfig,
+    cylinder: cylinderConfig,
+    transmon: transmonConfig
+  };
+  const meshMap = {
+    spheres: get_spheres_mesh,
+    rings: get_rings_mesh,
+    adapter: get_adapter_mesh,
+    antenna: get_antenna_mesh,
+    coaxial: get_coaxial_mesh,
+    cpw: get_cpw_mesh,
+    cylinder: get_cylinder_mesh,
+    transmon: get_transmon_mesh
+  };
+
+  const config = configMap[selectedExample.value];
+  const configStr = JSON.stringify(config);
+  const mesh = meshMap[selectedExample.value]();
 
   workers.forEach((w, i) => {
     w.postMessage({ rank: i, size: size.value, config: configStr, mesh });

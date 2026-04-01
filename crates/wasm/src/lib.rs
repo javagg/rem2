@@ -88,3 +88,21 @@ pub fn get_spheres_mesh() -> Vec<u8> {
 pub fn get_rings_mesh() -> Vec<u8> {
     rect_bimaterial_msh(1.0, 1.0, 20, 20, 1, 2, 10, 20).into_bytes()
 }
+
+#[wasm_bindgen]
+pub fn get_adapter_mesh() -> Vec<u8> { vec![] } // Placeholder
+
+#[wasm_bindgen]
+pub fn get_antenna_mesh() -> Vec<u8> { vec![] } // Placeholder
+
+#[wasm_bindgen]
+pub fn get_coaxial_mesh() -> Vec<u8> { vec![] } // Placeholder
+
+#[wasm_bindgen]
+pub fn get_cpw_mesh() -> Vec<u8> { vec![] } // Placeholder
+
+#[wasm_bindgen]
+pub fn get_cylinder_mesh() -> Vec<u8> { vec![] } // Placeholder
+
+#[wasm_bindgen]
+pub fn get_transmon_mesh() -> Vec<u8> { vec![] } // Placeholder
