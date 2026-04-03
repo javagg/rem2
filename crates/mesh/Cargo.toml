@@ -4,8 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-# Enable METIS-based mesh partitioning via rmetis (pure-Rust, WASM-compatible)
-metis = ["dep:rmetis"]
+# Enable METIS-based mesh partitioning via rmetis (pure-Rust).
+# Use `metis` for native builds, `metis-wasm` for wasm32 targets.
+metis      = ["dep:rmetis", "rmetis/std"]
+metis-wasm = ["dep:rmetis", "rmetis/std", "rmetis/wasm"]
 
 [dependencies]
 rem-core    = { workspace = true }

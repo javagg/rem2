@@ -9,7 +9,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 rem-core          = { workspace = true }
 rem-config        = { workspace = true }
-rem-mesh          = { workspace = true, features = ["metis"] }
+rem-mesh          = { workspace = true, features = ["metis-wasm"] }
 rem-materials     = { workspace = true }
 rem-parallel      = { workspace = true }
 rem-electrostatic = { workspace = true }
