@@ -34,7 +34,7 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
     let raw = read_msh_file(mesh_path)?;
     let mut mesh = RemMesh::from_raw(raw, config)?;
     mesh.set_comm(comm.rank(), comm.size());
-    mesh.partition();
+    mesh.partition(comm);
     log::info!(
         "Mesh: {} nodes, {} volume elements, {} boundary elements (dim={})",
         mesh.n_nodes(), mesh.n_volume_elements(), mesh.n_boundary_elements(), mesh.dim
