@@ -1112,11 +1112,13 @@ impl Comm for WorkerComm {
 
 ### 12.4 并行 FEM 装配模式
 
-并行装配使用 **行分区**（简单）或 **METIS 分区**（负载均衡）：
+并行装配使用 **METIS 分区**（负载均衡，默认）或 **几何分区**（fallback）：
 
 ```
 整体网格（rank 0 读取）
-    ↓  scatter（partition.rs）
+    ↓  RemMesh::partition()（rem-mesh，feature = "metis"）
+       → METIS k-way 对偶图分区（rmetis，纯 Rust / WASM 兼容）
+       → 失败时自动 fallback 到 X 轴几何分区
 各 rank 持有本地单元子集 + 幽灵节点层（ghost layer）
     ↓  本地装配（fem-assembly）→ K_local, f_local
     ↓  allreduce_sum（重叠 DOF 的贡献求和）
@@ -1128,45 +1130,40 @@ impl Comm for WorkerComm {
 ```
 
 ```rust
-// crates/parallel/src/partition.rs
-pub struct MeshPartition {
-    /// 本 rank 拥有的单元 ID 范围
-    pub owned_elems: Range<usize>,
-    /// 幽灵节点（来自相邻 rank）
-    pub ghost_nodes: Vec<NodeId>,
-    /// 全局节点 ID → 局部 ID 映射
-    pub global_to_local: HashMap<NodeId, usize>,
-}
+// crates/mesh/src/mesh_data.rs
+impl RemMesh {
+    /// 统一分区入口：feature="metis" 时使用 METIS k-way，否则几何分区
+    pub fn partition(&mut self) { ... }
 
-pub fn partition_mesh(
-    mesh: &RemMesh,
-    comm: &dyn Comm,
-) -> MeshPartition {
-    // 简单行分区：将单元均分给各 rank
-    let n_elem = mesh.inner.n_elements();
-    let chunk = (n_elem + comm.size() - 1) / comm.size();
-    let start = comm.rank() * chunk;
-    let end   = (start + chunk).min(n_elem);
-    // TODO: 接入 METIS 分区（feature = "metis"）
-    MeshPartition {
-        owned_elems: start..end,
-        // 从相邻 rank 交换幽灵节点列表
-        ghost_nodes: exchange_ghost_nodes(mesh, start..end, comm),
-        global_to_local: build_local_map(mesh, start..end),
+    /// METIS 对偶图分区（仅 feature="metis" 编译）
+    #[cfg(feature = "metis")]
+    pub fn partition_metis(&mut self) -> Result<(), rmetis::MetisError> {
+        // 1. 枚举每个体单元的面（3-D: 三角面；2-D: 边），按排序节点集 hash
+        // 2. 共享面 → 对偶图邻接边，构造 CSR xadj/adjncy
+        // 3. rmetis::part_graph_kway(graph, nparts, None, None, &Options::for_kway())
+        // 4. 按 result.part 赋值 element.rank
+        // 5. 边界单元按最近体单元质心分配 rank
     }
 }
 ```
 
-### 12.5 feature flag 汇总
+### 12.5 rmetis 子模块
+
+rmetis（`vendor/rmetis`，git submodule）是纯 Rust 实现的 METIS 5.1.x 兼容图分区库：
+- 无 C/系统依赖，可编译至 `wasm32-unknown-unknown`
+- 提供 `part_graph_kway`、`part_graph_recursive`、`node_nd` 三个主要 API
+- 通过 `rem-mesh` 的 `metis` feature 可选启用
+
+### 12.6 feature flag 汇总
 
 ```toml
-# workspace Cargo.toml [workspace.dependencies] / crates/*/Cargo.toml
-
+# crates/mesh/Cargo.toml
 [features]
+metis = ["dep:rmetis"]   # METIS 网格分区（纯 Rust，无系统依赖）
+
 # crates/parallel
 default  = []            # 串行 fallback，无依赖
 mpi      = ["dep:rsmpi"] # native MPI（需系统安装 OpenMPI/MPICH）
-metis    = []            # METIS 网格分区（需系统安装 METIS 5）
 
 # crates/wasm（自动激活 WorkerComm）
 wasm            = ["dep:wasm-bindgen", "dep:js-sys"]

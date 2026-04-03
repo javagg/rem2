@@ -1,0 +1,3 @@
+[submodule "vendor/rmetis"]
+	path = vendor/rmetis
+	url = https://github.com/javagg/rmetis.git

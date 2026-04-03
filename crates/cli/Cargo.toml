@@ -10,7 +10,7 @@ path = "src/main.rs"
 [dependencies]
 rem-core          = { workspace = true }
 rem-config        = { workspace = true }
-rem-mesh          = { workspace = true }
+rem-mesh          = { workspace = true, features = ["metis"] }
 rem-materials     = { workspace = true }
 rem-parallel      = { workspace = true }
 rem-electrostatic = { workspace = true }

@@ -204,7 +204,7 @@ impl RemMesh {
     pub fn n_boundary_elements(&self) -> usize { self.boundary_elements.len() }
 
     /// Partition the volume elements among ranks using a simple geometric split (along X axis).
-    /// This is a temporary placeholder for METIS partitioning.
+    /// Fallback used when the `metis` feature is disabled or when `size <= 1`.
     pub fn partition_geometric(&mut self) {
         if self.size <= 1 { return; }
 
@@ -253,6 +253,139 @@ impl RemMesh {
              if r >= self.size { r = self.size - 1; }
              e.rank = r;
         }
+    }
+
+    /// Partition volume elements using METIS k-way graph partitioning (dual graph).
+    ///
+    /// Builds the element-dual graph: each volume element is a vertex; two elements
+    /// share an edge when they share a mesh face (for 3-D) or edge (for 2-D).
+    /// Returns `Err` if rmetis fails; the caller can fall back to geometric partitioning.
+    #[cfg(feature = "metis")]
+    pub fn partition_metis(&mut self) -> Result<(), rmetis::MetisError> {
+        use rmetis::{Graph, Options, part_graph_kway};
+        use std::collections::HashMap as HMap;
+
+        let n_elem = self.volume_elements.len();
+        if n_elem == 0 { return Ok(()); }
+
+        let nparts = self.size as usize;
+        if nparts <= 1 { return Ok(()); }
+
+        // -----------------------------------------------------------------------
+        // Build element dual graph (CSR format)
+        // -----------------------------------------------------------------------
+        // A face is identified by its sorted node-set.  Two elements sharing a
+        // face (dim-D face = (dim-1) nodes sorted) become graph-adjacent.
+
+        // face_key → list of element indices that own this face
+        let face_nodes = self.dim as usize; // 3-D mesh: triangular faces (3 nodes); 2-D: edges (2 nodes)
+        let mut face_map: HMap<Vec<usize>, Vec<usize>> = HMap::new();
+
+        for (ei, elem) in self.volume_elements.iter().enumerate() {
+            let nn = elem.node_ids.len();
+            // Generate all combinations of `face_nodes` nodes (faces of the element)
+            for_each_face(&elem.node_ids, nn, face_nodes, |face| {
+                face_map.entry(face).or_default().push(ei);
+            });
+        }
+
+        // Build adjacency lists
+        let mut adj_lists: Vec<Vec<i32>> = vec![Vec::new(); n_elem];
+        for owners in face_map.values() {
+            if owners.len() == 2 {
+                let (a, b) = (owners[0], owners[1]);
+                if !adj_lists[a].contains(&(b as i32)) { adj_lists[a].push(b as i32); }
+                if !adj_lists[b].contains(&(a as i32)) { adj_lists[b].push(a as i32); }
+            }
+        }
+
+        // Convert to CSR
+        let mut xadj: Vec<i32> = Vec::with_capacity(n_elem + 1);
+        let mut adjncy: Vec<i32> = Vec::new();
+        xadj.push(0);
+        for nbrs in &adj_lists {
+            adjncy.extend_from_slice(nbrs);
+            xadj.push(adjncy.len() as i32);
+        }
+
+        // If the mesh has no inter-element adjacency (e.g., single element), fall back
+        if adjncy.is_empty() {
+            self.partition_geometric();
+            return Ok(());
+        }
+
+        let graph = Graph::new_unweighted(n_elem, xadj, adjncy)?;
+        let opts = Options::for_kway();
+        let result = part_graph_kway(&graph, nparts, None, None, &opts)?;
+
+        // Assign ranks to volume elements
+        for (elem, &p) in self.volume_elements.iter_mut().zip(result.part.iter()) {
+            elem.rank = p;
+        }
+
+        log::debug!(
+            "METIS k-way partition: {} elements → {} parts, edge cut = {}",
+            n_elem, nparts, result.objval
+        );
+
+        // Assign boundary element ranks from the nearest volume element centroid
+        self.assign_boundary_ranks_from_volume();
+
+        Ok(())
+    }
+
+    /// Assign each boundary element to the same rank as the volume element whose
+    /// centroid is closest to the boundary element's centroid.
+    fn assign_boundary_ranks_from_volume(&mut self) {
+        if self.volume_elements.is_empty() { return; }
+
+        // Precompute volume element centroids
+        let vol_centroids: Vec<[f64; 3]> = self.volume_elements.iter().map(|e| {
+            let mut cx = 0.0; let mut cy = 0.0; let mut cz = 0.0;
+            for &nid in &e.node_ids {
+                cx += self.nodes[nid].x;
+                cy += self.nodes[nid].y;
+                cz += self.nodes[nid].z;
+            }
+            let n = e.node_ids.len() as f64;
+            [cx / n, cy / n, cz / n]
+        }).collect();
+
+        for be in &mut self.boundary_elements {
+            let mut bx = 0.0; let mut by = 0.0; let mut bz = 0.0;
+            for &nid in &be.node_ids {
+                bx += self.nodes[nid].x;
+                by += self.nodes[nid].y;
+                bz += self.nodes[nid].z;
+            }
+            let n = be.node_ids.len() as f64;
+            bx /= n; by /= n; bz /= n;
+
+            let nearest = vol_centroids.iter().enumerate().min_by(|(_, a), (_, b)| {
+                let da = (a[0]-bx).powi(2) + (a[1]-by).powi(2) + (a[2]-bz).powi(2);
+                let db = (b[0]-bx).powi(2) + (b[1]-by).powi(2) + (b[2]-bz).powi(2);
+                da.partial_cmp(&db).unwrap()
+            });
+            if let Some((vi, _)) = nearest {
+                be.rank = self.volume_elements[vi].rank;
+            }
+        }
+    }
+
+    /// Partition elements using METIS when the feature is enabled, otherwise geometric.
+    pub fn partition(&mut self) {
+        #[cfg(feature = "metis")]
+        {
+            if self.size > 1 {
+                match self.partition_metis() {
+                    Ok(()) => return,
+                    Err(e) => {
+                        log::warn!("METIS partitioning failed ({}), falling back to geometric", e);
+                    }
+                }
+            }
+        }
+        self.partition_geometric();
     }
 
     /// Return all boundary element tags that map to the given BoundaryTag variant.
@@ -323,4 +456,36 @@ fn build_boundary_tags(b: &Boundaries) -> RemResult<HashMap<u32, BoundaryTag>> {
     }
 
     Ok(map)
+}
+
+// ---------------------------------------------------------------------------
+// Helper: enumerate element faces for dual-graph construction
+// ---------------------------------------------------------------------------
+
+/// Call `f` for every sorted combination of `k` node IDs drawn from `nodes`.
+/// Used to generate the "faces" of an element for dual-graph construction.
+/// For a tetrahedron (4 nodes, k=3) this yields 4 triangular faces.
+/// For a triangle (3 nodes, k=2) this yields 3 edges.
+fn for_each_face<F>(nodes: &[usize], n: usize, k: usize, mut f: F)
+where
+    F: FnMut(Vec<usize>),
+{
+    let mut indices = (0..k).collect::<Vec<_>>();
+    loop {
+        let mut face: Vec<usize> = indices.iter().map(|&i| nodes[i]).collect();
+        face.sort_unstable();
+        f(face);
+
+        // Advance to next combination in lexicographic order
+        let mut i = k;
+        loop {
+            if i == 0 { return; }
+            i -= 1;
+            if indices[i] < n - k + i { break; }
+        }
+        indices[i] += 1;
+        for j in (i + 1)..k {
+            indices[j] = indices[j - 1] + 1;
+        }
+    }
 }

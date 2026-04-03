@@ -3,8 +3,13 @@ name    = "rem-mesh"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+# Enable METIS-based mesh partitioning via rmetis (pure-Rust, WASM-compatible)
+metis = ["dep:rmetis"]
+
 [dependencies]
 rem-core    = { workspace = true }
 rem-config  = { workspace = true }
 rem-parallel = { workspace = true }
 log         = { workspace = true }
+rmetis      = { workspace = true, optional = true }

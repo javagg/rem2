@@ -821,23 +821,32 @@ mpirun -np 4 cargo test -p parallel --features mpi --test test_allreduce
 cargo build -p parallel --target wasm32-unknown-unknown --features wasm-parallel
 ```
 
-### 6.5.2 网格分区（partition.rs）
+### 6.5.2 网格分区（mesh_data.rs）
 
-实现简单行分区（v0.2），METIS 分区推迟到 v1.0：
+METIS 分区已通过 `rmetis`（`vendor/rmetis` git submodule，纯 Rust）实现并默认启用：
 
 ```rust
-pub fn partition_mesh(mesh: &RemMesh, comm: &dyn Comm) -> MeshPartition {
-    let n = mesh.inner.n_elements();
-    let chunk = (n + comm.size() - 1) / comm.size();
-    let start = comm.rank() * chunk;
-    let end   = (start + chunk).min(n);
+// crates/mesh/src/mesh_data.rs
+impl RemMesh {
+    /// 统一入口：feature="metis" → METIS k-way；否则几何分区
+    pub fn partition(&mut self) { ... }
 
-    // 幽灵节点：本 rank 单元中、属于相邻 rank 的节点
-    let ghost_nodes = find_ghost_nodes(&mesh.inner, start..end, comm);
-    let g2l = build_g2l_map(&mesh.inner, start..end, &ghost_nodes);
+    /// METIS 对偶图 k-way 分区
+    #[cfg(feature = "metis")]
+    pub fn partition_metis(&mut self) -> Result<(), rmetis::MetisError> {
+        // 构造元素对偶图（共享面 → 邻接边），调用 rmetis::part_graph_kway
+        // 边界单元按最近体单元质心分配 rank
+    }
 
-    MeshPartition { owned_elems: start..end, ghost_nodes, global_to_local: g2l }
+    /// 几何分区（X 轴均分），作为 fallback
+    pub fn partition_geometric(&mut self) { ... }
 }
+```
+
+启用方式（rem-cli/rem-wasm 的 Cargo.toml）：
+
+```toml
+rem-mesh = { workspace = true, features = ["metis"] }
 ```
 
 ### 6.5.3 接入静电场求解器
@@ -1138,8 +1147,9 @@ done
 | v0.1.0 | 工作区 + 配置解析 + 静电/静磁 + CLI + VTK 输出 | 1-5 |
 | v0.1.1 | WASM 绑定 + Vue3 Web Demo（可部署） | 6, 7.5 |
 | v0.2.0 | 并行层 (jsmpi/Comm trait) + 分布式组装 | 6.5, 7 |
+| v0.2.1 | rmetis 子模块 + METIS k-way 对偶图分区 | — |
 | v0.3.0 | Palace 官方示例完整兼容测试 | 8 |
-| v1.0.0 | 时域瞬态 + METIS 分区 + AMR | 未规划 |
+| v1.0.0 | 时域瞬态 + AMR | 未规划 |
 
 ---
 
