@@ -5,7 +5,7 @@
     "Output": "./output/cpw"
   },
   "Model": {
-    "Mesh": "examples/cpw/mesh/cpw.msh",
+    "Mesh": "examples/cpw/mesh/cpw_coax.msh",
     "L0": 1.0e-6
   },
   "Domains": {

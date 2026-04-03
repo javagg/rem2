@@ -1,0 +1,15 @@
+[package]
+name    = "rem-driven"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rem-core      = { workspace = true }
+rem-config    = { workspace = true }
+rem-mesh      = { workspace = true }
+rem-materials = { workspace = true }
+rem-parallel  = { workspace = true }
+rem-electrostatic = { workspace = true }
+rem-eigenmode     = { workspace = true }
+num-complex = { workspace = true }
+log         = { workspace = true }

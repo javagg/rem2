@@ -228,12 +228,12 @@ mod tests {
             Node { id: 3, x: 0.0, y: 1.0, z: 0.0 },
         ];
         let volume_elements = vec![
-            Element { id: 1, kind: ElementKind::Tri3, tag: 1, node_ids: vec![0, 1, 2] },
-            Element { id: 2, kind: ElementKind::Tri3, tag: 1, node_ids: vec![0, 2, 3] },
+            Element { id: 1, kind: ElementKind::Tri3, tag: 1, node_ids: vec![0, 1, 2] , rank: 0 },
+            Element { id: 2, kind: ElementKind::Tri3, tag: 1, node_ids: vec![0, 2, 3] , rank: 0 },
         ];
         let boundary_elements = vec![
-            Element { id: 3, kind: ElementKind::Line2, tag: 10, node_ids: vec![0, 1] },
-            Element { id: 4, kind: ElementKind::Line2, tag: 11, node_ids: vec![2, 3] },
+            Element { id: 3, kind: ElementKind::Line2, tag: 10, node_ids: vec![0, 1] , rank: 0 },
+            Element { id: 4, kind: ElementKind::Line2, tag: 11, node_ids: vec![2, 3] , rank: 0 },
         ];
         let mut boundary_tags: HashMap<u32, BoundaryTag> = HashMap::new();
         boundary_tags.insert(10, BoundaryTag::Ground); // A_z = 0
@@ -244,6 +244,8 @@ mod tests {
             domain_tags: Default::default(),
             boundary_tags,
             dim: 2,
+            rank: 0,
+            size: 1,
         }
     }
 
@@ -263,7 +265,7 @@ mod tests {
         let config = default_config();
         let domain_map = DomainMap::from_config(&config).unwrap();
 
-        let az = solve_one(&config, &mesh, &domain_map, Some(1)).unwrap();
+        let az = solve_one(&config, &mesh, &domain_map, Some(1), &NoComm).unwrap();
 
         for (i, node) in mesh.nodes.iter().enumerate() {
             let exact = node.y;

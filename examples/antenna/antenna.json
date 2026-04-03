@@ -30,8 +30,8 @@
   "Solver": {
     "Order": 2,
     "Driven": {
-      "FreqStart": 2.0e9,
-      "FreqEnd": 3.0e9,
+      "MinFreq": 2.0e9,
+      "MaxFreq": 3.0e9,
       "FreqStep": 0.05e9
     }
   }

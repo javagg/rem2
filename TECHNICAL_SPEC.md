@@ -1,5 +1,5 @@
 # REM — Rust Electromagnetic Solver
-## Technical Specification v0.1
+## Technical Specification v0.2
 
 > **目标**: 用纯 Rust（可编译至 `wasm32-unknown-unknown`）实现对标 Palace 的全波电磁仿真工具，
 > 基于 [fem-rs](https://github.com/javagg/fem-rs) 通用有限元库，兼容 Palace JSON/YAML 配置格式。

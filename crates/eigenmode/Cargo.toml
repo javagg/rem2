@@ -1,0 +1,14 @@
+[package]
+name    = "rem-eigenmode"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rem-core      = { workspace = true }
+rem-config    = { workspace = true }
+rem-mesh      = { workspace = true }
+rem-materials = { workspace = true }
+rem-parallel  = { workspace = true }
+rem-electrostatic = { workspace = true }
+nalgebra = { workspace = true }
+log      = { workspace = true }

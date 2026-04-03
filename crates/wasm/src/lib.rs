@@ -90,19 +90,36 @@ pub fn get_rings_mesh() -> Vec<u8> {
 }
 
 #[wasm_bindgen]
-pub fn get_adapter_mesh() -> Vec<u8> { vec![] } // Placeholder
+pub fn get_adapter_mesh() -> Vec<u8> {
+    include_bytes!("../../../examples/adapter/mesh/adapter.msh").to_vec()
+}
 
 #[wasm_bindgen]
-pub fn get_antenna_mesh() -> Vec<u8> { vec![] } // Placeholder
+pub fn get_antenna_mesh() -> Vec<u8> {
+    include_bytes!("../../../examples/antenna/mesh/antenna.msh").to_vec()
+}
 
 #[wasm_bindgen]
-pub fn get_coaxial_mesh() -> Vec<u8> { vec![] } // Placeholder
+pub fn get_coaxial_mesh() -> Vec<u8> {
+    include_bytes!("../../../examples/coaxial/mesh/coaxial.msh").to_vec()
+}
 
 #[wasm_bindgen]
-pub fn get_cpw_mesh() -> Vec<u8> { vec![] } // Placeholder
+pub fn get_cpw_mesh() -> Vec<u8> {
+    include_bytes!("../../../examples/cpw/mesh/cpw_coax.msh").to_vec()
+}
 
 #[wasm_bindgen]
-pub fn get_cylinder_mesh() -> Vec<u8> { vec![] } // Placeholder
+pub fn get_cylinder_mesh() -> Vec<u8> {
+    include_bytes!("../../../examples/cylinder/mesh/cylinder_hex.msh").to_vec()
+}
 
 #[wasm_bindgen]
-pub fn get_transmon_mesh() -> Vec<u8> { vec![] } // Placeholder
+pub fn get_transmon_mesh() -> Vec<u8> {
+    include_bytes!("../../../examples/transmon/mesh/transmon.msh2").to_vec()
+}
+
+#[wasm_bindgen]
+pub fn get_spheres_mesh_v2() -> Vec<u8> {
+    include_bytes!("../../../examples/spheres/mesh/spheres.msh").to_vec()
+}

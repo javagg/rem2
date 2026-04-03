@@ -8,6 +8,8 @@ members = [
     "crates/bc",
     "crates/electrostatic",
     "crates/magnetostatic",
+    "crates/eigenmode",
+    "crates/driven",
     "crates/result",
     "crates/cli",
     "crates/parallel",
@@ -26,6 +28,8 @@ rem-bc            = { path = "crates/bc" }
 rem-result        = { path = "crates/result" }
 rem-electrostatic = { path = "crates/electrostatic" }
 rem-magnetostatic = { path = "crates/magnetostatic" }
+rem-eigenmode     = { path = "crates/eigenmode" }
+rem-driven        = { path = "crates/driven" }
 rem-parallel      = { path = "crates/parallel" }
 rmetis            = { path = "vendor/rmetis", default-features = false }
 wasm-bindgen      = "0.2"

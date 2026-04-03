@@ -177,16 +177,15 @@ impl CsrMatrix {
 
     /// Zero out an entire row and set the diagonal to `diag_val`.
     pub fn zero_row_set_diag(&mut self, row: usize, diag_val: f64) {
-        let mut found_diag = false;
         for k in self.row_ptr[row]..self.row_ptr[row + 1] {
             if self.col_idx[k] == row {
                 self.values[k] = diag_val;
-                found_diag = true;
             } else {
                 self.values[k] = 0.0;
             }
         }
-        debug_assert!(found_diag, "no diagonal entry in row {}", row);
+        // Note: if the row has no diagonal entry (isolated DOF not in any element),
+        // we simply zero the row. PCG will see a 0-diagonal and skip the Jacobi update.
     }
 
     /// Read the diagonal entry K[row,row] without modifying the matrix.
@@ -401,7 +400,7 @@ mod tests {
         t.add(2, 1, -1.0); t.add(2, 2, 2.0);
         let mat = t.to_csr();
         let b = vec![0.0, 1.0, 0.0];
-        let res = solve_pcg(&mat, &b, 1e-12, 100);
+        let res = solve_pcg(&mat, &b, 1e-12, 100, &rem_parallel::NoComm);
         assert!(res.converged, "PCG did not converge");
         assert!((res.solution[0] - 0.5).abs() < 1e-10);
         assert!((res.solution[1] - 1.0).abs() < 1e-10);

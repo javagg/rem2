@@ -37,6 +37,10 @@ pub fn assemble_stiffness(
             ElementKind::Tet4 => {
                 assemble_tet4(mesh, elem, eps, &mut triplet)?;
             }
+            ElementKind::Tet10 => {
+                // P1 approximation using corner nodes only
+                assemble_tet4_by_nodes(mesh, &elem.node_ids[..4], elem.id, eps, &mut triplet)?;
+            }
             other => {
                 log::warn!(
                     "Element kind {:?} not supported in P1 assembly — skipping",
@@ -101,10 +105,18 @@ fn assemble_tet4(
     triplet: &mut TripletMatrix,
 ) -> RemResult<()> {
     debug_assert_eq!(elem.node_ids.len(), 4);
-    let [n0, n1, n2, n3] = [
-        elem.node_ids[0], elem.node_ids[1],
-        elem.node_ids[2], elem.node_ids[3],
-    ];
+    assemble_tet4_by_nodes(mesh, &elem.node_ids, elem.id, eps, triplet)
+}
+
+/// Assemble Tet4 stiffness from an explicit node slice (used for Tet10 corner approximation).
+fn assemble_tet4_by_nodes(
+    mesh: &RemMesh,
+    node_ids: &[usize],
+    elem_id: usize,
+    eps: f64,
+    triplet: &mut TripletMatrix,
+) -> RemResult<()> {
+    let [n0, n1, n2, n3] = [node_ids[0], node_ids[1], node_ids[2], node_ids[3]];
     let nodes = [n0, n1, n2, n3];
     let x = [
         mesh.nodes[n0].x, mesh.nodes[n1].x, mesh.nodes[n2].x, mesh.nodes[n3].x,
@@ -127,7 +139,7 @@ fn assemble_tet4(
     let vol = det.abs() / 6.0;
     if vol < 1e-300 {
         return Err(RemError::Mesh(format!(
-            "Degenerate Tet4 element {} (volume ≈ 0)", elem.id
+            "Degenerate Tet4 element {} (volume ≈ 0)", elem_id
         )));
     }
 
@@ -232,12 +244,14 @@ pub mod tests {
                 Node { id: 2, x: 0.0, y: 1.0, z: 0.0 },
             ],
             volume_elements: vec![
-                Element { id: 1, kind: ElementKind::Tri3, tag: 1, node_ids: vec![0, 1, 2] },
+                Element { id: 1, kind: ElementKind::Tri3, tag: 1, node_ids: vec![0, 1, 2] , rank: 0 },
             ],
             boundary_elements: vec![],
             domain_tags: Default::default(),
             boundary_tags: Default::default(),
             dim: 2,
+            rank: 0,
+            size: 1,
         }
     }
 

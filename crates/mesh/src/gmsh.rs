@@ -1,7 +1,6 @@
-/// Minimal GMSH v4.1 ASCII reader.
+/// Minimal GMSH v2.2 and v4.1 ASCII/binary reader.
 ///
-/// Supports `$MeshFormat 4.1`, `$Nodes`, `$Elements`, `$PhysicalNames`.
-/// Does NOT support binary format or MSH 2.x.
+/// Supports `$MeshFormat 2.2` (ASCII and binary) and `4.1` (ASCII only).
 use rem_core::{RemError, RemResult};
 use std::path::Path;
 
@@ -29,17 +28,53 @@ pub struct RawMesh {
 // ---------------------------------------------------------------------------
 
 pub fn read_msh_file(path: &Path) -> RemResult<RawMesh> {
-    let content = std::fs::read_to_string(path).map_err(RemError::Io)?;
-    read_msh_str(&content)
+    let bytes = std::fs::read(path).map_err(RemError::Io)?;
+    read_msh_bytes(&bytes)
 }
 
 pub fn read_msh_str(text: &str) -> RemResult<RawMesh> {
+    read_msh_bytes(text.as_bytes())
+}
+
+pub fn read_msh_bytes(bytes: &[u8]) -> RemResult<RawMesh> {
+    // Detect binary v2: look for "2.2 1 " or "2.0 1 " anywhere in the first ~100 bytes
+    // (the format line is always near the top, ASCII-readable)
+    let header_region = &bytes[..bytes.len().min(128)];
+    let is_binary_v2 = contains_bytes(header_region, b"$MeshFormat")
+        && (contains_bytes(header_region, b"2.2 1 ")
+            || contains_bytes(header_region, b"2.0 1 "));
+
+    if is_binary_v2 {
+        read_msh_v2_binary(bytes)
+    } else {
+        let text = std::str::from_utf8(bytes)
+            .map_err(|_| RemError::Mesh("mesh file is not valid UTF-8 and not binary v2.2".into()))?;
+        read_msh_ascii(text)
+    }
+}
+
+fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack.windows(needle.len()).any(|w| w == needle)
+}
+
+/// Scan forward in `bytes` starting at `*pos` until the `marker` byte sequence is found.
+/// Advances `*pos` past the marker and any trailing newline.
+fn skip_to_marker(pos: &mut usize, bytes: &[u8], marker: &[u8]) {
+    while *pos + marker.len() <= bytes.len() {
+        if bytes[*pos..].starts_with(marker) {
+            *pos += marker.len();
+            if *pos < bytes.len() && bytes[*pos] == b'\n' { *pos += 1; }
+            return;
+        }
+        *pos += 1;
+    }
+}
+
+fn read_msh_ascii(text: &str) -> RemResult<RawMesh> {
     let mut lines = text.lines().peekable();
     let mut nodes: Vec<(usize, f64, f64, f64)> = Vec::new();
     let mut elements: Vec<RawElement> = Vec::new();
-    // physical group tag → entity tag → set of element tags (for tag resolution)
-    // We store a simple tag→phys_tag map built from $Entities or $PhysicalNames.
-    // In practice we read the entity tag embedded in $Elements block.
+    let mut is_v2 = false;
 
     while let Some(line) = lines.next() {
         let line = line.trim();
@@ -51,9 +86,11 @@ pub fn read_msh_str(text: &str) -> RemResult<RawMesh> {
                     return Err(bad("malformed $MeshFormat"));
                 }
                 let version = parts[0];
-                if !version.starts_with("4") {
+                if version.starts_with('2') {
+                    is_v2 = true;
+                } else if !version.starts_with('4') {
                     return Err(RemError::Mesh(format!(
-                        "Only GMSH v4.x is supported, got version {}",
+                        "Only GMSH v2.x or v4.x are supported, got version {}",
                         version
                     )));
                 }
@@ -61,10 +98,18 @@ pub fn read_msh_str(text: &str) -> RemResult<RawMesh> {
                 skip_to_end(&mut lines, "EndMeshFormat")?;
             }
             "$Nodes" => {
-                nodes = parse_nodes_v4(&mut lines)?;
+                nodes = if is_v2 {
+                    parse_nodes_v2(&mut lines)?
+                } else {
+                    parse_nodes_v4(&mut lines)?
+                };
             }
             "$Elements" => {
-                elements = parse_elements_v4(&mut lines)?;
+                elements = if is_v2 {
+                    parse_elements_v2(&mut lines)?
+                } else {
+                    parse_elements_v4(&mut lines)?
+                };
             }
             "$PhysicalNames" | "$Entities" | "$Partitioned" | "$Periodic"
             | "$GhostElements" | "$Parametrizations" | "$NodeData"
@@ -92,6 +137,28 @@ pub fn read_msh_str(text: &str) -> RemResult<RawMesh> {
 // ---------------------------------------------------------------------------
 // Section parsers
 // ---------------------------------------------------------------------------
+
+fn parse_nodes_v2(
+    lines: &mut std::iter::Peekable<std::str::Lines>,
+) -> RemResult<Vec<(usize, f64, f64, f64)>> {
+    let header = lines.next().ok_or_else(|| bad("missing $Nodes header"))?;
+    let n_nodes: usize = parse_usize(header.trim())?;
+    let mut nodes = Vec::with_capacity(n_nodes);
+    for _ in 0..n_nodes {
+        let line = lines.next().ok_or_else(|| bad("unexpected end in $Nodes"))?;
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 4 {
+            return Err(bad("malformed node line"));
+        }
+        let id = parse_usize(parts[0])?;
+        let x  = parse_f64(parts[1])?;
+        let y  = parse_f64(parts[2])?;
+        let z  = parse_f64(parts[3])?;
+        nodes.push((id, x, y, z));
+    }
+    skip_to_end(lines, "EndNodes")?;
+    Ok(nodes)
+}
 
 fn parse_nodes_v4(
     lines: &mut std::iter::Peekable<std::str::Lines>,
@@ -142,6 +209,40 @@ fn parse_nodes_v4(
     }
 
     Ok(nodes)
+}
+
+fn parse_elements_v2(
+    lines: &mut std::iter::Peekable<std::str::Lines>,
+) -> RemResult<Vec<RawElement>> {
+    let header = lines.next().ok_or_else(|| bad("missing $Elements header"))?;
+    let n_elements: usize = parse_usize(header.trim())?;
+    let mut elements = Vec::with_capacity(n_elements);
+    for _ in 0..n_elements {
+        let line = lines.next().ok_or_else(|| bad("unexpected end in $Elements"))?;
+        let ep: Vec<&str> = line.split_whitespace().collect();
+        if ep.len() < 5 {
+            return Err(bad("malformed element line"));
+        }
+        let id: usize        = parse_usize(ep[0])?;
+        let elem_type: u32   = parse_u32(ep[1])?;
+        let n_tags: usize    = parse_usize(ep[2])?;
+        if ep.len() < 3 + n_tags {
+            return Err(bad("element line too short for tags"));
+        }
+        // GMSH v2 tags: first tag is usually physical group, second is elementary entity
+        let phys_tag = if n_tags > 0 { parse_u32(ep[3])? } else { 0 };
+        let n_nodes_per = n_nodes_for_type(elem_type).unwrap_or(0);
+        if ep.len() < 3 + n_tags + n_nodes_per {
+            return Err(bad("element line too short for nodes"));
+        }
+        let mut node_ids = Vec::with_capacity(n_nodes_per);
+        for i in 0..n_nodes_per {
+            node_ids.push(parse_usize(ep[3 + n_tags + i])?);
+        }
+        elements.push(RawElement { id, elem_type, phys_tag, node_ids });
+    }
+    skip_to_end(lines, "EndElements")?;
+    Ok(elements)
 }
 
 fn parse_elements_v4(
@@ -247,9 +348,213 @@ fn n_nodes_for_type(t: u32) -> Option<usize> {
         9  => Some(6),   // Tri 6
         10 => Some(9),   // Quad 9
         11 => Some(10),  // Tet 10
+        12 => Some(20),  // Hex 20
+        13 => Some(15),  // Prism 15
+        14 => Some(13),  // Pyramid 13
         15 => Some(1),   // Point
+        16 => Some(8),   // Quad 8
+        17 => Some(20),  // Hex 20 (serendipity)
+        18 => Some(15),  // Prism 15
+        19 => Some(13),  // Pyramid 13
+        20 => Some(9),   // Tri 9
+        21 => Some(10),  // Tri 10
+        22 => Some(12),  // Tri 12 (incomplete)
+        23 => Some(15),  // Tri 15 (serendipity)
+        26 => Some(4),   // Line 4
+        29 => Some(20),  // Tet 20
+        36 => Some(16),  // Quad 16
+        37 => Some(25),  // Hex 25
+        92 => Some(27),  // Hex 27
+        93 => Some(18),  // Prism 18
         _  => None,
     }
+}
+
+// ---------------------------------------------------------------------------
+// GMSH v2.2 binary reader
+// ---------------------------------------------------------------------------
+//
+// Format: text header sections with "$SectionName" / "$EndSectionName" markers,
+// but $Nodes and $Elements bodies are encoded as packed binary (little-endian
+// 32-bit ints + 64-bit doubles).
+//
+// $Nodes body layout:
+//   int32 n_nodes
+//   for each node:
+//     int32 id,  double x, double y, double z   (total 28 bytes)
+//
+// $Elements body layout:
+//   int32 n_element_types
+//   for each element-type block:
+//     int32 elem_type, int32 n_elems, int32 n_tags
+//     for each element in block:
+//       int32 id, int32[n_tags] tags, int32[n_nodes_per] node_ids
+
+fn read_msh_v2_binary(bytes: &[u8]) -> RemResult<RawMesh> {
+    let mut pos = 0usize;
+
+    // Helper closures to read from byte slice
+    let read_line = |pos: &mut usize| -> Option<&str> {
+        let start = *pos;
+        let slice = &bytes[start..];
+        if let Some(nl) = slice.iter().position(|&b| b == b'\n') {
+            let line = std::str::from_utf8(&slice[..nl]).ok()?.trim();
+            *pos = start + nl + 1;
+            Some(line)
+        } else if !slice.is_empty() {
+            let line = std::str::from_utf8(slice).ok()?.trim();
+            *pos = bytes.len();
+            Some(line)
+        } else {
+            None
+        }
+    };
+
+    let read_i32_le = |pos: &mut usize, bytes: &[u8]| -> RemResult<i32> {
+        if *pos + 4 > bytes.len() {
+            return Err(bad("binary: unexpected end reading int32"));
+        }
+        let v = i32::from_le_bytes([bytes[*pos], bytes[*pos+1], bytes[*pos+2], bytes[*pos+3]]);
+        *pos += 4;
+        Ok(v)
+    };
+
+    let read_f64_le = |pos: &mut usize, bytes: &[u8]| -> RemResult<f64> {
+        if *pos + 8 > bytes.len() {
+            return Err(bad("binary: unexpected end reading float64"));
+        }
+        let v = f64::from_le_bytes([
+            bytes[*pos],   bytes[*pos+1], bytes[*pos+2], bytes[*pos+3],
+            bytes[*pos+4], bytes[*pos+5], bytes[*pos+6], bytes[*pos+7],
+        ]);
+        *pos += 8;
+        Ok(v)
+    };
+
+    let mut nodes: Vec<(usize, f64, f64, f64)> = Vec::new();
+    let mut elements: Vec<RawElement> = Vec::new();
+    let mut phys_names: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+
+    loop {
+        // Skip blank lines / find section tag
+        let Some(line) = read_line(&mut pos) else { break };
+        let line = line.trim();
+        if line.is_empty() { continue; }
+
+        match line {
+            "$MeshFormat" => {
+                // Read the format line (ASCII)
+                let Some(_fmt_line) = read_line(&mut pos) else { break };
+                // After the ascii header line there is a binary int32 (=1) then newline
+                // Advance past it using byte-level marker search
+                skip_to_marker(&mut pos, bytes, b"$EndMeshFormat");
+            }
+            "$PhysicalNames" => {
+                let Some(count_line) = read_line(&mut pos) else { break };
+                let n_names: usize = count_line.trim().parse().unwrap_or(0);
+                for _ in 0..n_names {
+                    let Some(_name_line) = read_line(&mut pos) else { break };
+                    // We don't need to map physical names in binary mode
+                    // (element tags are numeric from the data)
+                }
+                skip_to_marker(&mut pos, bytes, b"$EndPhysicalNames");
+            }
+            "$Nodes" => {
+                // ASCII count line
+                let Some(count_line) = read_line(&mut pos) else { break };
+                let n_nodes: usize = count_line.trim().parse()
+                    .map_err(|_| bad("binary: bad node count"))?;
+                nodes.reserve(n_nodes);
+                for _ in 0..n_nodes {
+                    let id = read_i32_le(&mut pos, bytes)? as usize;
+                    let x  = read_f64_le(&mut pos, bytes)?;
+                    let y  = read_f64_le(&mut pos, bytes)?;
+                    let z  = read_f64_le(&mut pos, bytes)?;
+                    nodes.push((id, x, y, z));
+                }
+                // Skip optional newline + mandatory $EndNodes\n (do NOT use marker search
+                // because the literal bytes could appear inside binary data)
+                if pos < bytes.len() && bytes[pos] == b'\n' { pos += 1; }
+                if pos + 9 <= bytes.len() && &bytes[pos..pos+9] == b"$EndNodes" {
+                    pos += 9;
+                    if pos < bytes.len() && bytes[pos] == b'\n' { pos += 1; }
+                }
+            }
+            "$Elements" => {
+                // ASCII count line: total number of elements
+                let Some(count_line) = read_line(&mut pos) else { break };
+                let _n_total: usize = count_line.trim().parse().unwrap_or(0);
+
+                // Read binary element-type blocks until $EndElements
+                // Strategy: read binary blocks until we hit the $EndElements marker.
+                // We use byte-level detection of the marker.
+                loop {
+                    if pos >= bytes.len() { break; }
+                    // Check if we're at the $EndElements marker
+                    if bytes[pos..].starts_with(b"$EndElements") {
+                        pos += b"$EndElements".len();
+                        // skip trailing newline
+                        if pos < bytes.len() && bytes[pos] == b'\n' { pos += 1; }
+                        break;
+                    }
+                    // Skip any leading newlines
+                    if bytes[pos] == b'\n' { pos += 1; continue; }
+
+                    // block header: int32 elem_type, int32 n_elems, int32 n_tags
+                    let elem_type = read_i32_le(&mut pos, bytes)? as u32;
+                    let n_elems   = read_i32_le(&mut pos, bytes)? as usize;
+                    let n_tags    = read_i32_le(&mut pos, bytes)? as usize;
+                    let n_nodes_per_opt = n_nodes_for_type(elem_type);
+
+                    if n_elems == 0 { continue; }
+
+                    match n_nodes_per_opt {
+                        None => {
+                            // Unknown element type: can't determine record size.
+                            // Scan forward to $EndElements to avoid corrupting the stream.
+                            log::debug!(
+                                "binary v2.2: unknown element type {}, scanning to $EndElements",
+                                elem_type
+                            );
+                            skip_to_marker(&mut pos, bytes, b"$EndElements");
+                            break;
+                        }
+                        Some(n_nodes_per) => {
+                            for _ in 0..n_elems {
+                                let id = read_i32_le(&mut pos, bytes)? as usize;
+                                let mut phys_tag: u32 = 0;
+                                for ti in 0..n_tags {
+                                    let tag = read_i32_le(&mut pos, bytes)? as u32;
+                                    if ti == 0 { phys_tag = tag; }
+                                }
+                                let mut node_ids = Vec::with_capacity(n_nodes_per);
+                                for _ in 0..n_nodes_per {
+                                    node_ids.push(read_i32_le(&mut pos, bytes)? as usize);
+                                }
+                                if n_nodes_per > 0 {
+                                    elements.push(RawElement { id, elem_type, phys_tag, node_ids });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ if line.starts_with('$') => {
+                // Skip unknown section using byte-level marker search
+                let end_marker = format!("$End{}", &line[1..]);
+                skip_to_marker(&mut pos, bytes, end_marker.as_bytes());
+            }
+            _ => { /* ignore */ }
+        }
+    }
+
+    if nodes.is_empty() {
+        return Err(bad("binary v2.2: no nodes found"));
+    }
+    if elements.is_empty() {
+        return Err(bad("binary v2.2: no elements found"));
+    }
+    Ok(RawMesh { nodes, elements })
 }
 
 // ---------------------------------------------------------------------------
@@ -306,8 +611,25 @@ $EndElements
     }
 
     #[test]
-    fn reject_v2_mesh() {
-        let v2 = "$MeshFormat\n2.2 0 8\n$EndMeshFormat\n";
-        assert!(read_msh_str(v2).is_err());
+    fn parse_v2_mesh() {
+        let v2 = r#"$MeshFormat
+2.2 0 8
+$EndMeshFormat
+$Nodes
+3
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+3 1.0 1.0 0.0
+$EndNodes
+$Elements
+1
+1 2 2 10 1 1 2 3
+$EndElements
+"#;
+        let raw = read_msh_str(v2).unwrap();
+        assert_eq!(raw.nodes.len(), 3);
+        assert_eq!(raw.elements.len(), 1);
+        assert_eq!(raw.elements[0].phys_tag, 10);
+        assert_eq!(raw.elements[0].node_ids, vec![1, 2, 3]);
     }
 }

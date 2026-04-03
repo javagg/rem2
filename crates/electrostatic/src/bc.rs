@@ -96,6 +96,7 @@ pub fn apply_dirichlet(
 mod tests {
     use super::*;
     use rem_core::{TripletMatrix, solve_pcg};
+    use rem_parallel::NoComm;
 
     /// Build 3×3 system [[2,-1,0],[-1,2,-1],[0,-1,2]] and apply φ[0]=0, φ[2]=1.
     /// Exact solution: φ = [0, 0.5, 1].
@@ -111,7 +112,7 @@ mod tests {
         let dofs: HashMap<usize, f64> = [(0, 0.0), (2, 1.0)].iter().copied().collect();
         apply_dirichlet(&mut mat, &mut rhs, &dofs);
 
-        let result = solve_pcg(&mat, &rhs, 1e-12, 100);
+        let result = solve_pcg(&mat, &rhs, 1e-12, 100, &NoComm);
         assert!(result.converged);
         assert!((result.solution[0] - 0.0).abs() < 1e-10, "φ[0]={}", result.solution[0]);
         assert!((result.solution[1] - 0.5).abs() < 1e-10, "φ[1]={}", result.solution[1]);

@@ -54,10 +54,10 @@ fn main() -> anyhow::Result<()> {
             rem_magnetostatic::run(&config, comm.as_ref() as &dyn Comm)?;
         }
         ProblemType::Eigenmode => {
-            anyhow::bail!("Eigenmode solver not yet implemented (v0.2)");
+            rem_eigenmode::run(&config, comm.as_ref() as &dyn Comm)?;
         }
         ProblemType::Driven => {
-            anyhow::bail!("Driven solver not yet implemented (v0.2)");
+            rem_driven::run(&config, comm.as_ref() as &dyn Comm)?;
         }
         ProblemType::Transient => {
             anyhow::bail!("Transient solver not yet implemented (v1.0)");
