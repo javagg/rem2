@@ -378,30 +378,15 @@ rem2/
 │           ├── lib.rs
 │           └── api.rs           # wasm-bindgen JS API
 │
-├── web/                         # Vue3 静态 Demo（可部署至 GitHub Pages）
-│   ├── package.json
-│   ├── vite.config.ts
+├── crates/yew-app/              # Yew 前端（纯 Rust WASM，trunk 构建）
+│   ├── Cargo.toml
+│   ├── Trunk.toml
 │   ├── index.html
 │   └── src/
-│       ├── main.ts
-│       ├── App.vue
-│       ├── components/
-│       │   ├── ExampleSelector.vue   # 示例列表侧边栏
-│       │   ├── ConfigEditor.vue      # Palace JSON 编辑器（CodeMirror）
-│       │   ├── MeshViewer.vue        # 网格 2D/3D 预览（Three.js）
-│       │   ├── SolverPanel.vue       # 求解进度 + Web Worker 调度
-│       │   ├── FieldViewer.vue       # 标量/矢量场可视化
-│       │   └── ResultTable.vue       # CSV 结果表格
-│       ├── examples/
-│       │   ├── parallel_plate/       # 平行板电容器示例
-│       │   │   ├── config.json       # Palace 配置
-│       │   │   └── mesh.msh          # 预置 GMSH 网格
-│       │   ├── coaxial/
-│       │   ├── square_conductor/
-│       │   └── transformer/
-│       ├── worker/
-│       │   └── solver.worker.ts      # Web Worker：加载 WASM 并执行求解
-│       └── assets/
+│       ├── main.rs              # Yew App 组件
+│       ├── examples.rs          # 8 个 Palace 示例配置 + 网格数据
+│       ├── solver.rs            # 直接调用 rem-* 求解器
+│       └── style.css            # 样式
 │
 ├── examples/
 │   ├── parallel_plate.json      # Palace 格式示例配置
@@ -744,125 +729,84 @@ impl RemWasmSolver {
 
 ---
 
-## 11. Web Demo 规范（web/）
+## 11. Web Demo 规范（crates/yew-app/）
 
 ### 11.1 技术栈
 
 | 层 | 技术 | 说明 |
 |----|------|------|
-| 框架 | Vue 3 + Composition API | `<script setup>` 风格 |
-| 构建 | Vite 5 | 原生 ESM，开发热重载 |
-| UI 组件 | Naive UI | 中文友好，Tree/Table/Monaco 等 |
-| 代码编辑 | Monaco Editor | Palace JSON 语法高亮 + 校验 |
-| 网格预览 | Three.js | WebGL 渲染 GMSH 网格（2D/3D） |
-| 场可视化 | Three.js + custom shader | 标量场热图、矢量场箭头 |
-| 状态管理 | Pinia | solver 状态、示例列表 |
-| WASM 加载 | `crates/wasm` 编译产物 | 通过 `wasm-pack build --target web` |
-| 求解执行 | Web Worker | 不阻塞 UI 线程 |
-| 部署 | 纯静态文件 | `vite build` 产物可直接托管 |
+| 框架 | Yew 0.21 (Rust) | 纯 Rust 前端框架，函数组件 |
+| 构建 | Trunk | WASM 构建 + 开发热重载 |
+| 求解器 | 直接链接 rem-* crates | 同进程调用，无 JS/WASM 边界开销 |
+| 代码展示 | `<pre>` | 配置 JSON + Rust 源码展示 |
+| 部署 | 纯静态文件 | `trunk build` 产物可直接托管 |
 
 ### 11.2 页面布局
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  REM — Rust EM Solver          [GitHub] [Docs]              │  ← 顶栏
-├──────────────┬──────────────────────────┬───────────────────┤
-│              │                          │                   │
-│  示例列表    │   Palace JSON 编辑器     │   网格/场 预览    │
-│              │   (Monaco Editor)        │   (Three.js)      │
-│  • 平行板    │                          │                   │
-│  • 同轴线    │   {                      │   [mesh canvas]   │
-│  • 方形导线  │     "Problem": {         │                   │
-│  • 变压器    │       "Type": "Elec..."  │                   │
-│  • 谐振腔*   │     },                   │                   │
-│  • CPW*      │     ...                  │                   │
-│              │   }                      │                   │
-│  [上传 .msh] │                          │  [字段: ▼ 电位]   │
-│  [上传 .json]│                          │  [范围: 0 ─── 1V] │
-│              ├──────────────────────────┤                   │
-│              │   [▶ 运行求解]           │                   │
-│              │   进度: ████░░ 67%       │                   │
-├──────────────┴──────────────────────────┴───────────────────┤
-│  结果表格：domain-E.csv  |  电容矩阵  |  日志输出            │  ← 底栏
-└─────────────────────────────────────────────────────────────┘
-* 标注：v0.2 功能，当前版本不可用
+│  REM EM Solver Demo (Yew + WASM)                            │
+├──────────────────────┬──────────────────────────────────────┤
+│                      │  [Palace Config] [Test Source]       │
+│  Example: [▼ 选择]   │                                      │
+│                      │  {                                   │
+│  [▶ Run Simulation]  │    "Problem": {                      │
+│                      │      "Type": "Electrostatic"         │
+│  Summary Result:     │    },                                │
+│  Energy: 0.123 pJ    │    "Model": { ... },                │
+│  Nodes: 456          │    "Boundaries": { ... },            │
+│  Max |E|: 1.23 V/m   │    "Solver": { ... }                │
+│                      │  }                                   │
+│  Logs:               │                                      │
+│  ┌────────────────┐  │                                      │
+│  │Starting sim... │  │                                      │
+│  │Completed.      │  │                                      │
+│  └────────────────┘  │                                      │
+└──────────────────────┴──────────────────────────────────────┘
 ```
 
-### 11.3 Web Worker 接口
+### 11.3 架构
 
-```typescript
-// web/src/worker/solver.worker.ts
-import init, { RemSolver } from '../pkg/rem_wasm.js';
+Yew 应用直接链接 rem-* Rust crates，在 WASM 主线程中调用求解器：
 
-let solver: RemSolver | null = null;
-
-self.onmessage = async (e: MessageEvent) => {
-  const { type, payload } = e.data;
-
-  switch (type) {
-    case 'init':
-      await init();
-      solver = new RemSolver();
-      self.postMessage({ type: 'ready' });
-      break;
-
-    case 'solve':
-      try {
-        solver!.load_config(payload.configJson);
-        solver!.load_mesh(new Uint8Array(payload.meshBytes));
-        const result = JSON.parse(solver!.solve());
-        self.postMessage({ type: 'result', payload: result });
-      } catch (err) {
-        self.postMessage({ type: 'error', payload: String(err) });
-      }
-      break;
-  }
-};
-```
-
-### 11.4 预置示例规范
-
-每个示例目录包含：
-- `config.json` — Palace 格式配置（`Output` 留空，WASM 模式忽略）
-- `mesh.msh` — GMSH v4.1 格式，文件 < 500 KB
-- `meta.json` — 示例描述（名称、描述、预期结果、支持版本）
-
-```json
-// web/src/examples/parallel_plate/meta.json
-{
-  "id": "parallel_plate",
-  "name": "平行板电容器",
-  "description": "ε_r=4.5 介质，顶板 1V，底板 0V，精确解 φ=y",
-  "type": "Electrostatic",
-  "status": "available",
-  "expected": { "capacitance_pf_per_m2": 39.8 }
+```rust
+// crates/yew-app/src/solver.rs
+pub fn run_example(key: &str) -> Result<SimResult, String> {
+    let config = load_config_from_str(config_json, ConfigFormat::Json)?;
+    let mesh = load_mesh_from_bytes(&config, &mesh_bytes, &NoComm)?;
+    mesh.partition(&comm);
+    // 根据 problem type 调用 solve_es / solve_ms ...
 }
 ```
+
+优势：
+- 无 Worker/jsmpi mock — 单进程直接调用
+- 编译期类型安全 — 配置/求解器接口在编译时校验
+- 代码量更少 — 无 JS/TS、无 package.json、无 node_modules
+
+### 11.4 预置示例
+
+8 个 Palace 示例（定义在 `examples.rs`）：
+- **Spheres** (Electrostatic) ✅ — 生成网格 `annular_msh`
+- **Rings** (Magnetostatic) ✅ — 生成网格 `rect_bimaterial_msh`
+- **Coaxial** (Electrostatic) ✅ — 内嵌 .msh 文件
+- **Cylinder** (Magnetostatic) ✅ — 内嵌 .msh 文件
+- **Adapter** (Driven) 🔲 v0.2
+- **Antenna** (Driven) 🔲 v0.2
+- **CPW** (Driven) 🔲 v0.2
+- **Transmon** (Eigenmode) 🔲 v0.2
 
 ### 11.5 构建与部署
 
 ```bash
-# 1. 构建 WASM 包（在项目根目录）
-wasm-pack build crates/wasm --target web --out-dir ../../web/src/pkg
+# 开发模式
+cd crates/yew-app && trunk serve      # http://localhost:8080
 
-# 2. 安装 Web 依赖
-cd web && npm install
+# 构建静态产物
+cd crates/yew-app && trunk build      # 输出到 dist/
 
-# 3. 开发模式
-npm run dev        # http://localhost:5173
-
-# 4. 构建静态产物
-npm run build      # 输出到 web/dist/
-
-# 5. 部署（GitHub Pages / Nginx 等任意静态托管）
-# dist/ 内容直接托管，无需服务端
+# 部署：dist/ 内容直接托管至 GitHub Pages / Nginx 等
 ```
-
-**GitHub Pages 自动部署（推荐）**：在 `.github/workflows/deploy.yml` 中配置：
-1. `cargo build crates/wasm --target wasm32-unknown-unknown --release`
-2. `wasm-pack build --target web`
-3. `npm run build`
-4. 将 `web/dist/` 推送至 `gh-pages` 分支
 
 ---
 

@@ -12,6 +12,7 @@ members = [
     "crates/cli",
     "crates/parallel",
     "crates/wasm",
+    "crates/yew-app",
     "vendor/rmetis",
 ]
 

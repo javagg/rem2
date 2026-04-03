@@ -661,8 +661,8 @@ pub fn load_mesh_from_bytes(config: &PalaceConfig, data: &[u8]) -> RemResult<Rem
 # 构建 WASM
 cargo build --target wasm32-unknown-unknown -p rem-wasm --no-default-features --features wasm
 
-# 使用 wasm-pack（输出到 web/src/pkg，供 Vue3 直接 import）
-wasm-pack build crates/wasm --target web --out-dir ../../web/src/pkg
+# 使用 trunk 构建 Yew 前端（输出到 crates/yew-app/dist/）
+cd crates/yew-app && trunk build
 
 # 测试 WASM 功能（在 node 中运行）
 wasm-pack test crates/wasm --node
@@ -902,169 +902,67 @@ match config.problem.problem_type {
 
 ---
 
-## 阶段 7.5: Web Demo（web/）
+## 阶段 7.5: Web Demo（crates/yew-app/）
 
-**目标**: 构建 Vue3 静态 Demo 页面，集成 WASM 求解器，可零配置部署至 GitHub Pages。
+**目标**: 构建纯 Rust Yew 前端，直接链接 rem-* 求解器，可零配置部署至 GitHub Pages。
 
-> **前置条件**: 阶段 6（WASM 绑定）完成，`web/src/pkg/` 下有有效的 wasm-pack 产物。
+> **前置条件**: 阶段 6（WASM 绑定）完成，`trunk` 已安装。
 
-### 7.5.1 初始化项目
+### 7.5.1 技术栈
 
-```bash
-cd web
-npm create vue@latest . -- --typescript --router=false --pinia --no-jsx
-npm install naive-ui @vicons/ionicons5
-npm install three @types/three
-npm install @monaco-editor/vue
-npm install pinia
+- **Yew 0.21** — Rust 前端框架，函数组件 + hooks
+- **Trunk** — WASM 构建工具，开发热重载
+- **直接链接 rem-* crates** — 无 Worker/jsmpi，同进程调用求解器
+
+### 7.5.2 项目结构
+
+```
+crates/yew-app/
+├── Cargo.toml         # 依赖 yew, rem-*, wasm-bindgen 等
+├── Trunk.toml         # Trunk 构建配置
+├── index.html         # 入口 HTML
+└── src/
+    ├── main.rs        # Yew App 组件（示例选择、运行、结果、日志、代码查看）
+    ├── examples.rs    # 8 个 Palace 示例配置 + 网格数据
+    ├── solver.rs      # 封装 rem-* 求解器调用
+    └── style.css      # 样式
 ```
 
-**`vite.config.ts`** 关键配置（启用 WASM 支持）：
+### 7.5.3 求解器调用
 
-```typescript
-import { defineConfig } from 'vite'
-import vue from '@vitejs/plugin-vue'
+Yew 组件通过 `wasm_bindgen_futures::spawn_local` 异步调用：
 
-export default defineConfig({
-  plugins: [vue()],
-  optimizeDeps: {
-    exclude: ['rem-wasm'],  // 不预构建 WASM 包
-  },
-  server: {
-    headers: {
-      // Web Worker + SharedArrayBuffer 需要这两个头
-      'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'require-corp',
-    },
-  },
-  build: {
-    target: 'esnext',  // 支持顶层 await（WASM init 用）
-  },
-})
-```
-
-### 7.5.2 组件实现顺序
-
-**Step 1 — ExampleSelector.vue**
-
-侧边栏，从 `src/examples/*/meta.json` 动态加载示例列表。点击示例后：
-1. 读取对应 `config.json` 内容 → 更新 Pinia `configStore.json`
-2. 读取对应 `mesh.msh` 字节 → 更新 `meshStore.bytes`
-3. 触发 MeshViewer 重新渲染
-
-```typescript
-// src/stores/example.ts
-import { defineStore } from 'pinia'
-import { ref } from 'vue'
-
-export const useExampleStore = defineStore('example', () => {
-  const configJson = ref('')
-  const meshBytes = ref<Uint8Array | null>(null)
-  const currentExample = ref('')
-
-  async function loadExample(id: string) {
-    const config = await fetch(`./examples/${id}/config.json`).then(r => r.text())
-    const meshBuf = await fetch(`./examples/${id}/mesh.msh`).then(r => r.arrayBuffer())
-    configJson.value = config
-    meshBytes.value = new Uint8Array(meshBuf)
-    currentExample.value = id
-  }
-
-  return { configJson, meshBytes, currentExample, loadExample }
-})
-```
-
-**Step 2 — ConfigEditor.vue**
-
-Monaco Editor 包装组件，绑定 `exampleStore.configJson`，提供 JSON 语法高亮。
-
-```vue
-<template>
-  <MonacoEditor
-    v-model:value="store.configJson"
-    language="json"
-    theme="vs-dark"
-    :options="{ minimap: { enabled: false }, fontSize: 13 }"
-    style="height: 100%; width: 100%"
-  />
-</template>
-```
-
-**Step 3 — SolverPanel.vue + Web Worker**
-
-`SolverPanel` 支持两种模式，通过 UI 开关切换：
-- **单 Worker 模式**（默认）：调用 `solver.worker.ts`，使用 `SerialComm`
-- **多 Worker 并行模式**：调用 `mpi-coordinator.ts`，使用 `WorkerComm`（需浏览器支持 SharedArrayBuffer）
-
-```typescript
-// src/composables/useSolver.ts
-export function useSolver() {
-  const worker = new Worker(
-    new URL('../worker/solver.worker.ts', import.meta.url),
-    { type: 'module' }
-  )
-  const status = ref<'idle' | 'running' | 'done' | 'error'>('idle')
-  const result = ref<SolveResult | null>(null)
-  const log = ref<string[]>([])
-
-  worker.onmessage = (e) => {
-    if (e.data.type === 'ready') {
-      status.value = 'idle'
-    } else if (e.data.type === 'result') {
-      result.value = e.data.payload
-      status.value = 'done'
-    } else if (e.data.type === 'error') {
-      log.value.push(`ERROR: ${e.data.payload}`)
-      status.value = 'error'
+```rust
+// crates/yew-app/src/solver.rs
+pub fn run_example(key: &str) -> Result<SimResult, String> {
+    let config = load_config_from_str(config_json, ConfigFormat::Json)?;
+    let mesh = load_mesh_from_bytes(&config, &mesh_bytes, &NoComm)?;
+    mesh.partition(&comm);
+    match cfg.problem.problem_type {
+        ProblemType::Electrostatic => { solve_es(...) }
+        ProblemType::Magnetostatic => { solve_ms(...) }
+        _ => Err("Not implemented"),
     }
-  }
-
-  async function solve(configJson: string, meshBytes: Uint8Array) {
-    status.value = 'running'
-    worker.postMessage({ type: 'solve', payload: { configJson, meshBytes: meshBytes.buffer } }, [meshBytes.buffer])
-  }
-
-  worker.postMessage({ type: 'init' })
-  return { status, result, log, solve }
 }
 ```
 
-**Step 4 — MeshViewer.vue**
+### 7.5.4 构建与部署
 
-Three.js 渲染 GMSH 网格轮廓（2D 截面），从 `SolveResult.nodeCoords` + `connectivity` 构建 `THREE.BufferGeometry`。
-
-**Step 5 — FieldViewer.vue**
-
-渲染求解结果场量：
-- 标量场（电位 φ）：节点颜色映射（jet colormap）
-- 矢量场（E/B 场）：单元箭头（`THREE.ArrowHelper`）
-- 色标条：CSS 渐变 + min/max 数值显示
-
-**Step 6 — ResultTable.vue**
-
-将 `SolveResult.csvOutputs` 中的 CSV 字符串解析后渲染为 Naive UI 的 `NDataTable`。
-
-### 7.5.3 示例文件制作
-
-每个预置示例网格必须满足：
-- GMSH v4.1 ASCII 格式（`-format msh4`）
-- 2D 示例文件 < 200 KB，3D 示例 < 500 KB
-- 物理组 ID 与对应 `config.json` 中的 `Attributes` 完全一致
-
-生成命令（需本地安装 gmsh）：
 ```bash
-gmsh examples/meshes/parallel_plate.geo -2 -o web/src/examples/parallel_plate/mesh.msh -format msh4
-gmsh examples/meshes/coaxial.geo -2 -o web/src/examples/coaxial/mesh.msh -format msh4
+# 开发模式
+cd crates/yew-app && trunk serve      # http://localhost:8080
+
+# 构建静态产物
+cd crates/yew-app && trunk build      # 输出到 dist/
 ```
 
-### 7.5.4 验收标准
+### 7.5.5 验收标准
 
-- [ ] `npm run dev` 启动无控制台错误
-- [ ] 点击"平行板"示例后，Monaco 编辑器显示对应 JSON，Three.js 渲染网格轮廓
-- [ ] 点击"运行求解"后，Web Worker 执行，进度反馈显示，最终渲染电位场热图
-- [ ] `npm run build` 产物 `dist/` 可用 `npx serve dist` 本地验证
-- [ ] 所有预置示例（平行板、同轴线、方形导线）均可成功求解并显示结果
-- [ ] 页面在 Chrome/Firefox/Edge 最新版均正常运行
+- [x] `trunk serve` 启动无错误，浏览器显示完整 UI
+- [x] 选择 Spheres 示例运行，显示能量/节点数/场强结果
+- [x] 选择 Rings 示例运行磁静场
+- [x] Config/Source tab 切换正常
+- [x] 未实现的示例（Driven/Eigenmode）按钮禁用并显示提示
 
 ---
 
@@ -1145,7 +1043,7 @@ done
 | 版本 | 内容 | 对应阶段 |
 |------|------|---------|
 | v0.1.0 | 工作区 + 配置解析 + 静电/静磁 + CLI + VTK 输出 | 1-5 |
-| v0.1.1 | WASM 绑定 + Vue3 Web Demo（可部署） | 6, 7.5 |
+| v0.1.1 | WASM 绑定 + Yew Web Demo（可部署） | 6, 7.5 |
 | v0.2.0 | 并行层 (jsmpi/Comm trait) + 分布式组装 | 6.5, 7 |
 | v0.2.1 | rmetis 子模块 + METIS k-way 对偶图分区 | — |
 | v0.3.0 | Palace 官方示例完整兼容测试 | 8 |
