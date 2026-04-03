@@ -70,7 +70,7 @@ pub const EXAMPLES: &[ExampleMeta] = &[
     "PEC": { "Attributes": [2] },
     "LumpedPort": [{ "Index": 1, "Attributes": [3], "R": 50.0 }]
   },
-  "Solver": { "Order": 1, "Driven": { "FreqStart": 1e9, "FreqEnd": 10e9, "FreqStep": 0.1e9 } }
+  "Solver": { "Order": 1, "Driven": { "MinFreq": 1e9, "MaxFreq": 10e9, "FreqStep": 0.1e9 } }
 }"#,
         source_code: "// Driven solver not yet implemented",
     },
@@ -87,7 +87,7 @@ pub const EXAMPLES: &[ExampleMeta] = &[
     "Absorbing": { "Attributes": [2] },
     "LumpedPort": [{ "Index": 1, "Attributes": [3], "R": 50.0 }]
   },
-  "Solver": { "Order": 2, "Driven": { "FreqStart": 2e9, "FreqEnd": 3e9, "FreqStep": 0.05e9 } }
+  "Solver": { "Order": 2, "Driven": { "MinFreq": 2e9, "MaxFreq": 3e9, "FreqStep": 0.05e9 } }
 }"#,
         source_code: "// Driven solver not yet implemented",
     },
@@ -127,19 +127,20 @@ pub const EXAMPLES: &[ExampleMeta] = &[
     },
     ExampleMeta {
         key: "cylinder",
-        label: "Cylinder (Magnetostatic)",
+        label: "Cylinder (Magnetostatic 3D, v0.2)",
         problem_type: "Magnetostatic",
-        status: ExampleStatus::Ready,
+        status: ExampleStatus::Unimplemented,
         config_json: r#"{
   "Problem": { "Type": "Magnetostatic", "Output": "." },
   "Model": { "Mesh": "cylinder.msh", "L0": 0.001 },
   "Domains": { "Materials": [{ "Attributes": [1], "Permeability": 1000.0 }] },
   "Boundaries": {
-    "Source": { "Current": [{ "Index": 1, "Attributes": [2], "Value": 1.0 }] }
+    "Ground": { "Attributes": [4] },
+    "SurfaceCurrent": [{ "Index": 1, "Attributes": [2], "Direction": "+Z" }]
   },
   "Solver": { "Order": 1 }
 }"#,
-        source_code: "// Magnetostatic cylinder example",
+        source_code: "// Magnetostatic cylinder example\n// Physical groups: 1=cylinder(vol), 2=top, 3=bottom, 4=exterior, 5=symmetry",
     },
     ExampleMeta {
         key: "transmon",
