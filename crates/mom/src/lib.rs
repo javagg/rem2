@@ -22,6 +22,7 @@ pub mod assemble;
 pub mod excitation;
 pub mod postprocess;
 pub mod basis;
+pub mod mie;
 
 use rem_config::{PalaceConfig, MomSolverConfig};
 use rem_core::RemResult;

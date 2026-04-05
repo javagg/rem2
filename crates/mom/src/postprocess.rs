@@ -2,11 +2,44 @@
 
 use crate::surface_mesh::SurfaceMesh;
 use num_complex::Complex64;
-use rem_core::RemResult;
+use rem_core::{RemResult, ETA0};
 use std::f64::consts::PI;
 use std::path::Path;
 
-/// Compute bistatic RCS and write `{output_dir}/postpro/rcs.csv`.
+/// Compute bistatic RCS [m²] at given (theta, phi) angles.
+/// Returns a 2-D array: `result[i_theta][i_phi]`.
+///
+/// For x-polarized pulse-basis currents (scalar J_m on each face):
+///   N_x(r̂) = Σ_m J_m · A_m · exp(jk r̂·r_m)
+///   σ(r̂) = k²η₀²/(4π) · |N_x|²   [m²]
+pub fn rcs_pattern(
+    currents: &[Complex64],
+    surf: &SurfaceMesh,
+    k: f64,
+    theta_deg: &[f64],
+    phi_deg: &[f64],
+) -> Vec<Vec<f64>> {
+    let prefactor = k * k * ETA0 * ETA0 / (4.0 * PI);
+    theta_deg.iter().map(|&theta_d| {
+        let theta = theta_d.to_radians();
+        phi_deg.iter().map(|&phi_d| {
+            let phi = phi_d.to_radians();
+            let rx = theta.sin() * phi.cos();
+            let ry = theta.sin() * phi.sin();
+            let rz = theta.cos();
+            // Radiation vector (x-component)
+            let nx: Complex64 = currents.iter().zip(surf.faces.iter())
+                .map(|(&jm, face)| {
+                    let phase = k * (rx*face.centroid[0] + ry*face.centroid[1] + rz*face.centroid[2]);
+                    jm * Complex64::new(0.0, phase).exp() * face.area
+                })
+                .sum();
+            prefactor * nx.norm_sqr()
+        }).collect()
+    }).collect()
+}
+
+
 ///
 /// For pulse basis, `currents[m]` is the surface current density on face m [A/m].
 /// For RWG basis, `currents[n]` is the coefficient of the n-th RWG basis function.
