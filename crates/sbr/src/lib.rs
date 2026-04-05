@@ -7,12 +7,22 @@
 //! ```text
 //! 1. Load mesh → extract PEC surface → build BVH
 //! 2. For each frequency:
-//!    a. Launch aperture rays (uniform grid ⊥ k̂_inc)
-//!    b. For each ray, trace bounces:
-//!         intersect BVH → compute J_PO = 2 n̂ × H_inc → update currents
-//!         reflect ray (Fresnel / PEC mirror) → next bounce
+//!    a. First-bounce PO (per-face): J = 2 n̂ × H_inc, shadow-tested via BVH
+//!    b. Multi-bounce (per-ray): trace reflected rays (bounce ≥ 1),
+//!       J += (A_ray / A_face) × 2 n̂ × H_ray  (flux-to-density conversion)
 //!    c. Far-field PO integral → RCS CSV + surface VTK
 //! ```
+//!
+//! ## Why two stages?
+//!
+//! First-bounce PO should be computed once per illuminated face (not once per
+//! ray that happens to hit the face), because the ray density just controls
+//! angular sampling resolution.  Accumulating first-bounce J from rays leads to
+//! J ∝ ray_density, which then over-counts in the far-field integral.
+//!
+//! For bounces ≥ 1 the ray carries a flux per unit cross-sectional area
+//! (A_ray = spacing²); to convert it to a surface current *density* [A/m] we
+//! scale by A_ray / A_face.
 
 pub mod ray;
 pub mod bvh;
@@ -24,8 +34,9 @@ pub mod output;
 use std::f64::consts::PI;
 use std::sync::Arc;
 
+use num_complex::Complex64;
 use rem_config::{PalaceConfig, SbrSolverConfig};
-use rem_core::{C0, RemError, RemResult};
+use rem_core::{C0, ETA0, RemError, RemResult};
 use rem_mom::surface_mesh::SurfaceMesh;
 use rem_parallel::NoComm;
 
@@ -87,7 +98,11 @@ pub fn run_with_mesh(
     };
 
     // ── 4. Frequency sweep ────────────────────────────────────────────────
-    let freq_step = if sbr_cfg.freq_step > 0.0 { sbr_cfg.freq_step } else { sbr_cfg.freq_max - sbr_cfg.freq_min + 1.0 };
+    let freq_step = if sbr_cfg.freq_step > 0.0 {
+        sbr_cfg.freq_step
+    } else {
+        sbr_cfg.freq_max - sbr_cfg.freq_min + 1.0
+    };
     let mut freq = sbr_cfg.freq_min;
     while freq <= sbr_cfg.freq_max + 1e-3 * freq_step {
         log::info!("SBR+ solve at f = {:.3e} Hz", freq);
@@ -101,19 +116,30 @@ pub fn run_with_mesh(
             pol:       sbr_cfg.polarization.clone(),
         };
 
-        // Launch aperture rays
-        let init_rays = launch_aperture_rays(&wave, &surf, k, sbr_cfg.ray_density, freq);
-        log::info!("  {} aperture rays launched", init_rays.len());
+        // ── Stage 1: first-bounce PO (per-face, ray-density independent) ──
+        let mut currents = first_bounce_po(&surf, &bvh, &wave, k);
 
-        // Trace all rays and accumulate PO currents
-        let currents = trace_all_rays(
-            init_rays, &bvh, &surf, &wave, k, sbr_cfg,
-        );
+        // ── Stage 2: multi-bounce rays (bounce ≥ 1) ───────────────────────
+        if sbr_cfg.max_bounces > 1 {
+            // Ray area = spacing² (aperture grid cell area [m²])
+            let spacing = 1.0 / sbr_cfg.ray_density.sqrt();
+            let a_ray = spacing * spacing;
 
-        // Far-field RCS → CSV
+            let init_rays = launch_aperture_rays(&wave, &surf, k, sbr_cfg.ray_density, freq);
+            log::info!("  {} aperture rays launched for multi-bounce", init_rays.len());
+
+            let mb = multibounce_rays(init_rays, &bvh, &surf, &wave, k, sbr_cfg, a_ray);
+            for (fi, fc) in mb.iter().enumerate() {
+                for i in 0..3 {
+                    currents[fi].j[i] += fc.j[i];
+                }
+            }
+        }
+
+        // ── Stage 3: Far-field RCS → CSV ───────────────────────────────────
         write_rcs(output_dir, freq, &currents, &surf, k, &theta_deg, &phi_deg)?;
 
-        // Surface current VTK
+        // ── Stage 4: Surface current VTK ───────────────────────────────────
         let vtk_path = output_dir
             .join("postpro")
             .join(format!("sbr_{:.3e}Hz.vtk", freq));
@@ -127,35 +153,104 @@ pub fn run_with_mesh(
 }
 
 // ---------------------------------------------------------------------------
-// Ray tracing kernel
+// Stage 1 – First-bounce PO  (per-face, shadow-tested)
 // ---------------------------------------------------------------------------
 
-fn trace_all_rays(
-    init_rays: Vec<ray::Ray>,
-    bvh: &Bvh,
+/// Compute PO surface currents for the direct (first-bounce) illumination.
+///
+/// For each face in `surf`:
+///   1. Geometric visibility: dot(n̂_face, −k̂_inc) > 0 (face points toward source)
+///   2. Shadow test: cast a ray from the face centroid toward the source;
+///      if it hits another face the centroid is in shadow → skip.
+///   3. If illuminated: `J = 2 n̂ × H_inc(centroid)`
+///
+/// This is *independent of ray density* — every illuminated face gets exactly
+/// one contribution from the incident wave.
+fn first_bounce_po(
     surf: &SurfaceMesh,
+    bvh: &Bvh,
     wave: &PlaneWave,
     k: f64,
-    cfg: &SbrSolverConfig,
 ) -> CurrentMap {
-    use num_complex::Complex64;
-    use rem_core::ETA0;
+    let kh = wave.k_hat(); // unit incident direction
+    let neg_kh = [-kh[0], -kh[1], -kh[2]]; // toward source
 
-    let mut currents = zero_currents(surf);
-
-    // Pre-compute self-intersection offset: 1e-5 × √(min face area)
-    // Moved outside the closure so it isn't recomputed per ray per bounce.
-    let eps_offset = 1e-5 * surf.faces.iter()
+    // Self-intersection offset (move centroid slightly toward source)
+    let eps = 1e-6 * surf.faces.iter()
         .map(|f| f.area.sqrt())
         .fold(f64::INFINITY, f64::min)
         .max(1e-10);
 
-    // Each ray returns a list of (face_index, J contribution)
+    let mut currents = zero_currents(surf);
+
+    for (fi, face) in surf.faces.iter().enumerate() {
+        // 1. Geometric test: face must point toward incoming wave
+        let cos_inc = ray::dot3(&face.normal, &neg_kh);
+        if cos_inc <= 0.0 {
+            continue; // back-face or edge-on
+        }
+
+        // 2. Shadow test: is centroid visible from source direction?
+        //
+        // IMPORTANT: the centroid of a curved triangular face lies slightly
+        // INSIDE the surface (vertices are on the sphere, centroid is not).
+        // We must offset along the outward face normal (not along neg_kh) to
+        // place the shadow-ray origin outside the surface; otherwise the shadow
+        // ray starts inside the closed mesh and immediately hits the back face.
+        let offset = (0.01 * face.area.sqrt()).max(eps);
+        let shadow_origin = ray::add3(&face.centroid, &ray::scale3(&face.normal, offset));
+        if bvh.any_hit(&shadow_origin, &neg_kh, f64::INFINITY) {
+            continue; // shadowed by another part of the surface
+        }
+
+        // 3. PO current: J = 2 n̂ × H_inc
+        let (_e_inc, h_inc) = incident_fields(wave, k, &face.centroid);
+        let j = po_current_pec(&h_inc, &face.normal, &kh);
+        currents[fi].j = j;
+    }
+
+    currents
+}
+
+// ---------------------------------------------------------------------------
+// Stage 2 – Multi-bounce rays  (bounce ≥ 1)
+// ---------------------------------------------------------------------------
+
+/// Trace reflected rays and accumulate PO contributions from bounces ≥ 1.
+///
+/// Each ray carries a flux tube of cross-sectional area `a_ray` [m²].
+/// When it hits a face of area `A_face`, the surface current density is:
+///
+/// ```text
+/// ΔJ = (a_ray / A_face) × 2 n̂ × H_ray
+/// ```
+///
+/// This ensures that the total current on a face scales with the illuminated
+/// power per unit area, independent of how many rays happen to hit it.
+fn multibounce_rays(
+    init_rays: Vec<ray::Ray>,
+    bvh: &Bvh,
+    surf: &SurfaceMesh,
+    _wave: &PlaneWave,
+    k: f64,
+    cfg: &SbrSolverConfig,
+    a_ray: f64,
+) -> CurrentMap {
+    // Self-intersection offset
+    let eps_offset = 1e-6 * surf.faces.iter()
+        .map(|f| f.area.sqrt())
+        .fold(f64::INFINITY, f64::min)
+        .max(1e-10);
+
     let trace_one = |mut r: ray::Ray| -> Vec<(usize, [Complex64; 3])> {
         let mut contributions = Vec::new();
 
+        // First intersection = first bounce (bounce 0 is handled by first_bounce_po)
+        // We trace the ray and skip accumulating J at bounce 0, only bounces ≥ 1.
+        // However, we still need to *reflect* at bounce 0 to get the right direction.
+        // Strategy: trace normally, but only accumulate for bounce > 0.
+
         loop {
-            // Termination checks
             if !r.weight.is_finite() || r.weight < cfg.weight_thresh {
                 break;
             }
@@ -163,50 +258,52 @@ fn trace_all_rays(
                 break;
             }
 
-            // ── Nearest intersection ──────────────────────────────────────
             let hit = match bvh.intersect(&r.origin, &r.dir) {
                 Some(h) => h,
                 None    => break,
             };
 
-            // Ensure face normal faces the incoming ray
-            let face_normal = {
-                let fn_ = surf.faces[hit.face_idx].normal;
+            let face = &surf.faces[hit.face_idx];
+
+            // Ensure face normal faces incoming ray
+            let face_normal: [f64; 3] = {
+                let fn_ = face.normal;
                 if ray::dot3(&r.dir, &fn_) < 0.0 { fn_ } else {
                     [-fn_[0], -fn_[1], -fn_[2]]
                 }
             };
 
-            // ── PO current: J = 2 n̂ × H at hit point ─────────────────────
-            // For bounce 0 (incident ray): H from the incident plane wave.
-            // For bounce n>0: H is stored in the ray (from previous reflection).
-            let h_at_hit: [Complex64; 3] = if r.bounce == 0 {
-                let (_, h) = incident_fields(wave, k, &hit.point);
-                h
-            } else {
-                // Propagate ray H by the phase delay from r.origin to hit.point
-                let dist = hit.t; // parametric t = physical distance (unit dir)
-                let phase_delay = Complex64::new(0.0, k * dist).exp();
-                [r.h_field[0] * phase_delay,
-                 r.h_field[1] * phase_delay,
-                 r.h_field[2] * phase_delay]
-            };
-
-            let j_po = po_current_pec(&h_at_hit, &face_normal, &r.dir);
-            contributions.push((hit.face_idx, j_po));
-
-            // ── Reflection ────────────────────────────────────────────────
-            // Propagate E to hit point
+            // Propagate E and H to hit point via phase delay
             let dist = hit.t;
             let phase_delay = Complex64::new(0.0, k * dist).exp();
-            let e_at_hit = [r.e_field[0] * phase_delay,
-                            r.e_field[1] * phase_delay,
-                            r.e_field[2] * phase_delay];
-            let h_at_hit_e = [h_at_hit[0], h_at_hit[1], h_at_hit[2]];
+            let e_at_hit = [
+                r.e_field[0] * phase_delay,
+                r.e_field[1] * phase_delay,
+                r.e_field[2] * phase_delay,
+            ];
+            let h_at_hit = [
+                r.h_field[0] * phase_delay,
+                r.h_field[1] * phase_delay,
+                r.h_field[2] * phase_delay,
+            ];
 
+            // Accumulate PO current only for bounce ≥ 1
+            if r.bounce >= 1 {
+                let j_po = po_current_pec(&h_at_hit, &face_normal, &r.dir);
+                // Scale by a_ray / A_face to convert flux to surface current density
+                let scale = a_ray / face.area.max(1e-30);
+                let j_scaled = [
+                    j_po[0] * scale,
+                    j_po[1] * scale,
+                    j_po[2] * scale,
+                ];
+                contributions.push((hit.face_idx, j_scaled));
+            }
+
+            // Reflect
             let iface = Interface::pec();
             let (e_refl, new_dir) = reflect_field(
-                &e_at_hit, &h_at_hit_e, &r.dir, &face_normal, &iface,
+                &e_at_hit, &h_at_hit, &r.dir, &face_normal, &iface,
             );
 
             // Derive reflected H from reflected E: H = (k̂_refl × E_refl) / η₀
@@ -216,7 +313,6 @@ fn trace_all_rays(
                 (new_dir[0] * e_refl[1] - new_dir[1] * e_refl[0]) / ETA0,
             ];
 
-            // Offset origin to avoid re-hitting the same face
             let p_offset = ray::add3(&hit.point, &ray::scale3(&face_normal, eps_offset));
 
             r.origin  = p_offset;
@@ -224,13 +320,13 @@ fn trace_all_rays(
             r.e_field = e_refl;
             r.h_field = h_refl;
             r.bounce += 1;
-            // PEC: |Γ| = 1, weight unchanged; for dielectrics multiply by |Γ|
         }
 
         contributions
     };
 
-    // Parallel dispatch (non-WASM) / serial (WASM)
+    let mut currents = zero_currents(surf);
+
     #[cfg(not(target_arch = "wasm32"))]
     {
         use rayon::prelude::*;
