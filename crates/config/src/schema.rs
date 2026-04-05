@@ -21,6 +21,10 @@ pub struct PalaceConfig {
 
     #[serde(rename = "Solver", default)]
     pub solver: SolverConfig,
+
+    /// REM extension: post-processing options (ignored by Palace).
+    #[serde(rename = "Postprocessing", default)]
+    pub postprocessing: Postprocessing,
 }
 
 // ---------------------------------------------------------------------------
@@ -54,6 +58,10 @@ pub enum ProblemType {
     Eigenmode,
     Driven,
     Transient,
+    /// Method of Moments (RWG + EFIE/CFIE) — REM extension, not in Palace
+    MoM,
+    /// Boundary Element Method (Laplace/Helmholtz) — REM extension, not in Palace
+    BEM,
 }
 
 // ---------------------------------------------------------------------------
@@ -288,6 +296,10 @@ pub struct SolverConfig {
 
     #[serde(rename = "Linear", default)]
     pub linear: LinearSolver,
+
+    /// REM extension: MoM solver parameters (ignored by Palace).
+    #[serde(rename = "MoM", default)]
+    pub mom: Option<MomSolverConfig>,
 }
 
 fn default_order() -> u8 { 1 }
@@ -302,6 +314,7 @@ impl Default for SolverConfig {
             electrostatic: None,
             magnetostatic: None,
             linear: LinearSolver::default(),
+            mom: None,
         }
     }
 }
@@ -470,4 +483,119 @@ where
     }
 
     d.deserialize_any(AttrsVisitor)
+}
+
+// ---------------------------------------------------------------------------
+// MoM solver config (REM extension — ignored by Palace)
+// ---------------------------------------------------------------------------
+
+/// MoM solver parameters, placed under `Solver.MoM` in the config file.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MomSolverConfig {
+    /// Integral equation: "EFIE" | "MFIE" | "CFIE" | "PMCHWT"
+    #[serde(rename = "Equation", default = "default_mom_equation")]
+    pub equation: String,
+
+    /// Basis function: "RWG" | "Pulse"
+    #[serde(rename = "Basis", default = "default_mom_basis")]
+    pub basis: String,
+
+    /// Start frequency [Hz]
+    #[serde(rename = "FreqMin")]
+    pub freq_min: f64,
+
+    /// End frequency [Hz]
+    #[serde(rename = "FreqMax")]
+    pub freq_max: f64,
+
+    /// Frequency step [Hz]
+    #[serde(rename = "FreqStep")]
+    pub freq_step: f64,
+
+    /// CFIE mixing coefficient α ∈ [0,1]: 0 = pure EFIE, 1 = pure MFIE
+    #[serde(rename = "Alpha", default = "default_cfie_alpha")]
+    pub alpha: f64,
+
+    /// Convergence tolerance for singular integrals
+    #[serde(rename = "SingularTol", default = "default_singular_tol")]
+    pub singular_tol: f64,
+
+    /// Linear solver for Z·I = V: "Direct" | "GMRES" | "ACA" | "FMM"
+    #[serde(rename = "FastSolver", default = "default_fast_solver")]
+    pub fast_solver: String,
+}
+
+fn default_mom_equation() -> String { "CFIE".to_string() }
+fn default_mom_basis()     -> String { "RWG".to_string()  }
+fn default_cfie_alpha()    -> f64    { 0.5 }
+fn default_singular_tol()  -> f64    { 1.0e-6 }
+fn default_fast_solver()   -> String { "Direct".to_string() }
+
+// ---------------------------------------------------------------------------
+// Postprocessing (REM extension — ignored by Palace)
+// ---------------------------------------------------------------------------
+
+/// Top-level `Postprocessing` section (REM extension).
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct Postprocessing {
+    /// Far-field RCS pattern output
+    #[serde(rename = "RCS", default)]
+    pub rcs: Option<RcsConfig>,
+}
+
+/// Configuration for RCS (Radar Cross Section) output.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RcsConfig {
+    /// Azimuth angles φ in degrees, e.g. `[0, 90]`
+    #[serde(rename = "PhiDeg", default)]
+    pub phi_deg: Vec<f64>,
+
+    /// Elevation angles θ in degrees; supports range string `"0:5:180"`
+    #[serde(rename = "ThetaDeg", deserialize_with = "deserialize_angle_range", default)]
+    pub theta_deg: Vec<f64>,
+}
+
+/// Deserialize either `[0, 10, 20]` or `"0:10:180"` into `Vec<f64>`.
+pub fn deserialize_angle_range<'de, D>(d: D) -> Result<Vec<f64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::{self, Visitor};
+    use std::fmt;
+
+    struct AngleVisitor;
+
+    impl<'de> Visitor<'de> for AngleVisitor {
+        type Value = Vec<f64>;
+
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            write!(f, "an array of floats or a range string like \"0:10:180\"")
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Vec<f64>, A::Error>
+        where A: de::SeqAccess<'de> {
+            let mut v = Vec::new();
+            while let Some(x) = seq.next_element::<f64>()? {
+                v.push(x);
+            }
+            Ok(v)
+        }
+
+        fn visit_str<E: de::Error>(self, s: &str) -> Result<Vec<f64>, E> {
+            // Parse "start:step:end"
+            let parts: Vec<&str> = s.split(':').collect();
+            if parts.len() == 3 {
+                let start = parts[0].trim().parse::<f64>().map_err(de::Error::custom)?;
+                let step  = parts[1].trim().parse::<f64>().map_err(de::Error::custom)?;
+                let end   = parts[2].trim().parse::<f64>().map_err(de::Error::custom)?;
+                if step == 0.0 { return Err(de::Error::custom("ThetaDeg step cannot be zero")); }
+                let n = ((end - start) / step).round() as usize + 1;
+                Ok((0..n).map(|i| start + i as f64 * step).collect())
+            } else {
+                Err(de::Error::custom(format!("expected \"start:step:end\", got {:?}", s)))
+            }
+        }
+    }
+
+    d.deserialize_any(AngleVisitor)
 }

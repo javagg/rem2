@@ -62,6 +62,12 @@ fn main() -> anyhow::Result<()> {
         ProblemType::Transient => {
             anyhow::bail!("Transient solver not yet implemented (v1.0)");
         }
+        ProblemType::MoM => {
+            rem_mom::run(&config)?;
+        }
+        ProblemType::BEM => {
+            anyhow::bail!("BEM solver not yet implemented (v0.7)");
+        }
     }
 
     Ok(())

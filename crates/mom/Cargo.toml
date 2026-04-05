@@ -1,0 +1,18 @@
+[package]
+name    = "rem-mom"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rem-core     = { workspace = true }
+rem-config   = { workspace = true }
+rem-mesh     = { workspace = true }
+rem-parallel = { workspace = true }
+num-complex  = { workspace = true }
+thiserror    = { workspace = true }
+log          = { workspace = true }
+rayon        = "1"
+faer         = { version = "0.21", features = [] }
+
+[dev-dependencies]
+approx = "0.5"
