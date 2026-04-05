@@ -24,7 +24,7 @@ use rem_config::PalaceConfig;
 use rem_core::{CsrMatrix, RemError, RemResult, TripletMatrix, solve_pcg};
 use rem_electrostatic::{assemble::assemble_stiffness, bc::collect_dirichlet_dofs, bc::apply_dirichlet};
 use rem_materials::DomainMap;
-use rem_mesh::{RemMesh, BoundaryTag};
+use rem_mesh::RemMesh;
 use rem_mesh::gmsh::read_msh_file;
 use rem_parallel::Comm;
 use nalgebra::DMatrix;
@@ -83,7 +83,7 @@ pub fn solve(
 
     let n = mesh.n_nodes();
     let n_modes = eig_cfg.n;
-    let tol     = eig_cfg.tol;
+    let _tol    = eig_cfg.tol;  // reserved for iterative eigensolvers (not yet used)
     let target_hz = eig_cfg.target;
 
     // Angular frequency target → shift σ = (ω/c)²

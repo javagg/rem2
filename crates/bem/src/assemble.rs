@@ -28,8 +28,6 @@ use rem_core::{RemError, RemResult};
 use rayon::prelude::*;
 use faer::Mat;
 
-type C64 = faer::c64;
-
 /// Assemble Laplace BEM V and K matrices (P0 basis).
 ///
 /// Returns `(V, K)` where:
@@ -171,6 +169,7 @@ fn kmn_regular(
 /// V[m,m] = ∫_Tm G(r_m, r') dS'  where r_m = centroid (collocation self-integral).
 ///
 /// Uses Duffy polar transform to remove 1/R singularity at r' → r_m.
+#[allow(non_snake_case)]
 fn duffy_self_laplace_G(
     face: &rem_mom::surface_mesh::TriFace,
     nodes: &[[f64; 3]],

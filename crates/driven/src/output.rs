@@ -7,7 +7,7 @@ use std::io::Write;
 
 /// Write S-parameter CSV in Palace format:
 ///   f (Hz), Re(S11), Im(S11), |S11| (dB)
-pub fn write_s_params(out_dir: &str, results: &[super::FreqResult]) -> RemResult<()> {
+pub(crate) fn write_s_params(out_dir: &str, results: &[super::FreqResult]) -> RemResult<()> {
     let path = Path::new(out_dir).join("port-S.csv");
     let mut f = std::fs::File::create(&path).map_err(RemError::Io)?;
     writeln!(f, "f (Hz),Re(S[1][1]),Im(S[1][1]),|S[1][1]| (dB)").map_err(RemError::Io)?;

@@ -433,7 +433,9 @@ fn read_msh_v2_binary(bytes: &[u8]) -> RemResult<RawMesh> {
 
     let mut nodes: Vec<(usize, f64, f64, f64)> = Vec::new();
     let mut elements: Vec<RawElement> = Vec::new();
-    let mut phys_names: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    // $PhysicalNames section is parsed for completeness but only numeric tags
+    // from the element data are used; string names are not needed downstream.
+    let _phys_names: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
 
     loop {
         // Skip blank lines / find section tag

@@ -138,7 +138,7 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
 // Helpers
 // ---------------------------------------------------------------------------
 
-struct FreqResult {
+pub(crate) struct FreqResult {
     freq_hz: f64,
     s11_re:  f64,
     s11_im:  f64,

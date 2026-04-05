@@ -16,6 +16,7 @@ use std::f64::consts::PI;
 
 /// Laplace single-layer kernel: G(r, r') = 1/(4π R).
 #[inline]
+#[allow(non_snake_case)]
 pub fn laplace_G(r: &[f64; 3], rp: &[f64; 3]) -> f64 {
     let rx = r[0]-rp[0]; let ry = r[1]-rp[1]; let rz = r[2]-rp[2];
     let dist = (rx*rx + ry*ry + rz*rz).sqrt();
@@ -27,6 +28,7 @@ pub fn laplace_G(r: &[f64; 3], rp: &[f64; 3]) -> f64 {
 ///
 /// `n_prime`: outward unit normal at source point r'.
 #[inline]
+#[allow(non_snake_case)]
 pub fn laplace_dG_dn(r: &[f64; 3], rp: &[f64; 3], n_prime: &[f64; 3]) -> f64 {
     let rx = r[0]-rp[0]; let ry = r[1]-rp[1]; let rz = r[2]-rp[2];
     let dist2 = rx*rx + ry*ry + rz*rz;
@@ -40,6 +42,7 @@ pub fn laplace_dG_dn(r: &[f64; 3], rp: &[f64; 3], n_prime: &[f64; 3]) -> f64 {
 ///
 /// `n`: outward normal at observer point r.
 #[inline]
+#[allow(non_snake_case)]
 pub fn laplace_dG_dn_obs(r: &[f64; 3], rp: &[f64; 3], n: &[f64; 3]) -> f64 {
     let rx = r[0]-rp[0]; let ry = r[1]-rp[1]; let rz = r[2]-rp[2];
     let dist2 = rx*rx + ry*ry + rz*rz;

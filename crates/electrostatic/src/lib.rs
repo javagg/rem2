@@ -18,7 +18,7 @@ pub mod output;
 
 use rem_config::PalaceConfig;
 use rem_core::{RemResult, solve_pcg};
-use rem_parallel::{Comm, NoComm};
+use rem_parallel::Comm;
 use rem_materials::DomainMap;
 use rem_mesh::{RemMesh, BoundaryTag};
 use rem_mesh::gmsh::read_msh_file;
@@ -148,6 +148,7 @@ mod tests {
     use super::*;
     use rem_config::{load_config_from_str, ConfigFormat};
     use rem_mesh::{Node, Element, ElementKind};
+    use rem_parallel::NoComm;
     use std::collections::HashMap;
 
     /// Unit square: 4 nodes, 2 triangles (tag=1).
