@@ -16,6 +16,7 @@ members = [
     "crates/wasm",
     "crates/yew-app",
     "crates/mom",
+    "crates/bem",
     "vendor/rmetis",
 ]
 

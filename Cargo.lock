@@ -2119,6 +2119,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "rem-bem"
+version = "0.1.0"
+dependencies = [
+ "approx",
+ "faer",
+ "log",
+ "num-complex",
+ "rayon",
+ "rem-config",
+ "rem-core",
+ "rem-mesh",
+ "rem-mom",
+ "rem-parallel",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "rem-cli"
 version = "0.1.0"
 dependencies = [
