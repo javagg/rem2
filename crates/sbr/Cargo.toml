@@ -3,6 +3,10 @@ name    = "rem-sbr"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "gen_sbr_meshes"
+path = "src/bin/gen_sbr_meshes.rs"
+
 [dependencies]
 rem-core     = { workspace = true }
 rem-config   = { workspace = true }

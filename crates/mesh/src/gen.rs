@@ -427,4 +427,135 @@ mod tests {
         assert_eq!(lower.len(), upper.len(), "equal lower/upper triangles");
         assert_eq!(lower.len(), 2 * 6 * 3); // 2 * n_x * (n_y/2) = 2*6*3
     }
+
+    #[test]
+    fn pec_sphere_msh_node_count() {
+        let msh = pec_sphere_msh(1.0, 16, 32, 1);
+        let raw = read_msh_str(&msh).unwrap();
+        // n_phi slices × n_theta rings + 2 poles
+        let expected_nodes = 16 * 32 + 2;
+        assert_eq!(raw.nodes.len(), expected_nodes);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PEC sphere surface mesh (3-D, boundary elements only)
+// ---------------------------------------------------------------------------
+
+/// Generate a GMSH v4.1 ASCII triangulated surface mesh of a sphere.
+///
+/// The mesh consists only of `Tri3` boundary elements — suitable for SBR+
+/// and MoM PEC-sphere validation.
+///
+/// Physical groups:
+/// - `surf_tag`: all Tri3 surface triangles
+///
+/// Parameters:
+/// - `radius` : sphere radius [mesh units]
+/// - `n_phi`  : latitude rings (equator splits; must be ≥ 2)
+/// - `n_theta`: longitude sectors (must be ≥ 4)
+///
+/// Topology: UV parameterisation with explicit north/south poles.
+/// - north pole: node 1
+/// - south pole: node 2
+/// - ring nodes : node 3 .. 2 + n_phi * n_theta
+pub fn pec_sphere_msh(radius: f64, n_phi: usize, n_theta: usize, surf_tag: u32) -> String {
+    assert!(n_phi >= 2 && n_theta >= 4, "n_phi >= 2 and n_theta >= 4 required");
+
+    let n_ring_nodes = n_phi * n_theta;
+    let total_nodes  = n_ring_nodes + 2; // +2 poles
+
+    // Triangles:
+    //   n_theta cap triangles at north pole
+    //   n_theta cap triangles at south pole
+    //   2 * n_theta * (n_phi - 1) band quads → 2 triangles each
+    let n_cap   = 2 * n_theta;
+    let n_band  = 2 * n_theta * (n_phi - 1);
+    let total_tri = n_cap + n_band;
+
+    // 1-based node ids
+    let north_id = 1usize;
+    let south_id = 2usize;
+    // ring_id(i_phi, i_theta): i_phi in 0..n_phi, i_theta in 0..n_theta
+    let ring_id = |i_phi: usize, i_theta: usize| -> usize {
+        3 + i_phi * n_theta + i_theta
+    };
+
+    // latitude φ: 0 = north pole, π = south pole
+    // ring i_phi covers φ_i = π*(i_phi+1)/(n_phi+1)
+    let phi_at = |i: usize| -> f64 { PI * (i + 1) as f64 / (n_phi + 1) as f64 };
+    let theta_at = |j: usize| -> f64 { 2.0 * PI * j as f64 / n_theta as f64 };
+
+    let mut s = String::with_capacity(total_nodes * 80 + total_tri * 40);
+    s.push_str("$MeshFormat\n4.1 0 8\n$EndMeshFormat\n");
+
+    // ── Nodes ──────────────────────────────────────────────────────────────
+    s.push_str("$Nodes\n");
+    // Single entity block: dim=2 (surface), tag=1
+    s.push_str(&format!("1 {} 1 {}\n", total_nodes, total_nodes));
+    s.push_str(&format!("2 1 0 {}\n", total_nodes));
+    for id in 1..=total_nodes {
+        s.push_str(&format!("{}\n", id));
+    }
+    // North pole
+    s.push_str(&format!("0.000000000000000e0 0.000000000000000e0 {:.15e}\n", radius));
+    // South pole
+    s.push_str(&format!("0.000000000000000e0 0.000000000000000e0 {:.15e}\n", -radius));
+    // Ring nodes
+    for i_phi in 0..n_phi {
+        let phi   = phi_at(i_phi);
+        let r_xy  = radius * phi.sin();
+        let z     = radius * phi.cos();
+        for i_theta in 0..n_theta {
+            let theta = theta_at(i_theta);
+            s.push_str(&format!(
+                "{:.15e} {:.15e} {:.15e}\n",
+                r_xy * theta.cos(), r_xy * theta.sin(), z
+            ));
+        }
+    }
+    s.push_str("$EndNodes\n");
+
+    // ── Elements ───────────────────────────────────────────────────────────
+    s.push_str("$Elements\n");
+    // One entity block: dim=2, tag=surf_tag, elem_type=2 (Tri3)
+    s.push_str(&format!("1 {} 1 {}\n", total_tri, total_tri));
+    s.push_str(&format!("2 {} 2 {}\n", surf_tag, total_tri));
+
+    let mut eid = 1usize;
+
+    // North cap: north_pole → ring 0, sector j → j+1
+    for j in 0..n_theta {
+        let a = north_id;
+        let b = ring_id(0, j);
+        let c = ring_id(0, (j + 1) % n_theta);
+        s.push_str(&format!("{} {} {} {}\n", eid, a, b, c));
+        eid += 1;
+    }
+
+    // Band quads
+    for i in 0..(n_phi - 1) {
+        for j in 0..n_theta {
+            let j1 = (j + 1) % n_theta;
+            let a = ring_id(i,     j);
+            let b = ring_id(i + 1, j);
+            let c = ring_id(i + 1, j1);
+            let d = ring_id(i,     j1);
+            s.push_str(&format!("{} {} {} {}\n", eid, a, b, c)); eid += 1;
+            s.push_str(&format!("{} {} {} {}\n", eid, a, c, d)); eid += 1;
+        }
+    }
+
+    // South cap
+    let last_ring = n_phi - 1;
+    for j in 0..n_theta {
+        let a = south_id;
+        let b = ring_id(last_ring, (j + 1) % n_theta);
+        let c = ring_id(last_ring, j);
+        s.push_str(&format!("{} {} {} {}\n", eid, a, b, c));
+        eid += 1;
+    }
+
+    s.push_str("$EndElements\n");
+    s
 }
