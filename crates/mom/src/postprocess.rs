@@ -40,8 +40,82 @@ pub fn rcs_pattern(
 }
 
 
+/// Write surface current distribution to VTK Legacy ASCII format.
 ///
-/// For pulse basis, `currents[m]` is the surface current density on face m [A/m].
+/// Generates a `.vtk` file with the triangular surface mesh and
+/// the following cell data (one value per triangle):
+/// - `J_mag` : |J_m| magnitude [A/m]
+/// - `J_real`: Re(J_m) component
+/// - `J_imag`: Im(J_m) component
+///
+/// Compatible with ParaView and VisIt.
+pub fn write_surface_vtk(
+    path: &Path,
+    currents: &[Complex64],
+    surf: &SurfaceMesh,
+) -> RemResult<()> {
+    use std::io::Write;
+    let mut f = std::fs::File::create(path)?;
+
+    let n_pts = surf.nodes.len();
+    let n_cells = surf.faces.len();
+
+    // Header
+    writeln!(f, "# vtk DataFile Version 3.0")?;
+    writeln!(f, "MoM surface current")?;
+    writeln!(f, "ASCII")?;
+    writeln!(f, "DATASET UNSTRUCTURED_GRID")?;
+    writeln!(f)?;
+
+    // Points
+    writeln!(f, "POINTS {} float", n_pts)?;
+    for &[x,y,z] in &surf.nodes {
+        writeln!(f, "{:.8e} {:.8e} {:.8e}", x, y, z)?;
+    }
+    writeln!(f)?;
+
+    // Cells: each row = "3 i0 i1 i2" for a triangle
+    writeln!(f, "CELLS {} {}", n_cells, n_cells * 4)?;
+    for face in &surf.faces {
+        writeln!(f, "3 {} {} {}", face.nodes[0], face.nodes[1], face.nodes[2])?;
+    }
+    writeln!(f)?;
+
+    // Cell types: 5 = VTK_TRIANGLE
+    writeln!(f, "CELL_TYPES {}", n_cells)?;
+    for _ in 0..n_cells {
+        writeln!(f, "5")?;
+    }
+    writeln!(f)?;
+
+    // Cell data
+    writeln!(f, "CELL_DATA {}", n_cells)?;
+
+    // |J| magnitude
+    writeln!(f, "SCALARS J_mag float 1")?;
+    writeln!(f, "LOOKUP_TABLE default")?;
+    for &j in currents {
+        writeln!(f, "{:.8e}", j.norm())?;
+    }
+
+    // Re(J)
+    writeln!(f, "SCALARS J_real float 1")?;
+    writeln!(f, "LOOKUP_TABLE default")?;
+    for &j in currents {
+        writeln!(f, "{:.8e}", j.re)?;
+    }
+
+    // Im(J)
+    writeln!(f, "SCALARS J_imag float 1")?;
+    writeln!(f, "LOOKUP_TABLE default")?;
+    for &j in currents {
+        writeln!(f, "{:.8e}", j.im)?;
+    }
+
+    Ok(())
+}
+
+
 /// For RWG basis, `currents[n]` is the coefficient of the n-th RWG basis function.
 ///
 /// Far-field formula (pulse approximation):
@@ -102,4 +176,40 @@ pub fn write_rcs(
     }
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::surface_mesh::{tri_geometry, TriFace};
+
+    fn mini_surf() -> (SurfaceMesh, Vec<Complex64>) {
+        let nodes = vec![[0.0,0.0,0.0],[1.0,0.0,0.0],[0.0,1.0,0.0]];
+        let (c,n,a) = tri_geometry(&nodes[0],&nodes[1],&nodes[2]);
+        let surf = SurfaceMesh {
+            nodes,
+            faces: vec![TriFace{nodes:[0,1,2],centroid:c,normal:n,area:a}],
+            edges: vec![],
+            boundary_edges: vec![],
+        };
+        let currents = vec![Complex64::new(1.0, 0.5)];
+        (surf, currents)
+    }
+
+    #[test]
+    fn vtk_output_creates_file() {
+        let (surf, currents) = mini_surf();
+        let tmp = std::env::temp_dir().join("test_surface_current.vtk");
+        write_surface_vtk(&tmp, &currents, &surf).expect("VTK write failed");
+        assert!(tmp.exists(), "VTK file not created");
+        let content = std::fs::read_to_string(&tmp).unwrap();
+        assert!(content.contains("vtk DataFile"), "Missing VTK header");
+        assert!(content.contains("J_mag"), "Missing J_mag scalar");
+        assert!(content.contains("CELL_DATA"), "Missing cell data section");
+        let _ = std::fs::remove_file(&tmp);
+    }
 }

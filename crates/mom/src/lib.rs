@@ -124,6 +124,12 @@ pub fn run_with_mesh(
             &phi_deg,
         )?;
 
+        // Post-process: surface current VTK
+        let vtk_path = output_dir
+            .join("postpro")
+            .join(format!("surface_current_{:.3e}Hz.vtk", freq));
+        postprocess::write_surface_vtk(&vtk_path, &currents, &surf)?;
+
         freq += freq_step;
     }
 
