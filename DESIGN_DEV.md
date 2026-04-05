@@ -1040,7 +1040,11 @@ done
 | v0.2.0 | 并行层 (jsmpi/Comm trait) + 分布式组装 | 6.5, 7 |
 | v0.2.1 | rmetis 子模块 + METIS k-way 对偶图分区 | — |
 | v0.3.0 | Palace 官方示例完整兼容测试 | 8 |
-| v1.0.0 | 时域瞬态 + AMR | 未规划 |
+| **v0.4.0** | **MoM 基础设施：密集复数矩阵 + 表面网格提取 + 高斯求积** | **9** |
+| **v0.5.0** | **MoM EFIE 求解器：Green 函数 + 脉冲基函数 + 验证** | **10** |
+| **v0.6.0** | **MoM CFIE 求解器：RWG 基函数 + 奇异积分 + RCS 输出** | **11** |
+| **v0.7.0** | **BEM 静态求解器：Laplace BEM + 与 FEM 交叉验证** | **12** |
+| v1.0.0 | 时域瞬态 + AMR + MoM/BEM 生产就绪 | 未规划 |
 
 ---
 
@@ -1079,4 +1083,475 @@ writer.finish()?;
 - **TypeError: jsmpi.Init is not a function**: 确保 `worker.js` 中 `self.jsmpi` 完整实现了 `Init`, `Finalize`, `Comm_size`, `Comm_rank` 等桩函数。由于 `wasm-bindgen` 的命名空间绑定，这些函数必须存在于 JavaScript 对象中。
 - **文件路径无法访问**: WASM 运行在浏览器沙箱中，无法直接读取 `Model.Mesh` 指定的本地路径。建议通过 JavaScript 层 `fetch` 或 `FileReader` 获取字节流后传入 WASM 接口。
 
-*最后更新: 2026-04-01 | 作者: Claude (AI Agent 开发指南)*
+*最后更新: 2026-04-05 | 作者: Claude (AI Agent 开发指南)*
+
+---
+
+## 阶段 9: MoM/BEM 基础设施（v0.4.0）
+
+**目标**: 建立 `crates/mom` crate 骨架，实现密集复数矩阵、表面网格提取、高斯求积规则，不含任何 Green 函数逻辑。
+
+**前置条件**: 阶段 1-8 完成（FEM 求解器可用，Palace 兼容测试通过）。
+
+### 9.1 创建 crates/mom
+
+在根 `Cargo.toml` 的 `workspace.members` 中追加 `"crates/mom"`，并创建如下结构：
+
+```
+crates/mom/
+├── Cargo.toml
+└── src/
+    ├── lib.rs
+    ├── surface_mesh.rs   # 表面网格提取
+    ├── quadrature.rs     # 高斯求积规则
+    ├── matrix.rs         # 密集复数矩阵（Z 矩阵）
+    └── config.rs         # MoM 配置节解析
+```
+
+**Cargo.toml 核心依赖**:
+
+```toml
+[dependencies]
+rem-core     = { workspace = true }
+rem-config   = { workspace = true }
+rem-mesh     = { workspace = true }
+num-complex  = { workspace = true }
+faer         = { version = "0.19", features = ["complex"] }   # 密集矩阵 + LU
+rayon        = "1"                                             # 并行装配行
+```
+
+### 9.2 配置解析（config.rs）
+
+扩展 `crates/config/src/schema.rs`：
+
+```rust
+// 在 ProblemType 中新增
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub enum ProblemType {
+    Electrostatic,
+    Magnetostatic,
+    Eigenmode,
+    Driven,
+    Transient,
+    MoM,   // 新增
+    BEM,   // 新增
+}
+
+// 在 SolverConfig 中新增
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct SolverConfig {
+    // ...existing fields...
+    #[serde(rename = "MoM", default)]
+    pub mom: Option<MomSolverConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MomSolverConfig {
+    #[serde(rename = "Equation", default = "default_mom_equation")]
+    pub equation: String,       // "EFIE" | "MFIE" | "CFIE" | "PMCHWT"
+
+    #[serde(rename = "Basis", default = "default_mom_basis")]
+    pub basis: String,          // "RWG" | "Pulse"
+
+    #[serde(rename = "FreqMin")]
+    pub freq_min: f64,
+
+    #[serde(rename = "FreqMax")]
+    pub freq_max: f64,
+
+    #[serde(rename = "FreqStep")]
+    pub freq_step: f64,
+
+    #[serde(rename = "Alpha", default = "default_cfie_alpha")]
+    pub alpha: f64,             // CFIE 混合系数，0=EFIE，1=MFIE
+
+    #[serde(rename = "SingularTol", default = "default_singular_tol")]
+    pub singular_tol: f64,
+
+    #[serde(rename = "FastSolver", default = "default_fast_solver")]
+    pub fast_solver: String,    // "Direct" | "ACA" | "FMM"
+}
+
+fn default_mom_equation() -> String { "CFIE".to_string() }
+fn default_mom_basis()     -> String { "RWG".to_string()  }
+fn default_cfie_alpha()    -> f64    { 0.5 }
+fn default_singular_tol()  -> f64    { 1e-6 }
+fn default_fast_solver()   -> String { "Direct".to_string() }
+```
+
+同时在 `PalaceConfig` 顶层新增 `Postprocessing` 节：
+
+```rust
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct PalaceConfig {
+    // ...existing fields...
+    #[serde(rename = "Postprocessing", default)]
+    pub postprocessing: Postprocessing,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct Postprocessing {
+    #[serde(rename = "RCS", default)]
+    pub rcs: Option<RcsConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RcsConfig {
+    #[serde(rename = "PhiDeg", default)]
+    pub phi_deg: Vec<f64>,
+
+    /// 支持 "0:5:180" 范围字符串
+    #[serde(rename = "ThetaDeg", deserialize_with = "deserialize_angle_range")]
+    pub theta_deg: Vec<f64>,
+}
+```
+
+### 9.3 表面网格提取（surface_mesh.rs）
+
+从 `RemMesh.boundary_elements` 提取三角面元，并构建 RWG 所需的边-面拓扑：
+
+```rust
+/// 单个三角面元
+#[derive(Debug, Clone)]
+pub struct TriFace {
+    pub nodes: [usize; 3],          // 全局节点索引
+    pub centroid: [f64; 3],
+    pub normal: [f64; 3],           // 单位外法向
+    pub area: f64,
+}
+
+/// 共享边（RWG 基函数载体）
+#[derive(Debug, Clone)]
+pub struct SharedEdge {
+    pub nodes: [usize; 2],          // 边的两个节点（升序）
+    pub plus_face: usize,           // T+ 面索引
+    pub minus_face: usize,          // T- 面索引
+    pub length: f64,
+}
+
+pub struct SurfaceMesh {
+    pub nodes: Vec<[f64; 3]>,       // 节点坐标
+    pub faces: Vec<TriFace>,
+    pub edges: Vec<SharedEdge>,     // 内部共享边（RWG 基函数）
+    pub boundary_edges: Vec<[usize; 2]>, // 边界边（仅属于一个面）
+}
+
+impl SurfaceMesh {
+    /// 从 RemMesh 提取具有指定物理组属性的三角面
+    pub fn extract(rem_mesh: &RemMesh, pec_attrs: &[u32]) -> Self { ... }
+
+    /// 构建边-面拓扑（O(E log E)，排序后 hash）
+    fn build_edge_topology(faces: &[TriFace]) -> (Vec<SharedEdge>, Vec<[usize; 2]>) { ... }
+}
+```
+
+### 9.4 高斯求积规则（quadrature.rs）
+
+提供三角形面元上的数值积分规则：
+
+```rust
+/// 三角形上的 Dunavant 求积点（n 阶精确）
+pub struct TriQuad {
+    pub points: Vec<[f64; 3]>,   // 重心坐标 (ξ₁, ξ₂, ξ₃)
+    pub weights: Vec<f64>,
+}
+
+impl TriQuad {
+    pub fn new(order: usize) -> Self { ... }
+
+    /// 将重心坐标映射到全局坐标
+    pub fn global_point(tri: &TriFace, nodes: &[[f64; 3]], bary: &[f64; 3]) -> [f64; 3] { ... }
+}
+
+/// 在面元上对标量函数积分：∫_T f(x) dS ≈ Σ wᵢ f(xᵢ) |J|
+pub fn integrate_scalar<F: Fn(&[f64; 3]) -> f64>(
+    face: &TriFace,
+    nodes: &[[f64; 3]],
+    quad: &TriQuad,
+    f: F,
+) -> f64 { ... }
+```
+
+支持的阶次与求积点数：
+
+| 阶次 | 求积点数 | 精确多项式阶 | 用途 |
+|------|---------|------------|------|
+| 1 | 1 | 1 | 粗略估计 |
+| 3 | 4 | 3 | 远场常规积分 |
+| 5 | 7 | 5 | 默认标准积分 |
+| 7 | 13 | 7 | 高精度积分 |
+| 9 | 19 | 9 | 近奇异积分外层 |
+
+**验收标准**:
+- [ ] `crates/mom` 加入 workspace，`cargo build -p rem-mom` 编译通过
+- [ ] 新增 `ProblemType::MoM`/`BEM`，配置解析测试通过（`cargo test -p rem-config`）
+- [ ] 从 sphere.msh 提取表面网格，面元数、边数、节点数正确
+- [ ] 7 点高斯规则对 2 次多项式积分误差 < 1e-14
+
+---
+
+## 阶段 10: EFIE 求解器（脉冲基函数）（v0.5.0）
+
+**目标**: 实现最简单的 EFIE 求解器（脉冲/常数基函数，标量版），验证端到端流程，建立可对比的参考解。
+
+### 10.1 Green 函数（green.rs）
+
+```rust
+use num_complex::Complex64;
+use std::f64::consts::PI;
+
+/// 3D 自由空间标量 Green 函数
+/// G(r, r') = exp(-jkR) / (4πR)，R = |r - r'|
+pub fn green3d(r: &[f64; 3], r_prime: &[f64; 3], k: f64) -> Complex64 {
+    let rx = r[0] - r_prime[0];
+    let ry = r[1] - r_prime[1];
+    let rz = r[2] - r_prime[2];
+    let dist = (rx*rx + ry*ry + rz*rz).sqrt();
+    if dist < 1e-14 { return Complex64::ZERO; }  // 奇异点由专用积分处理
+    let phase = Complex64::new(0.0, -k * dist);
+    phase.exp() / (4.0 * PI * dist)
+}
+
+/// ∂G/∂n' = G(jkR + 1)/R² * (r-r')·n'
+pub fn green3d_normal_deriv(
+    r: &[f64; 3], r_prime: &[f64; 3], n_prime: &[f64; 3], k: f64
+) -> Complex64 { ... }
+```
+
+### 10.2 阻抗矩阵装配（pulse 基函数版）
+
+脉冲基函数最简单：每个面元一个未知量，基函数 = 1 on Tₙ, 0 otherwise。
+
+```rust
+/// 装配 N×N 阻抗矩阵（脉冲基函数 EFIE）
+/// Z[m,n] = -jωμ₀ ∫_Tm ∫_Tn G(r,r') dS' dS  （远场块）
+///         + 奇异修正项                         （对角块 m==n）
+pub fn assemble_efie_pulse(
+    surf: &SurfaceMesh,
+    freq: f64,
+    quad: &TriQuad,
+    singular_tol: f64,
+) -> faer::Mat<Complex64> {
+    let n = surf.faces.len();
+    let mut z = faer::Mat::<Complex64>::zeros(n, n);
+    let k = 2.0 * PI * freq / C0;
+    let omega = 2.0 * PI * freq;
+
+    // 外层循环可并行（rayon）
+    z.par_col_chunks_mut(1).enumerate().for_each(|(n_idx, mut col)| {
+        for m_idx in 0..n {
+            col[m_idx] = zmn_pulse(&surf.faces[m_idx], &surf.faces[n_idx], &surf.nodes, k, omega, quad);
+        }
+    });
+    z
+}
+
+fn zmn_pulse(...) -> Complex64 {
+    if m_idx == n_idx {
+        zmn_singular(...)   // Duffy 变换
+    } else {
+        zmn_regular(...)    // 标准高斯积分
+    }
+}
+```
+
+### 10.3 Duffy 变换（奇异自积分）
+
+```
+对角块 Z[m,m]：将三角形 T 分成 3 个子三角形（以源点为顶点），
+Duffy 变换消去 1/R 奇异性，转化为规则积分。
+
+参考：Rao, Wilton, Glisson (1982)，附录 B
+```
+
+```rust
+/// 计算自积分 ∫_T ∫_T G(r,r') dS' dS（Duffy 变换）
+fn zmn_singular(face: &TriFace, nodes: &[[f64; 3]], k: f64, omega: f64) -> Complex64 {
+    // 1. 将 T 分成 3 个以 r₁, r₂, r₃ 为源点极的子三角形
+    // 2. 每个子三角形做 Duffy 变换: u = ρ cos θ, v = ρ sin θ（极坐标）
+    // 3. 分母 R 被 Jacobian ρ 约消，得到光滑被积函数
+    // 4. 对 (ρ, θ) 做标准高斯积分
+    ...
+}
+```
+
+### 10.4 主求解流程
+
+```
+SurfaceMesh::extract(rem_mesh, pec_attrs)
+  └─ assemble_efie_pulse(surf, freq, quad)   → Z (N×N 复数密集)
+       └─ 激励向量 V (入射平面波在面元中心)
+            └─ faer::LU::factorize(Z)
+                 └─ LU.solve(V)              → I (面电流密度)
+                      └─ compute_rcs(I, surf, freq, theta, phi)
+                           └─ write_rcs_csv(output_dir, ...)
+```
+
+### 10.5 Palace 配置集成
+
+在 `crates/cli/src/main.rs` 的 `match` 分支中追加：
+
+```rust
+ProblemType::MoM => rem_mom::run(&config)?,
+ProblemType::BEM => rem_bem::run(&config)?,
+```
+
+**验收标准**:
+- [ ] PEC 球体（半径 0.1λ）EFIE 脉冲基函数 RCS 与 Mie 解析解误差 < 15%（脉冲基函数精度有限，预期误差较大）
+- [ ] Palace 配置格式解析：`Problem.Type = "MoM"` 正确路由到 MoM 求解器
+- [ ] `PEC.Attributes` 在 MoM 中正确识别为导体面
+- [ ] RCS CSV 输出格式与 `Postprocessing.RCS` 配置一致
+- [ ] `cargo test -p rem-mom` 单元测试全部通过（Green 函数、求积规则、Duffy 变换）
+
+---
+
+## 阶段 11: RWG 基函数 + CFIE（v0.6.0）
+
+**目标**: 实现 RWG 矢量基函数和 CFIE 方程，达到生产精度（PEC 球体 RCS 误差 < 5%）。
+
+### 11.1 RWG 基函数实现
+
+RWG 基函数定义在共享边 eₙ 上，载体为 T⁺ 和 T⁻ 两个三角形：
+
+```
+f_n(r) = {  lₙ/(2A⁺) * (r - r⁺_free)   if r ∈ T⁺
+          { -lₙ/(2A⁻) * (r - r⁻_free)   if r ∈ T⁻
+          {  0                            otherwise
+```
+
+其中 lₙ 为边长，A± 为面积，r±_free 为 T± 中不属于该边的顶点。
+
+```rust
+/// RWG 基函数（定义在 SharedEdge 上）
+pub struct RwgBasis {
+    pub edge_idx: usize,
+    pub plus_face: usize,
+    pub minus_face: usize,
+    pub free_node_plus: usize,   // T+ 中的自由顶点
+    pub free_node_minus: usize,  // T- 中的自由顶点
+    pub length: f64,             // 边长 lₙ
+}
+
+impl RwgBasis {
+    /// 在 T± 上对 f_n 求值
+    pub fn eval(&self, r: &[f64; 3], surf: &SurfaceMesh, in_plus: bool) -> [f64; 3] { ... }
+
+    /// ∇·f_n = ±lₙ/A± （常数）
+    pub fn divergence(&self, surf: &SurfaceMesh, in_plus: bool) -> f64 { ... }
+}
+```
+
+### 11.2 CFIE 阻抗矩阵
+
+CFIE = α·EFIE + (1-α)·η₀·MFIE，α ∈ [0,1]。
+
+**EFIE 项**（矢量 RWG）:
+```
+Z_EFIE[m,n] = -jωμ₀ ∫_Tm f_m(r)·∫_Tn G(r,r') f_n(r') dS' dS
+             + j/(ωε₀) ∫_Tm ∇_s·f_m(r) ∫_Tn G(r,r') ∇'_s·f_n(r') dS' dS
+```
+
+**MFIE 项**（仅适用外问题）:
+```
+Z_MFIE[m,n] = δ_{mn}/2 * ∫_Tm f_m dS
+             + ∫_Tm f_m(r)·n̂×∫_Tn ∇G×f_n dS' dS
+```
+
+### 11.3 Sauter-Schwab 奇异积分
+
+需处理四种几何接触情形（比脉冲基函数更复杂）：
+
+| 情形 | 条件 | 处理方法 |
+|------|------|---------|
+| 完全重合 (4D) | T = T' | Duffy 4D 变换（6 个子块） |
+| 共享边 (3D) | T ∩ T' = 一条边 | Sauter-Schwab Rule 2 |
+| 共享顶点 (2D) | T ∩ T' = 一个顶点 | Sauter-Schwab Rule 3 |
+| 非接触 (0D) | T ∩ T' = ∅ | 标准 7 点高斯 |
+
+**实现顺序**：先实现非接触 + 完全重合（最简单的两种），再逐步加入共享边和共享顶点。
+
+### 11.4 RCS 后处理
+
+```rust
+/// 计算双站 RCS（雷达截面积）
+/// σ(θ,φ) = 4π|F(θ,φ)|²/|E_inc|²
+/// F = ∫_S J_s(r') × exp(jk r̂·r') dS'
+pub fn compute_rcs(
+    currents: &[Complex64],  // RWG 展开系数
+    surf: &SurfaceMesh,
+    freq: f64,
+    theta_deg: &[f64],
+    phi_deg: &[f64],
+    output_dir: &Path,
+) -> RemResult<()> { ... }
+```
+
+**输出文件**（Palace 扩展格式）：
+```
+{output_dir}/postpro/rcs.csv
+Freq (GHz),Theta (deg),Phi (deg),RCS (dBsm)
+1.0,0,0,-15.3
+1.0,10,0,-14.8
+...
+```
+
+**验收标准**:
+- [ ] PEC 球体（半径 0.1λ）CFIE RCS 与 Mie 解析解误差 < 5%
+- [ ] α=1（纯 EFIE）和 α=0（纯 MFIE）分别可独立运行
+- [ ] Sauter-Schwab 4 种情形单元测试通过
+- [ ] RCS CSV 输出可与 `postprocessing.RCS` 配置正确对应
+
+---
+
+## 阶段 12: Laplace BEM 静电求解器（v0.7.0）
+
+**目标**: 实现 Laplace BEM，与现有 FEM 静电求解器交叉验证，同时扩展 `Problem.Type = "BEM"` 路由。
+
+### 12.1 BEM 方程
+
+对 Laplace 方程 ∇²φ = 0，外 Dirichlet 问题（PEC 表面）：
+
+```
+双层势表示:  φ(r) = ∫_S [φ(r') ∂G_L/∂n' - G_L(r,r') q(r')] dS'
+           G_L(r,r') = 1/(4π|r-r'|)
+```
+
+离散化后为 2×2 块系统（H·φ = G·q），P1 节点基函数足以达到二阶精度。
+
+### 12.2 与 Palace 配置的映射
+
+- `Boundaries.PEC.Attributes` → 导体表面（φ = 已知值）
+- `Boundaries.Terminal` → 激励端口（φ = Vₙ）
+- `Boundaries.Ground` → 接地（φ = 0）
+- 输出电容矩阵格式与 FEM 静电求解器完全相同（`capacitance.csv`）
+
+### 12.3 验证基准
+
+| 算例 | FEM 参考值 | BEM 目标误差 |
+|------|-----------|------------|
+| 平行板电容 | ε₀A/d | < 1% |
+| 球体电容 | 4πε₀R | < 0.5% |
+| 同轴线电容/长度 | 2πε₀/ln(b/a) | < 0.5% |
+
+**验收标准**:
+- [ ] 球体电容与解析解误差 < 0.5%
+- [ ] 与 FEM 静电结果（同网格）交叉误差 < 1%
+- [ ] `Problem.Type = "BEM"` 完整路由，Palace 其余配置字段正确传递
+
+---
+
+## MoM/BEM 开发注意事项
+
+### E. Palace 兼容性守护规则
+
+1. **不修改现有 Palace 字段语义**: `ProblemType` 已有值的处理逻辑绝对不能因 MoM/BEM 实现而改变。新增枚举值只做追加，不做替换。
+2. **新增字段必须有默认值**: `Solver.MoM`、`Postprocessing` 等新节必须加 `#[serde(default)]`，保证 Palace 配置在 REM 中无需修改即可运行。
+3. **兼容性回归测试不可删除**: `tests/integration/test_config_compat.rs` 中的 Palace 示例测试在每次 PR 中必须通过。
+4. **MoM 输出目录与 FEM 并列**: 不覆盖 FEM 输出，`{output_dir}/postpro/rcs.csv` vs `{output_dir}/postpro/domain-E.csv`。
+
+### F. MoM 数值稳定性
+
+1. **奇异积分是最高风险点**: 优先实现 Duffy 自积分，其次是 Sauter-Schwab，最后是近场近奇异。每种情形单独单元测试，对 Green 函数的已知积分解析解比对。
+2. **CFIE α 参数选择**: 默认 α=0.5（经典 CFIE）。纯 EFIE（α=1）在内谐振频率附近会发散——在文档和日志中明确标注。
+3. **条件数监控**: 装配完 Z 矩阵后输出估计条件数（`log::info!`），若 > 1e12 发出 `log::warn!`。
+4. **WASM 限制**: `faer` 支持 WASM，但 Z 矩阵 LU 分解在 WASM 下仅单线程（`rayon` WASM 支持有限）。建议 WASM 模式限制 N < 1000，超出则提示用 native 模式。

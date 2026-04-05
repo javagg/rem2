@@ -29,13 +29,17 @@
 | WASM 目标 | ❌ | ✅ | ✅ | ✅ |
 | MPI 并行（native rsmpi） | ✅ | 🔲 | ✅ | ✅ |
 | MPI 模拟（jsmpi + Web Worker） | ❌ | ✅ | ✅ | ✅ |
+| **矩量法 MoM (EFIE/CFIE)** | ❌ | ❌ | ❌ | ✅ |
+| **边界元法 BEM (Laplace/Helmholtz)** | ❌ | ❌ | ❌ | ✅ |
+| RCS / 远场后处理 | ❌ | ❌ | ❌ | ✅ |
 
 ### 1.2 核心差异化特性
 
 - **纯 Rust + WASM**: 无 C/C++ 依赖，可在浏览器运行
-- **Palace 配置兼容**: 直接读取 Palace JSON/YAML 配置文件
+- **Palace 配置兼容**: 直接读取 Palace JSON/YAML 配置文件（详见第 7 节）
 - **fem-rs 驱动**: 复用已验证的 FEM 基础设施
-- **边界元扩展接口**: 为 BEM 算法预留扩展点
+- **MoM/BEM 扩展**: v1.0 新增矩量法和边界元求解器（`crates/mom`），与 FEM 共享网格/配置层
+- **超集定位**: Palace 完全兼容 + MoM/BEM/RCS 额外能力，不破坏 Palace 用户现有工作流
 
 ---
 
@@ -617,21 +621,110 @@ env_logger = "0.11"
 
 ## 7. Palace 配置兼容性要求
 
+> **原则**: REM 是 Palace 的功能超集。任何合法的 Palace 配置文件，不加修改即可被 REM 解析并运行，结果误差在数值精度允许范围内与 Palace 一致。MoM/BEM 新增能力通过 REM 专有的扩展字段提供，这些字段在 Palace 中被忽略，因此双向无破坏性影响。
+
 ### 7.1 必须支持的特性
 
-1. **属性范围展开**: `"Attributes": "1,3-5,6"` → `[1, 3, 4, 5, 6]`
-2. **C++ 注释剥除**: `// 单行` 和 `/* 多行 */`
-3. **大小写敏感键名**: 完全匹配 Palace 的 PascalCase 键名
-4. **默认值填充**: 未指定字段使用 Palace 文档规定的默认值
-5. **单位换算**: 长度单位 `Model.L0` 作用于所有坐标值
+| 特性 | 说明 | 实现位置 |
+|------|------|---------|
+| **属性范围展开** | `"Attributes": "1,3-5,6"` → `[1,3,4,5,6]` | `config/src/preprocess.rs` |
+| **C++ 注释剥除** | `// 单行` 和 `/* 多行 */` 注释不影响解析 | `config/src/preprocess.rs` |
+| **PascalCase 键名** | 完全匹配 Palace 文档中的大小写（如 `MinFreq` 非 `min_freq`） | `config/src/schema.rs` |
+| **默认值填充** | 未指定字段使用 Palace 文档规定的默认值，而非 Rust 类型默认值 | `config/src/schema.rs` |
+| **长度单位换算** | `Model.L0` 作用于网格坐标缩放，不影响频率/时间等其他量纲 | `mesh/src/mesh_data.rs` |
+| **混合类型属性** | `"Attributes"` 同时接受整数数组和范围字符串 | `config/src/schema.rs` |
+| **可选节宽松解析** | `Boundaries`、`Domains` 等顶层节完全缺失时视为空，不报错 | `#[serde(default)]` |
 
-### 7.2 兼容性测试基准
+### 7.2 MoM/BEM 扩展字段（Palace 无损兼容）
 
-使用 Palace 官方示例配置：
-- `examples/rings/rings.json` — 静电场
-- `examples/coaxial/coaxial.json` — 同轴线静电
-- `examples/cavity/cavity.json` — 谐振腔特征模
-- `examples/cpw/cpw.json` — 共面波导频域驱动
+REM v1.0 在 `Problem.Type` 中新增以下值，Palace 工作流完全不受影响：
+
+```json
+{
+  "Problem": {
+    "Type": "MoM",
+    "Verbose": 1,
+    "Output": "./output"
+  },
+  "Model": {
+    "Mesh": "sphere.msh",
+    "L0": 1.0e-3
+  },
+  "Boundaries": {
+    "PEC": { "Attributes": [1] }
+  },
+  "Solver": {
+    "MoM": {
+      "Equation":    "CFIE",
+      "Basis":       "RWG",
+      "FreqMin":     1.0e9,
+      "FreqMax":     3.0e9,
+      "FreqStep":    0.5e9,
+      "Alpha":       0.5,
+      "SingularTol": 1.0e-6
+    }
+  },
+  "Postprocessing": {
+    "RCS": {
+      "PhiDeg":   [0, 90],
+      "ThetaDeg": "0:5:180"
+    },
+    "NearField": {
+      "Attributes": [10]
+    }
+  }
+}
+```
+
+**新增 `Problem.Type` 枚举值**:
+
+| 值 | 说明 | Palace 兼容性 |
+|----|------|-------------|
+| `"MoM"` | 矩量法（RWG 基函数，EFIE/CFIE） | Palace 不识别，不影响其工作流 |
+| `"BEM"` | 边界元法（Laplace/Helmholtz） | 同上 |
+
+**新增 `Solver.MoM` 节**（Palace 忽略未知节，无破坏性）:
+
+| 字段 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `Equation` | string | `"CFIE"` | `"EFIE"` \| `"MFIE"` \| `"CFIE"` \| `"PMCHWT"` |
+| `Basis` | string | `"RWG"` | `"RWG"` \| `"Pulse"` |
+| `FreqMin` | float | 必填 | 起始频率 [Hz] |
+| `FreqMax` | float | 必填 | 终止频率 [Hz] |
+| `FreqStep` | float | 必填 | 频率步进 [Hz] |
+| `Alpha` | float | `0.5` | CFIE 混合系数 α（0=EFIE，1=MFIE） |
+| `SingularTol` | float | `1e-6` | 奇异积分收敛容限 |
+| `FastSolver` | string | `"Direct"` | `"Direct"` \| `"ACA"` \| `"FMM"` |
+
+**新增 `Postprocessing` 节**:
+
+| 字段 | 说明 |
+|------|------|
+| `RCS.PhiDeg` | 远场 φ 角列表（度） |
+| `RCS.ThetaDeg` | 远场 θ 角范围，支持 `"0:5:180"` 格式 |
+| `NearField.Attributes` | 近场计算面的物理组 ID |
+
+### 7.3 配置兼容性保证矩阵
+
+| 场景 | 行为 |
+|------|------|
+| Palace 配置 → REM 解析 | ✅ 完全兼容，结果等价 |
+| REM MoM 配置 → Palace 解析 | ⚠️ Palace 仅解析已知字段，未知字段被忽略；Palace 不执行 MoM 求解（预期行为） |
+| 混合配置（同时含 FEM + MoM 字段） | ✅ REM 按 `Problem.Type` 派发到对应求解器 |
+| `Boundaries.PEC` 在 MoM 中的含义 | 与 FEM 相同：被 PEC 属性标记的面用于 MoM 阻抗矩阵装配 |
+
+### 7.4 兼容性测试基准
+
+**Level 1 — Palace 原生示例（必须通过）**:
+- `examples/rings/rings.json` — 静电场，电容矩阵误差 < 1%
+- `examples/coaxial/coaxial.json` — 同轴线静电，电容/长度误差 < 0.5%
+- `examples/cavity/cavity.json` — 谐振腔特征模，f₀ 误差 < 0.1%
+- `examples/cpw/cpw.json` — 共面波导频域驱动，S₁₁ 误差 < 0.5 dB
+
+**Level 2 — MoM/BEM 新增验证**:
+- PEC 球体散射 @ 1 GHz — RCS 与 Mie 解析解误差 < 5%
+- 偶极子天线 — 输入阻抗与 NEC2 参考值误差 < 3%
+- Laplace BEM — 平行板电容与 FEM 结果误差 < 1%
 
 ---
 
