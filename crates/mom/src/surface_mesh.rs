@@ -4,7 +4,7 @@
 //! and builds the shared-edge data structure needed for RWG basis functions.
 
 use rem_core::{RemError, RemResult};
-use rem_mesh::{RemMesh, ElementKind};
+use rem_mesh::{RemMesh, ElementKind, Element};
 use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
@@ -58,16 +58,29 @@ impl SurfaceMesh {
     ///
     /// Only `Tri3` elements are supported at this stage; `Tri6` nodes are silently
     /// reduced to their first three (corner) nodes.
+    ///
+    /// For surface-only meshes (no volume elements, e.g. SBR+ sphere meshes) the
+    /// Tri3 elements appear in `volume_elements` rather than `boundary_elements`.
+    /// This function searches `boundary_elements` first, then falls back to
+    /// `volume_elements` so both use-cases work transparently.
     pub fn extract(rem_mesh: &RemMesh, pec_attrs: &[u32]) -> RemResult<Self> {
         let attr_set: std::collections::HashSet<u32> = pec_attrs.iter().copied().collect();
 
-        // ── 1. Filter triangular boundary elements ──────────────────────────
-        let tri_elems: Vec<_> = rem_mesh.boundary_elements.iter()
-            .filter(|e| {
-                attr_set.contains(&e.tag) &&
-                matches!(e.kind, ElementKind::Tri3 | ElementKind::Tri6)
-            })
-            .collect();
+        let is_tri = |e: &&Element| {
+            attr_set.contains(&e.tag) &&
+            matches!(e.kind, ElementKind::Tri3 | ElementKind::Tri6)
+        };
+
+        // ── 1. Filter triangular elements (boundary first, then volume fallback) ─
+        let tri_elems: Vec<_> = {
+            let from_boundary: Vec<_> = rem_mesh.boundary_elements.iter().filter(is_tri).collect();
+            if !from_boundary.is_empty() {
+                from_boundary
+            } else {
+                // Surface-only mesh: Tri3 are in volume_elements
+                rem_mesh.volume_elements.iter().filter(is_tri).collect()
+            }
+        };
 
         if tri_elems.is_empty() {
             return Err(RemError::Mesh(format!(

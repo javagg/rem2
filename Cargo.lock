@@ -2153,6 +2153,7 @@ dependencies = [
  "rem-mesh",
  "rem-mom",
  "rem-parallel",
+ "rem-sbr",
 ]
 
 [[package]]
@@ -2287,6 +2288,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "rem-sbr"
+version = "0.1.0"
+dependencies = [
+ "approx",
+ "log",
+ "num-complex",
+ "rayon",
+ "rem-config",
+ "rem-core",
+ "rem-mesh",
+ "rem-mom",
+ "rem-parallel",
+]
+
+[[package]]
 name = "rem-wasm"
 version = "0.1.0"
 dependencies = [
@@ -2301,6 +2317,7 @@ dependencies = [
  "rem-mesh",
  "rem-mom",
  "rem-parallel",
+ "rem-sbr",
  "serde",
  "serde-wasm-bindgen 0.6.5",
  "wasm-bindgen",
