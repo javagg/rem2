@@ -138,12 +138,24 @@ fn trace_all_rays(
     k: f64,
     cfg: &SbrSolverConfig,
 ) -> CurrentMap {
+    use num_complex::Complex64;
+    use rem_core::ETA0;
+
     let mut currents = zero_currents(surf);
 
-    let trace_one = |mut r: ray::Ray| -> Vec<(usize, [num_complex::Complex64; 3])> {
+    // Pre-compute self-intersection offset: 1e-5 × √(min face area)
+    // Moved outside the closure so it isn't recomputed per ray per bounce.
+    let eps_offset = 1e-5 * surf.faces.iter()
+        .map(|f| f.area.sqrt())
+        .fold(f64::INFINITY, f64::min)
+        .max(1e-10);
+
+    // Each ray returns a list of (face_index, J contribution)
+    let trace_one = |mut r: ray::Ray| -> Vec<(usize, [Complex64; 3])> {
         let mut contributions = Vec::new();
 
         loop {
+            // Termination checks
             if !r.weight.is_finite() || r.weight < cfg.weight_thresh {
                 break;
             }
@@ -151,51 +163,74 @@ fn trace_all_rays(
                 break;
             }
 
-            // Intersect BVH
+            // ── Nearest intersection ──────────────────────────────────────
             let hit = match bvh.intersect(&r.origin, &r.dir) {
                 Some(h) => h,
                 None    => break,
             };
 
-            // Offset hit point slightly along normal to avoid self-intersection
-            let eps_offset = 1e-9 * surf.faces.iter()
-                .map(|f| f.area.sqrt())
-                .fold(f64::INFINITY, f64::min)
-                .max(1e-12);
-            let p_offset = ray::add3(&hit.point, &ray::scale3(&hit.normal, eps_offset));
+            // Ensure face normal faces the incoming ray
+            let face_normal = {
+                let fn_ = surf.faces[hit.face_idx].normal;
+                if ray::dot3(&r.dir, &fn_) < 0.0 { fn_ } else {
+                    [-fn_[0], -fn_[1], -fn_[2]]
+                }
+            };
 
-            // --- PO current accumulation (PEC) ---
-            // Compute incident H at hit point
-            let (_, h_hit) = incident_fields(wave, k, &hit.point);
-            let j_po = po_current_pec(&h_hit, &hit.normal, &r.dir);
+            // ── PO current: J = 2 n̂ × H at hit point ─────────────────────
+            // For bounce 0 (incident ray): H from the incident plane wave.
+            // For bounce n>0: H is stored in the ray (from previous reflection).
+            let h_at_hit: [Complex64; 3] = if r.bounce == 0 {
+                let (_, h) = incident_fields(wave, k, &hit.point);
+                h
+            } else {
+                // Propagate ray H by the phase delay from r.origin to hit.point
+                let dist = hit.t; // parametric t = physical distance (unit dir)
+                let phase_delay = Complex64::new(0.0, k * dist).exp();
+                [r.h_field[0] * phase_delay,
+                 r.h_field[1] * phase_delay,
+                 r.h_field[2] * phase_delay]
+            };
+
+            let j_po = po_current_pec(&h_at_hit, &face_normal, &r.dir);
             contributions.push((hit.face_idx, j_po));
 
-            // --- Reflection ---
+            // ── Reflection ────────────────────────────────────────────────
+            // Propagate E to hit point
+            let dist = hit.t;
+            let phase_delay = Complex64::new(0.0, k * dist).exp();
+            let e_at_hit = [r.e_field[0] * phase_delay,
+                            r.e_field[1] * phase_delay,
+                            r.e_field[2] * phase_delay];
+            let h_at_hit_e = [h_at_hit[0], h_at_hit[1], h_at_hit[2]];
+
             let iface = Interface::pec();
-            let (e_refl, new_dir) = reflect_field(&r.e_field, &r.h_field, &r.dir, &hit.normal, &iface);
+            let (e_refl, new_dir) = reflect_field(
+                &e_at_hit, &h_at_hit_e, &r.dir, &face_normal, &iface,
+            );
 
-            // Compute reflected H from reflected E via H = (k̂ × E)/η₀
-            use rem_core::ETA0;
-            let mut h_refl = [num_complex::Complex64::ZERO; 3];
-            let nd = new_dir;
-            h_refl[0] = (nd[1]*e_refl[2] - nd[2]*e_refl[1]) / ETA0;
-            h_refl[1] = (nd[2]*e_refl[0] - nd[0]*e_refl[2]) / ETA0;
-            h_refl[2] = (nd[0]*e_refl[1] - nd[1]*e_refl[0]) / ETA0;
+            // Derive reflected H from reflected E: H = (k̂_refl × E_refl) / η₀
+            let h_refl = [
+                (new_dir[1] * e_refl[2] - new_dir[2] * e_refl[1]) / ETA0,
+                (new_dir[2] * e_refl[0] - new_dir[0] * e_refl[2]) / ETA0,
+                (new_dir[0] * e_refl[1] - new_dir[1] * e_refl[0]) / ETA0,
+            ];
 
-            // PEC: total reflection, weight reduced by 1 (stays at 1 ideally)
-            // For coated/dielectric targets, multiply by |Γ|
+            // Offset origin to avoid re-hitting the same face
+            let p_offset = ray::add3(&hit.point, &ray::scale3(&face_normal, eps_offset));
+
             r.origin  = p_offset;
             r.dir     = new_dir;
             r.e_field = e_refl;
             r.h_field = h_refl;
             r.bounce += 1;
-            // PEC reflection coefficient magnitude = 1; weight unchanged
+            // PEC: |Γ| = 1, weight unchanged; for dielectrics multiply by |Γ|
         }
 
         contributions
     };
 
-    // Parallel dispatch on non-WASM targets
+    // Parallel dispatch (non-WASM) / serial (WASM)
     #[cfg(not(target_arch = "wasm32"))]
     {
         use rayon::prelude::*;
