@@ -3,7 +3,7 @@
 use crate::surface_mesh::SurfaceMesh;
 use crate::quadrature::TriQuad;
 use crate::green::green3d;
-use crate::singular::zmn_self_duffy_pulse;
+use crate::singular::{zmn_self_duffy_pulse, zmn_singular_pulse, classify_pair, TriPairType};
 use crate::basis::rwg::RwgBasis;
 use num_complex::Complex64;
 use rem_core::{RemError, RemResult, EPS0, MU0, C0};
@@ -37,13 +37,21 @@ pub fn assemble_efie_pulse(
         let face_n = &surf.faces[ni];
         let mut col = vec![C64::new(0.0, 0.0); n];
         for mi in 0..n {
-            let val = if mi == ni {
-                let zself = zmn_self_duffy_pulse(face_n, &surf.nodes, k, omega_mu0, 4);
-                to_c64(zself)
-            } else {
-                let face_m = &surf.faces[mi];
-                let zoff = zmn_regular_pulse(face_m, face_n, &surf.nodes, k, omega_mu0, quad);
-                to_c64(zoff)
+            let face_m = &surf.faces[mi];
+            let pair = classify_pair(face_m, face_n);
+            let val = match pair {
+                TriPairType::Identical => {
+                    let zself = zmn_self_duffy_pulse(face_n, &surf.nodes, k, omega_mu0, 4);
+                    to_c64(zself)
+                }
+                TriPairType::SharedEdge | TriPairType::SharedVertex => {
+                    let integral = zmn_singular_pulse(face_m, face_n, &surf.nodes, k, 4);
+                    to_c64(Complex64::new(0.0, -omega_mu0) * integral)
+                }
+                TriPairType::Disjoint => {
+                    let zoff = zmn_regular_pulse(face_m, face_n, &surf.nodes, k, omega_mu0, quad);
+                    to_c64(zoff)
+                }
             };
             col[mi] = val;
         }
