@@ -102,8 +102,13 @@ pub fn run_with_mesh(
             }
         }?;
 
-        // Incident plane wave excitation (+z direction, x-polarized)
-        let rhs = excitation::plane_wave_rhs(&surf, k, &mom_cfg.basis);
+        // Incident plane wave excitation
+        let wave = excitation::PlaneWave {
+            theta_inc: mom_cfg.theta_inc_deg.to_radians(),
+            phi_inc:   mom_cfg.phi_inc_deg.to_radians(),
+            pol:       mom_cfg.polarization.clone(),
+        };
+        let rhs = excitation::plane_wave_rhs_general(&surf, k, &wave, &mom_cfg.basis);
 
         // Solve Z·I = V
         let currents = assemble::lu_solve(&z_mat, &rhs)?;

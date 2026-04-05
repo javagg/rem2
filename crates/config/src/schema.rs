@@ -523,6 +523,18 @@ pub struct MomSolverConfig {
     /// Linear solver for Z·I = V: "Direct" | "GMRES" | "ACA" | "FMM"
     #[serde(rename = "FastSolver", default = "default_fast_solver")]
     pub fast_solver: String,
+
+    /// Incident plane wave polar angle [degrees] from +z axis (0 = broadside)
+    #[serde(rename = "ThetaInc", default)]
+    pub theta_inc_deg: f64,
+
+    /// Incident plane wave azimuth angle [degrees] from +x axis
+    #[serde(rename = "PhiInc", default)]
+    pub phi_inc_deg: f64,
+
+    /// Incident plane wave polarization: "theta" | "phi" | "x" | "y" | "z"
+    #[serde(rename = "Polarization", default = "default_polarization")]
+    pub polarization: String,
 }
 
 fn default_mom_equation() -> String { "CFIE".to_string() }
@@ -530,6 +542,7 @@ fn default_mom_basis()     -> String { "RWG".to_string()  }
 fn default_cfie_alpha()    -> f64    { 0.5 }
 fn default_singular_tol()  -> f64    { 1.0e-6 }
 fn default_fast_solver()   -> String { "Direct".to_string() }
+fn default_polarization()  -> String { "theta".to_string() }
 
 // ---------------------------------------------------------------------------
 // Postprocessing (REM extension — ignored by Palace)
