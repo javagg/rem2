@@ -62,6 +62,8 @@ pub enum ProblemType {
     MoM,
     /// Boundary Element Method (Laplace/Helmholtz) — REM extension, not in Palace
     BEM,
+    /// Shooting and Bouncing Rays + Physical Optics — REM extension, not in Palace
+    SBR,
 }
 
 // ---------------------------------------------------------------------------
@@ -300,6 +302,10 @@ pub struct SolverConfig {
     /// REM extension: MoM solver parameters (ignored by Palace).
     #[serde(rename = "MoM", default)]
     pub mom: Option<MomSolverConfig>,
+
+    /// REM extension: SBR+ solver parameters (ignored by Palace).
+    #[serde(rename = "SBR", default)]
+    pub sbr: Option<SbrSolverConfig>,
 }
 
 fn default_order() -> u8 { 1 }
@@ -315,6 +321,7 @@ impl Default for SolverConfig {
             magnetostatic: None,
             linear: LinearSolver::default(),
             mom: None,
+            sbr: None,
         }
     }
 }
@@ -543,6 +550,60 @@ fn default_cfie_alpha()    -> f64    { 0.5 }
 fn default_singular_tol()  -> f64    { 1.0e-6 }
 fn default_fast_solver()   -> String { "Direct".to_string() }
 fn default_polarization()  -> String { "theta".to_string() }
+
+// ---------------------------------------------------------------------------
+// SBR+ solver config (REM extension — ignored by Palace)
+// ---------------------------------------------------------------------------
+
+/// SBR+ solver parameters, placed under `Solver.SBR` in the config file.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SbrSolverConfig {
+    /// Start frequency [Hz]
+    #[serde(rename = "FreqMin")]
+    pub freq_min: f64,
+
+    /// End frequency [Hz]
+    #[serde(rename = "FreqMax")]
+    pub freq_max: f64,
+
+    /// Frequency step [Hz]; set to 0 for single-frequency solve
+    #[serde(rename = "FreqStep", default = "default_sbr_freq_step")]
+    pub freq_step: f64,
+
+    /// Ray density [rays/m²] on the aperture plane
+    #[serde(rename = "RayDensity", default = "default_ray_density")]
+    pub ray_density: f64,
+
+    /// Maximum number of ray bounces
+    #[serde(rename = "MaxBounces", default = "default_max_bounces")]
+    pub max_bounces: usize,
+
+    /// Energy weight threshold below which a ray is terminated
+    #[serde(rename = "WeightThresh", default = "default_weight_thresh")]
+    pub weight_thresh: f64,
+
+    /// Target type: "PEC" | "Dielectric" | "Coated"
+    #[serde(rename = "TargetType", default = "default_target_type")]
+    pub target_type: String,
+
+    /// Incident plane wave polar angle [degrees] from +z axis (0 = broadside)
+    #[serde(rename = "ThetaInc", default)]
+    pub theta_inc_deg: f64,
+
+    /// Incident plane wave azimuth angle [degrees] from +x axis
+    #[serde(rename = "PhiInc", default)]
+    pub phi_inc_deg: f64,
+
+    /// Incident polarization: "theta" | "phi" | "x" | "y" | "z"
+    #[serde(rename = "Polarization", default = "default_polarization")]
+    pub polarization: String,
+}
+
+fn default_sbr_freq_step()  -> f64    { 0.0 }
+fn default_ray_density()    -> f64    { 1.0e4 }
+fn default_max_bounces()    -> usize  { 5 }
+fn default_weight_thresh()  -> f64    { 1.0e-4 }
+fn default_target_type()    -> String { "PEC".to_string() }
 
 // ---------------------------------------------------------------------------
 // Postprocessing (REM extension — ignored by Palace)

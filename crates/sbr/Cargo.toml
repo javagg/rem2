@@ -1,0 +1,20 @@
+[package]
+name    = "rem-sbr"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rem-core     = { workspace = true }
+rem-config   = { workspace = true }
+rem-mesh     = { workspace = true }
+rem-parallel = { workspace = true }
+rem-mom      = { workspace = true }
+num-complex  = { workspace = true }
+log          = { workspace = true }
+
+# Rayon only on non-WASM targets
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rayon = "1"
+
+[dev-dependencies]
+approx = "0.5"
