@@ -2299,6 +2299,7 @@ dependencies = [
  "rem-magnetostatic",
  "rem-materials",
  "rem-mesh",
+ "rem-mom",
  "rem-parallel",
  "serde",
  "serde-wasm-bindgen 0.6.5",

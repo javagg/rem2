@@ -8,8 +8,10 @@ use crate::basis::rwg::RwgBasis;
 use num_complex::Complex64;
 use rem_core::{RemError, RemResult, EPS0, MU0, C0};
 use std::f64::consts::PI;
-use rayon::prelude::*;
 use faer::Mat;
+
+#[cfg(not(target_arch = "wasm32"))]
+use rayon::prelude::*;
 
 // faer::c64 == num_complex::Complex64 in faer 0.21
 type C64 = faer::c64;
@@ -30,10 +32,7 @@ pub fn assemble_efie_pulse(
     let k     = omega / C0;
     let omega_mu0 = omega * MU0;
 
-    let mut z = Mat::<C64>::zeros(n, n);
-
-    // Parallel assembly: compute each column independently
-    let cols: Vec<Vec<C64>> = (0..n).into_par_iter().map(|ni| {
+    let compute_col = |ni: usize| -> Vec<C64> {
         let face_n = &surf.faces[ni];
         let mut col = vec![C64::new(0.0, 0.0); n];
         for mi in 0..n {
@@ -56,8 +55,14 @@ pub fn assemble_efie_pulse(
             col[mi] = val;
         }
         col
-    }).collect();
+    };
 
+    #[cfg(not(target_arch = "wasm32"))]
+    let cols: Vec<Vec<C64>> = (0..n).into_par_iter().map(compute_col).collect();
+    #[cfg(target_arch = "wasm32")]
+    let cols: Vec<Vec<C64>> = (0..n).map(compute_col).collect();
+
+    let mut z = Mat::<C64>::zeros(n, n);
     for (ni, col) in cols.into_iter().enumerate() {
         for mi in 0..n {
             z[(mi, ni)] = col[mi];
@@ -143,16 +148,22 @@ fn assemble_efie_rwg(
     let omega_mu0 = omega * MU0;
     let inv_omega_eps0 = 1.0 / (omega * EPS0);
 
-    let cols: Vec<Vec<C64>> = (0..n).into_par_iter().map(|ni| {
-        let bn = &bases[ni];
-        let mut col = vec![C64::new(0.0, 0.0); n];
-        for mi in 0..n {
-            let bm = &bases[mi];
-            let val = zmn_efie_rwg(bm, bn, surf, k, omega_mu0, inv_omega_eps0, quad);
-            col[mi] = to_c64(val);
-        }
-        col
-    }).collect();
+    let cols: Vec<Vec<C64>> = {
+        let compute = |ni: usize| -> Vec<C64> {
+            let bn = &bases[ni];
+            let mut col = vec![C64::new(0.0, 0.0); n];
+            for mi in 0..n {
+                let bm = &bases[mi];
+                let val = zmn_efie_rwg(bm, bn, surf, k, omega_mu0, inv_omega_eps0, quad);
+                col[mi] = to_c64(val);
+            }
+            col
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        { (0..n).into_par_iter().map(compute).collect() }
+        #[cfg(target_arch = "wasm32")]
+        { (0..n).map(compute).collect() }
+    };
 
     let mut z = Mat::<C64>::zeros(n, n);
     for (ni, col) in cols.into_iter().enumerate() {
@@ -213,16 +224,22 @@ fn assemble_mfie_rwg(
 ) -> RemResult<Mat<C64>> {
     let n = bases.len();
 
-    let cols: Vec<Vec<C64>> = (0..n).into_par_iter().map(|ni| {
-        let bn = &bases[ni];
-        let mut col = vec![C64::new(0.0, 0.0); n];
-        for mi in 0..n {
-            let bm = &bases[mi];
-            let val = zmn_mfie_rwg(bm, bn, surf, k, quad);
-            col[mi] = to_c64(val);
-        }
-        col
-    }).collect();
+    let cols: Vec<Vec<C64>> = {
+        let compute = |ni: usize| -> Vec<C64> {
+            let bn = &bases[ni];
+            let mut col = vec![C64::new(0.0, 0.0); n];
+            for mi in 0..n {
+                let bm = &bases[mi];
+                let val = zmn_mfie_rwg(bm, bn, surf, k, quad);
+                col[mi] = to_c64(val);
+            }
+            col
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        { (0..n).into_par_iter().map(compute).collect() }
+        #[cfg(target_arch = "wasm32")]
+        { (0..n).map(compute).collect() }
+    };
 
     let mut z = Mat::<C64>::zeros(n, n);
     for (ni, col) in cols.into_iter().enumerate() {

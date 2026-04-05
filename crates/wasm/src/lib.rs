@@ -75,6 +75,29 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
+        ProblemType::MoM => {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                rem_mom::run_with_mesh(&cfg,
+                    cfg.solver.mom.as_ref()
+                        .ok_or_else(|| JsError::new("MoM requires Solver.MoM section"))?,
+                    &mesh,
+                ).map_err(|e| JsError::new(&format!("MoM error: {}", e)))?;
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                return Err(JsError::new("MoM solver not available in WASM build"));
+            }
+            // MoM writes output files; return minimal result
+            #[allow(unreachable_code)]
+            let res = SimulationResult {
+                phi: vec![],
+                energy: 0.0,
+                e_field: None,
+                b_field: None,
+            };
+            Ok(serde_wasm_bindgen::to_value(&res)?)
+        }
         _ => Err(JsError::new("Unsupported problem type")),
     }
 }
