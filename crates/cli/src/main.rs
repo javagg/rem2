@@ -68,6 +68,9 @@ fn main() -> anyhow::Result<()> {
         ProblemType::BEM => {
             anyhow::bail!("BEM solver not yet implemented (v0.7)");
         }
+        ProblemType::SBR => {
+            rem_sbr::run(&config)?;
+        }
     }
 
     Ok(())

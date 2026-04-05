@@ -3,7 +3,6 @@
 //! Follows the same file layout as `rem_mom::postprocess` so results can be
 //! compared directly.
 
-use num_complex::Complex64;
 use rem_core::RemResult;
 use rem_mom::surface_mesh::SurfaceMesh;
 use std::io::Write as IoWrite;

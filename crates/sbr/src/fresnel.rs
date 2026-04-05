@@ -95,7 +95,7 @@ pub fn fresnel_refl(iface: &Interface, cos_theta_i: f64) -> (Complex64, Complex6
 /// Returns the reflected E-field vector and the new ray direction.
 pub fn reflect_field(
     e_inc: &[Complex64; 3],
-    h_inc: &[Complex64; 3],
+    _h_inc: &[Complex64; 3],
     dir_inc: &[f64; 3],
     normal: &[f64; 3],
     iface: &Interface,

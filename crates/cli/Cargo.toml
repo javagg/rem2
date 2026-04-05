@@ -18,6 +18,7 @@ rem-magnetostatic = { workspace = true }
 rem-eigenmode     = { workspace = true }
 rem-driven        = { workspace = true }
 rem-mom           = { workspace = true }
+rem-sbr           = { workspace = true }
 clap              = { workspace = true }
 anyhow            = { workspace = true }
 env_logger        = { workspace = true }

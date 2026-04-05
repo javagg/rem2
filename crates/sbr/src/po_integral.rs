@@ -4,7 +4,7 @@
 //! to obtain the scattered far-field and RCS pattern.
 
 use num_complex::Complex64;
-use rem_core::{ETA0, RemResult};
+use rem_core::ETA0;
 use rem_mom::surface_mesh::SurfaceMesh;
 use std::f64::consts::PI;
 
