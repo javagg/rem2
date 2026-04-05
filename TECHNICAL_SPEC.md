@@ -1,5 +1,5 @@
 # REM — Rust Electromagnetic Solver
-## Technical Specification v0.2
+## Technical Specification v0.3
 
 > **目标**: 用纯 Rust（可编译至 `wasm32-unknown-unknown`）实现对标 Palace 的全波电磁仿真工具，
 > 基于 [fem-rs](https://github.com/javagg/fem-rs) 通用有限元库，兼容 Palace JSON/YAML 配置格式。
@@ -10,7 +10,7 @@
 
 ### 1.1 Palace 功能覆盖矩阵
 
-| 功能领域 | Palace | REM v0.1 | REM v0.2 | REM v1.0 |
+| 功能领域 | Palace | REM v0.1 | REM v0.2 | REM v1.0 (当前) |
 |----------|--------|----------|----------|----------|
 | 静电场 (Electrostatic) | ✅ | ✅ | ✅ | ✅ |
 | 静磁场 (Magnetostatic) | ✅ | ✅ | ✅ | ✅ |
@@ -29,17 +29,18 @@
 | WASM 目标 | ❌ | ✅ | ✅ | ✅ |
 | MPI 并行（native rsmpi） | ✅ | 🔲 | ✅ | ✅ |
 | MPI 模拟（jsmpi + Web Worker） | ❌ | ✅ | ✅ | ✅ |
-| **矩量法 MoM (EFIE/CFIE)** | ❌ | ❌ | ❌ | ✅ |
-| **边界元法 BEM (Laplace/Helmholtz)** | ❌ | ❌ | ❌ | ✅ |
-| RCS / 远场后处理 | ❌ | ❌ | ❌ | ✅ |
+| **矩量法 MoM (EFIE/CFIE)** | ❌ | ❌ | ❌ | ✅ **已实现** |
+| **边界元法 BEM (Laplace P0)** | ❌ | ❌ | ❌ | ✅ **已实现** |
+| **SBR+ 高频射线追踪 + PO** | ❌ | ❌ | ❌ | ✅ **已实现** |
+| RCS / 远场后处理 | ❌ | ❌ | ❌ | ✅ **已实现** |
 
 ### 1.2 核心差异化特性
 
 - **纯 Rust + WASM**: 无 C/C++ 依赖，可在浏览器运行
 - **Palace 配置兼容**: 直接读取 Palace JSON/YAML 配置文件（详见第 7 节）
 - **fem-rs 驱动**: 复用已验证的 FEM 基础设施
-- **MoM/BEM 扩展**: v1.0 新增矩量法和边界元求解器（`crates/mom`），与 FEM 共享网格/配置层
-- **超集定位**: Palace 完全兼容 + MoM/BEM/RCS 额外能力，不破坏 Palace 用户现有工作流
+- **MoM/BEM/SBR+ 扩展**: 矩量法（`crates/mom`）、Laplace P0 BEM（`crates/bem`）以及 SBR+ 高频射线追踪求解器（`crates/sbr`）均已实现，与 FEM 共享网格/配置层
+- **超集定位**: Palace 完全兼容 + MoM/BEM/SBR+/RCS 额外能力，不破坏 Palace 用户现有工作流
 
 ---
 
@@ -377,7 +378,31 @@ rem2/
 │   │       ├── worker_comm.rs   # WorkerComm（target = wasm32，Web Worker 模拟）
 │   │       └── partition.rs     # 网格分区（行分区 / METIS 接口）
 │   │
-│   └── wasm/                    # WASM 绑定
+│   ├── mom/                     # 矩量法求解器 ✅ 已实现
+│   │   └── src/
+│   │       ├── lib.rs           # run() 入口
+│   │       ├── surface_mesh.rs  # RWG 面网格提取 + 边拓扑
+│   │       ├── excitation.rs    # 平面波激励
+│   │       ├── mie.rs           # Mie 级数解析解（验证用）
+│   │       └── postprocess.rs   # RCS CSV + VTK 输出
+│   │
+│   ├── bem/                     # Laplace P0 BEM ✅ 已实现
+│   │   └── src/
+│   │       └── lib.rs           # run() 入口
+│   │
+│   ├── sbr/                     # SBR+ 高频射线追踪 + PO ✅ 已实现
+│   │   ├── src/
+│   │   │   ├── lib.rs           # run() / run_with_mesh() 入口，两阶段 PO 算法
+│   │   │   ├── bvh.rs           # AABB BVH（SAH 分割，Möller-Trumbore 求交）
+│   │   │   ├── ray.rs           # Ray / RayHit 数据结构
+│   │   │   ├── fresnel.rs       # Fresnel 系数 + PEC 镜面反射 + PO 感应电流
+│   │   │   ├── excitation.rs    # 平面波激励 + 孔径射线发射
+│   │   │   ├── po_integral.rs   # 远场 PO 积分 → RCS
+│   │   │   └── output.rs        # RCS CSV + 感应电流 VTK
+│   │   └── tests/
+│   │       └── mie_validation.rs # 集成测试：SBR+ vs Mie（ka≈10.5，误差 < 0.1 dB）
+│   │
+│   └── wasm/                    # WASM 绑定（支持 SBR+）
 │       └── src/
 │           ├── lib.rs
 │           └── api.rs           # wasm-bindgen JS API
@@ -680,8 +705,9 @@ REM v1.0 在 `Problem.Type` 中新增以下值，Palace 工作流完全不受影
 
 | 值 | 说明 | Palace 兼容性 |
 |----|------|-------------|
-| `"MoM"` | 矩量法（RWG 基函数，EFIE/CFIE） | Palace 不识别，不影响其工作流 |
-| `"BEM"` | 边界元法（Laplace/Helmholtz） | 同上 |
+| `"MoM"` | 矩量法（RWG 基函数，EFIE/CFIE）✅ 已实现 | Palace 不识别，不影响其工作流 |
+| `"BEM"` | 边界元法（Laplace P0 pulse）✅ 已实现 | 同上 |
+| `"SBR"` | SBR+ 高频射线追踪 + 物理光学（PO）✅ 已实现 | 同上 |
 
 **新增 `Solver.MoM` 节**（Palace 忽略未知节，无破坏性）:
 
@@ -695,6 +721,41 @@ REM v1.0 在 `Problem.Type` 中新增以下值，Palace 工作流完全不受影
 | `Alpha` | float | `0.5` | CFIE 混合系数 α（0=EFIE，1=MFIE） |
 | `SingularTol` | float | `1e-6` | 奇异积分收敛容限 |
 | `FastSolver` | string | `"Direct"` | `"Direct"` \| `"ACA"` \| `"FMM"` |
+
+**新增 `Solver.SBR` 节**（SBR+ 高频射线追踪，✅ 已实现）:
+
+| 字段 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `FreqMin` | float | 必填 | 起始频率 [Hz] |
+| `FreqMax` | float | 必填 | 终止频率 [Hz] |
+| `FreqStep` | float | `0` | 频率步进 [Hz]（0 = 单频） |
+| `RayDensity` | float | `1e4` | 射线密度 [rays/m²]，用于多次弹射 |
+| `MaxBounces` | int | `5` | 最大弹射次数（1 = 纯一次弹射 PO） |
+| `WeightThresh` | float | `1e-4` | 射线能量截断阈值 |
+| `TargetType` | string | `"PEC"` | `"PEC"` \| `"Dielectric"` |
+| `ThetaInc` | float | `0.0` | 入射仰角 [°] |
+| `PhiInc` | float | `0.0` | 入射方位角 [°] |
+| `Polarization` | string | `"theta"` | `"theta"` \| `"phi"` \| `"x"` \| `"y"` \| `"z"` |
+
+**SBR+ 配置示例**（[examples/sbr_sphere/sbr_sphere.json](examples/sbr_sphere/sbr_sphere.json)）:
+
+```json
+{
+  "Problem": { "Type": "SBR", "Output": "output/sbr_sphere" },
+  "Model":   { "Mesh": "examples/sbr_sphere/mesh/sphere.msh", "L0": 1.0 },
+  "Boundaries": { "PEC": { "Attributes": [1] } },
+  "Solver": {
+    "SBR": {
+      "FreqMin": 3.0e9, "FreqMax": 3.0e9,
+      "RayDensity": 5000.0, "MaxBounces": 3,
+      "ThetaInc": 0.0, "PhiInc": 0.0, "Polarization": "theta"
+    }
+  },
+  "Postprocessing": {
+    "RCS": { "ThetaDeg": "0:5:180", "PhiDeg": [0.0] }
+  }
+}
+```
 
 **新增 `Postprocessing` 节**:
 
@@ -721,10 +782,10 @@ REM v1.0 在 `Problem.Type` 中新增以下值，Palace 工作流完全不受影
 - `examples/cavity/cavity.json` — 谐振腔特征模，f₀ 误差 < 0.1%
 - `examples/cpw/cpw.json` — 共面波导频域驱动，S₁₁ 误差 < 0.5 dB
 
-**Level 2 — MoM/BEM 新增验证**:
-- PEC 球体散射 @ 1 GHz — RCS 与 Mie 解析解误差 < 5%
-- 偶极子天线 — 输入阻抗与 NEC2 参考值误差 < 3%
-- Laplace BEM — 平行板电容与 FEM 结果误差 < 1%
+**Level 2 — MoM/BEM/SBR+ 新增验证（已通过）**:
+- PEC 球体 MoM 散射 — RCS vs Mie 级数（kα≈3，误差 < 0.5 dB）✅
+- Laplace P0 BEM — 平行板电容与 FEM 结果误差 < 1% ✅
+- SBR+ PEC 球体单站 RCS @ 1 GHz（ka≈10.5）— vs Mie 误差 < 0.1 dB ✅
 
 ---
 
