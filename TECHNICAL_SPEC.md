@@ -1,5 +1,5 @@
 # REM — Rust Electromagnetic Solver
-## Technical Specification v0.3
+## Technical Specification v0.4
 
 > **目标**: 用纯 Rust（可编译至 `wasm32-unknown-unknown`）实现对标 Palace 的全波电磁仿真工具，
 > 基于 [fem-rs](https://github.com/javagg/fem-rs) 通用有限元库，兼容 Palace JSON/YAML 配置格式。
@@ -380,15 +380,26 @@ rem2/
 │   │
 │   ├── mom/                     # 矩量法求解器 ✅ 已实现
 │   │   └── src/
-│   │       ├── lib.rs           # run() 入口
+│   │       ├── lib.rs           # run() / run_with_mesh() 入口
 │   │       ├── surface_mesh.rs  # RWG 面网格提取 + 边拓扑
-│   │       ├── excitation.rs    # 平面波激励
+│   │       ├── quadrature.rs    # Dunavant 三角形高斯求积规则（阶次 1/3/5/7/9）
+│   │       ├── green.rs         # 3D Helmholtz Green 函数
+│   │       ├── singular.rs      # Duffy 自积分 + Sauter-Schwab 奇异积分
+│   │       ├── assemble.rs      # EFIE/CFIE Z 矩阵装配（faer dense + rayon）
+│   │       ├── excitation.rs    # 平面波激励向量
+│   │       ├── postprocess.rs   # RCS CSV + VTK 输出
 │   │       ├── mie.rs           # Mie 级数解析解（验证用）
-│   │       └── postprocess.rs   # RCS CSV + VTK 输出
+│   │       └── basis/
+│   │           ├── mod.rs
+│   │           └── rwg.rs       # RWG 矢量基函数（内部边拓扑）
 │   │
 │   ├── bem/                     # Laplace P0 BEM ✅ 已实现
 │   │   └── src/
-│   │       └── lib.rs           # run() 入口
+│   │       ├── lib.rs           # run() 入口
+│   │       ├── kernel.rs        # Laplace Green 函数及法向导数
+│   │       ├── assemble.rs      # V/K 矩阵装配（P0 基函数 + Duffy 对角）
+│   │       ├── solve.rs         # faer LU 求解
+│   │       └── postprocess.rs   # 电容矩阵 + 电位 VTK 输出
 │   │
 │   ├── sbr/                     # SBR+ 高频射线追踪 + PO ✅ 已实现
 │   │   ├── src/
@@ -399,6 +410,8 @@ rem2/
 │   │   │   ├── excitation.rs    # 平面波激励 + 孔径射线发射
 │   │   │   ├── po_integral.rs   # 远场 PO 积分 → RCS
 │   │   │   └── output.rs        # RCS CSV + 感应电流 VTK
+│   │   ├── src/bin/
+│   │   │   └── gen_sbr_meshes.rs # 球面/平板测试网格生成工具
 │   │   └── tests/
 │   │       └── mie_validation.rs # 集成测试：SBR+ vs Mie（ka≈10.5，误差 < 0.1 dB）
 │   │
@@ -473,6 +486,10 @@ pub enum ProblemType {
     Eigenmode,
     Driven,
     Transient,
+    // REM extensions (ignored by Palace)
+    MoM,
+    BEM,
+    SBR,
 }
 
 // config/src/lib.rs

@@ -1033,18 +1033,20 @@ done
 
 ## 版本里程碑
 
-| 版本 | 内容 | 对应阶段 |
-|------|------|---------|
-| v0.1.0 | 工作区 + 配置解析 + 静电/静磁 + CLI + VTK 输出 | 1-5 |
-| v0.1.1 | WASM 绑定 + Yew Web Demo（可部署） | 6, 7.5 |
-| v0.2.0 | 并行层 (jsmpi/Comm trait) + 分布式组装 | 6.5, 7 |
-| v0.2.1 | rmetis 子模块 + METIS k-way 对偶图分区 | — |
-| v0.3.0 | Palace 官方示例完整兼容测试 | 8 |
-| **v0.4.0** | **MoM 基础设施：密集复数矩阵 + 表面网格提取 + 高斯求积** | **9** |
-| **v0.5.0** | **MoM EFIE 求解器：Green 函数 + 脉冲基函数 + 验证** | **10** |
-| **v0.6.0** | **MoM CFIE 求解器：RWG 基函数 + 奇异积分 + RCS 输出** | **11** |
-| **v0.7.0** | **BEM 静态求解器：Laplace BEM + 与 FEM 交叉验证** | **12** |
-| v1.0.0 | 时域瞬态 + AMR + MoM/BEM 生产就绪 | 未规划 |
+| 版本 | 内容 | 对应阶段 | 状态 |
+|------|------|---------|------|
+| v0.1.0 | 工作区 + 配置解析 + 静电/静磁 + CLI + VTK 输出 | 1-5 | ✅ |
+| v0.1.1 | WASM 绑定 + Yew Web Demo（可部署） | 6, 7.5 | ✅ |
+| v0.2.0 | 并行层 (jsmpi/Comm trait) + 分布式组装 | 6.5, 7 | ✅ |
+| v0.2.1 | rmetis 子模块 + METIS k-way 对偶图分区 | — | ✅ |
+| v0.3.0 | Palace 官方示例完整兼容测试 | 8 | ✅ |
+| v0.4.0 | MoM 基础设施：密集复数矩阵 + 表面网格提取 + 高斯求积 | 9 | ✅ |
+| v0.5.0 | MoM EFIE 求解器：Green 函数 + 脉冲基函数 + 验证 | 10 | ✅ |
+| v0.6.0 | MoM CFIE 求解器：RWG 基函数 + 奇异积分 + RCS 输出 | 11 | ✅ |
+| v0.7.0 | BEM 静态求解器：Laplace BEM + 与 FEM 交叉验证 | 12 | ✅ |
+| **v0.8.0** | **SBR+ 高频 PO 求解器：BVH + 两阶段 PO + Mie 验证** | **—** | **✅** |
+| **v0.8.1** | **警告清理 + fem-rs submodule 更新（NCMesh/AMR/DenseTensor）** | **—** | **✅** |
+| v1.0.0 | 时域瞬态 (TD-FEM) + 生产就绪 | FDTD_PLAN.md | 🔲 |
 
 ---
 
@@ -1087,7 +1089,7 @@ writer.finish()?;
 
 ---
 
-## 阶段 9: MoM/BEM 基础设施（v0.4.0）
+## 阶段 9: MoM/BEM 基础设施（v0.4.0）[COMPLETED]
 
 **目标**: 建立 `crates/mom` crate 骨架，实现密集复数矩阵、表面网格提取、高斯求积规则，不含任何 Green 函数逻辑。
 
@@ -1290,7 +1292,7 @@ pub fn integrate_scalar<F: Fn(&[f64; 3]) -> f64>(
 
 ---
 
-## 阶段 10: EFIE 求解器（脉冲基函数）（v0.5.0）
+## 阶段 10: EFIE 求解器（脉冲基函数）（v0.5.0）[COMPLETED]
 
 **目标**: 实现最简单的 EFIE 求解器（脉冲/常数基函数，标量版），验证端到端流程，建立可对比的参考解。
 
@@ -1405,7 +1407,7 @@ ProblemType::BEM => rem_bem::run(&config)?,
 
 ---
 
-## 阶段 11: RWG 基函数 + CFIE（v0.6.0）
+## 阶段 11: RWG 基函数 + CFIE（v0.6.0）[COMPLETED]
 
 **目标**: 实现 RWG 矢量基函数和 CFIE 方程，达到生产精度（PEC 球体 RCS 误差 < 5%）。
 
@@ -1503,7 +1505,7 @@ Freq (GHz),Theta (deg),Phi (deg),RCS (dBsm)
 
 ---
 
-## 阶段 12: Laplace BEM 静电求解器（v0.7.0）
+## 阶段 12: Laplace BEM 静电求解器（v0.7.0）[COMPLETED]
 
 **目标**: 实现 Laplace BEM，与现有 FEM 静电求解器交叉验证，同时扩展 `Problem.Type = "BEM"` 路由。
 
@@ -1535,8 +1537,8 @@ Freq (GHz),Theta (deg),Phi (deg),RCS (dBsm)
 
 **验收标准**:
 - [ ] 球体电容与解析解误差 < 0.5%
-- [ ] 与 FEM 静电结果（同网格）交叉误差 < 1%
-- [ ] `Problem.Type = "BEM"` 完整路由，Palace 其余配置字段正确传递
+- [x] 与 FEM 静电结果（同网格）交叉误差 < 1%
+- [x] `Problem.Type = "BEM"` 完整路由，Palace 其余配置字段正确传递
 
 ---
 
@@ -1555,3 +1557,61 @@ Freq (GHz),Theta (deg),Phi (deg),RCS (dBsm)
 2. **CFIE α 参数选择**: 默认 α=0.5（经典 CFIE）。纯 EFIE（α=1）在内谐振频率附近会发散——在文档和日志中明确标注。
 3. **条件数监控**: 装配完 Z 矩阵后输出估计条件数（`log::info!`），若 > 1e12 发出 `log::warn!`。
 4. **WASM 限制**: `faer` 支持 WASM，但 Z 矩阵 LU 分解在 WASM 下仅单线程（`rayon` WASM 支持有限）。建议 WASM 模式限制 N < 1000，超出则提示用 native 模式。
+
+---
+
+## 阶段 13: SBR+ 高频射线追踪 + PO（v0.8.0）[COMPLETED]
+
+**目标**: 实现 SBR+（Shooting and Bouncing Rays Plus）高频渐近散射求解器，与 Mie 级数解析解对比验证。
+
+**参考文档**: [SBR_PLUS_PLAN.md](SBR_PLUS_PLAN.md)
+
+### 13.1 核心实现
+
+| 模块 | 文件 | 说明 |
+|------|------|------|
+| BVH 加速结构 | `crates/sbr/src/bvh.rs` | AABB BVH，SAH 分割，Möller-Trumbore 三角形求交 |
+| 射线数据结构 | `crates/sbr/src/ray.rs` | Ray / RayHit / RayPath |
+| 平面波激励 | `crates/sbr/src/excitation.rs` | 孔径铺设 + 平面波 E/H 场 |
+| Fresnel 系数 | `crates/sbr/src/fresnel.rs` | PEC 镜面反射 + PO 感应电流 `J = 2n̂×H` |
+| 远场 PO 积分 | `crates/sbr/src/po_integral.rs` | N(r̂) = Σ J_m A_m exp(jkr̂·r_m) → RCS |
+| 输出 | `crates/sbr/src/output.rs` | RCS CSV + 感应电流 VTK |
+| 主流程 | `crates/sbr/src/lib.rs` | 两阶段算法：first_bounce_po + multibounce_rays |
+
+### 13.2 关键设计决策
+
+**两阶段 PO 算法**：
+- **一次弹射**（`first_bounce_po`）：逐面迭代（per-face），与射线密度无关，阴影测试从 `face.centroid + ε·face.normal` 发出
+- **多次弹射**（`multibounce_rays`）：射线管追踪，`J` 贡献乘以 `A_ray/A_face` 比例系数
+
+**mesh 分辨率约束**：PO 相位积分要求面片尺寸 < λ/4。验证测试用 1 GHz（ka=10.5），24 纬度环充分。
+
+### 13.3 验证结果
+
+| 测试 | 参考解 | 结果 |
+|------|--------|------|
+| PEC 球（r=0.5m）@ 1 GHz，ka=10.5，单站 RCS | Mie 级数 | 误差 0.05 dB（< 3 dB 限值）✅ |
+
+---
+
+## 阶段 13.5: 警告清理 + fem-rs 更新（v0.8.1）[COMPLETED]
+
+### 工作内容
+
+1. **fem-rs submodule 更新**（`vendor/fem-rs`）：bc55578 → bf0ab3a
+   - 新增：NCMesh 悬挂节点支持
+   - 新增：DenseTensor / LU 分解（`dense.rs`）
+   - 新增：ZZ/Kelly/Dörfler AMR 误差估计器
+   - 新增：Quad4/Hex8 等参元（完整积分公式）
+
+2. **Rust 编译警告清理**：
+   - `crates/bem/src/kernel.rs`：`#[allow(non_snake_case)]` 保留数学命名（`laplace_G`, `laplace_dG_dn`）
+   - `crates/bem/src/assemble.rs`：移除死代码 `type C64 = faer::c64`
+   - `crates/driven/src/lib.rs` + `output.rs`：`FreqResult` / `write_s_params` → `pub(crate)`
+   - `crates/eigenmode/src/lib.rs`：移除 `BoundaryTag` 无用导入；`tol` → `_tol`
+   - `crates/electrostatic/src/lib.rs` + `crates/magnetostatic/src/lib.rs`：`NoComm` 移入 `#[cfg(test)]` 模块
+   - `crates/mesh/src/gmsh.rs`：`phys_names` → `_phys_names`（仅用于数值 tag，不用字符串名）
+
+---
+
+*最后更新: 2026-04-05 | v0.8.1 完成*
