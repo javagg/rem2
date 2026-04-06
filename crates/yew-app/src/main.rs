@@ -157,6 +157,12 @@ fn app() -> Html {
     let selected_output_content = use_state(String::new);
     let output_loading = use_state(|| false);
     let output_error = use_state(|| None::<String>);
+    // File type filters for OPFS browser
+    let output_filter_log = use_state(|| true);
+    let output_filter_json = use_state(|| true);
+    let output_filter_csv = use_state(|| true);
+    // Sort method: 0=name, 1=size, 2=time
+    let output_sort_by = use_state(|| 0u32);
 
     let example = examples::find_example(&selected).unwrap();
 
@@ -760,39 +766,104 @@ fn app() -> Html {
                                 } else if let Some(err) = &*output_error {
                                     <p>{format!("OPFS error: {}", err)}</p>
                                 } else {
-                                    { for output_files.iter().map(|entry| {
-                                        let selected_output_path = selected_output_path.clone();
-                                        let selected_output_content = selected_output_content.clone();
-                                        let output_loading = output_loading.clone();
-                                        let output_error = output_error.clone();
-                                        let path = entry.path.clone();
-                                        let label = format!("{} ({} bytes)", entry.path, entry.size);
-                                        let is_selected = selected_output_path.as_ref() == Some(&path);
-                                        let onclick = Callback::from(move |_: MouseEvent| {
-                                            selected_output_path.set(Some(path.clone()));
-                                            output_loading.set(true);
-                                            output_error.set(None);
-                                            let selected_output_content = selected_output_content.clone();
-                                            let output_loading = output_loading.clone();
-                                            let output_error = output_error.clone();
-                                            let path = path.clone();
-                                            spawn_local(async move {
-                                                match opfs::read_text_file(&path).await {
-                                                    Ok(content) => selected_output_content.set(content),
-                                                    Err(err) => output_error.set(Some(err)),
-                                                }
-                                                output_loading.set(false);
-                                            });
-                                        });
+                                    <div class="output-filter-panel">
+                                        <div class="filter-group">
+                                            <label>{"Type:"}</label>
+                                            <label><input type="checkbox" checked={*output_filter_log} onchange={{
+                                                let output_filter_log = output_filter_log.clone();
+                                                Callback::from(move |e: Event| {
+                                                    let input: HtmlInputElement = e.target_unchecked_into();
+                                                    output_filter_log.set(input.checked());
+                                                })
+                                            }} /> {"log"}</label>
+                                            <label><input type="checkbox" checked={*output_filter_json} onchange={{
+                                                let output_filter_json = output_filter_json.clone();
+                                                Callback::from(move |e: Event| {
+                                                    let input: HtmlInputElement = e.target_unchecked_into();
+                                                    output_filter_json.set(input.checked());
+                                                })
+                                            }} /> {"json"}</label>
+                                            <label><input type="checkbox" checked={*output_filter_csv} onchange={{
+                                                let output_filter_csv = output_filter_csv.clone();
+                                                Callback::from(move |e: Event| {
+                                                    let input: HtmlInputElement = e.target_unchecked_into();
+                                                    output_filter_csv.set(input.checked());
+                                                })
+                                            }} /> {"csv"}</label>
+                                        </div>
+                                        <div class="sort-group">
+                                            <label>{"Sort:"}</label>
+                                            <select onchange={{
+                                                let output_sort_by = output_sort_by.clone();
+                                                Callback::from(move |e: Event| {
+                                                    let select: HtmlSelectElement = e.target_unchecked_into();
+                                                    if let Ok(v) = select.value().parse::<u32>() {
+                                                        output_sort_by.set(v);
+                                                    }
+                                                })
+                                            }}>
+                                                <option value="0" selected={*output_sort_by == 0}>{"Name"}</option>
+                                                <option value="1" selected={*output_sort_by == 1}>{"Size"}</option>
+                                                <option value="2" selected={*output_sort_by == 2}>{"Time"}</option>
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    { {
+                                        let mut filtered: Vec<_> = output_files.iter().filter(|e| {
+                                            let matches_filter = 
+                                                (*output_filter_log && e.path.ends_with(".log")) ||
+                                                (*output_filter_json && e.path.ends_with(".json")) ||
+                                                (*output_filter_csv && e.path.ends_with(".csv")) ||
+                                                (e.path.ends_with(".txt") && *output_filter_log);
+                                            matches_filter
+                                        }).collect();
+
+                                        match *output_sort_by {
+                                            0 => filtered.sort_by(|a, b| a.path.cmp(&b.path)),
+                                            1 => filtered.sort_by(|a, b| b.size.cmp(&a.size)),
+                                            2 => filtered.sort_by(|a, b| b.last_modified.partial_cmp(&a.last_modified).unwrap_or(std::cmp::Ordering::Equal)),
+                                            _ => {}
+                                        }
 
                                         html! {
-                                            <button type="button"
-                                                class={classes!("output-file-btn", is_selected.then_some("active"))}
-                                                {onclick}>
-                                                {label}
-                                            </button>
+                                            <>
+                                                { for filtered.iter().map(|entry| {
+                                                    let selected_output_path = selected_output_path.clone();
+                                                    let selected_output_content = selected_output_content.clone();
+                                                    let output_loading = output_loading.clone();
+                                                    let output_error = output_error.clone();
+                                                    let path = entry.path.clone();
+                                                    let label = format!("{} ({} bytes)", entry.path, entry.size);
+                                                    let is_selected = selected_output_path.as_ref() == Some(&path);
+                                                    let onclick = Callback::from(move |_: MouseEvent| {
+                                                        selected_output_path.set(Some(path.clone()));
+                                                        output_loading.set(true);
+                                                        output_error.set(None);
+                                                        let selected_output_content = selected_output_content.clone();
+                                                        let output_loading = output_loading.clone();
+                                                        let output_error = output_error.clone();
+                                                        let path = path.clone();
+                                                        spawn_local(async move {
+                                                            match opfs::read_text_file(&path).await {
+                                                                Ok(content) => selected_output_content.set(content),
+                                                                Err(err) => output_error.set(Some(err)),
+                                                            }
+                                                            output_loading.set(false);
+                                                        });
+                                                    });
+
+                                                    html! {
+                                                        <button type="button"
+                                                            class={classes!("output-file-btn", is_selected.then_some("active"))}
+                                                            {onclick}>
+                                                            {label}
+                                                        </button>
+                                                    }
+                                                }) }
+                                            </>
                                         }
-                                    }) }
+                                    } }
                                 }
                             </div>
                             <div class="output-preview">
