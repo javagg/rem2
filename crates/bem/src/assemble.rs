@@ -24,9 +24,9 @@ use rem_mom::surface_mesh::SurfaceMesh;
 use rem_mom::quadrature::TriQuad;
 use rem_mom::singular::{classify_pair, TriPairType};
 use crate::kernel::{laplace_G, laplace_dG_dn};
+use nalgebra::{DMatrix, DVector};
 use rem_core::{RemError, RemResult};
 use rayon::prelude::*;
-use faer::Mat;
 
 /// Assemble Laplace BEM V and K matrices (P0 basis).
 ///
@@ -37,7 +37,7 @@ pub fn assemble_laplace_p0(
     surf: &SurfaceMesh,
     quad: &TriQuad,
     n_duffy: usize,
-) -> RemResult<(Mat<f64>, Mat<f64>)> {
+) -> RemResult<(DMatrix<f64>, DMatrix<f64>)> {
     let n = surf.faces.len();
     if n == 0 {
         return Err(RemError::Mesh("Empty surface mesh".to_string()));
@@ -88,8 +88,8 @@ pub fn assemble_laplace_p0(
         col
     }).collect();
 
-    let mut v_mat = Mat::<f64>::zeros(n, n);
-    let mut k_mat = Mat::<f64>::zeros(n, n);
+    let mut v_mat = DMatrix::<f64>::zeros(n, n);
+    let mut k_mat = DMatrix::<f64>::zeros(n, n);
     for (ni, (cv, ck)) in cols_v.into_iter().zip(cols_k.into_iter()).enumerate() {
         for mi in 0..n {
             v_mat[(mi, ni)] = cv[mi];
@@ -104,27 +104,28 @@ pub fn assemble_laplace_p0(
 ///
 /// Equation: (½I + K) φ = V σ  →  K φ = V σ  (K already includes ½I)
 pub fn solve_neumann(
-    v_mat: &Mat<f64>,
-    k_mat: &Mat<f64>,
+    v_mat: &DMatrix<f64>,
+    k_mat: &DMatrix<f64>,
     sigma: &[f64],
 ) -> RemResult<Vec<f64>> {
-    use faer::linalg::solvers::Solve;
     let n = sigma.len();
     if v_mat.nrows() != n { return Err(RemError::Config("V matrix size mismatch".to_string())); }
 
     // RHS = V * σ
-    let mut rhs = Mat::<f64>::zeros(n, 1);
+    let mut rhs = DVector::<f64>::zeros(n);
     for i in 0..n {
         let mut s = 0.0;
         for j in 0..n {
             s += v_mat[(i, j)] * sigma[j];
         }
-        rhs[(i, 0)] = s;
+        rhs[i] = s;
     }
 
-    let lu = k_mat.as_ref().partial_piv_lu();
-    let x = lu.solve(rhs.as_ref());
-    Ok((0..n).map(|i| x[(i, 0)]).collect())
+    let lu = k_mat.clone().lu();
+    let x = lu
+        .solve(&rhs)
+        .ok_or_else(|| RemError::Other("solve_neumann failed: matrix may be singular".to_string()))?;
+    Ok(x.iter().copied().collect())
 }
 
 // ---------------------------------------------------------------------------

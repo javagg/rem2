@@ -17,6 +17,7 @@ use rem_mom::{
 };
 use rem_core::EPS0;
 use std::f64::consts::PI;
+use nalgebra::DVector;
 
 fn icosphere(radius: f64, subdivisions: usize) -> SurfaceMesh {
     let phi = (1.0 + 5.0_f64.sqrt()) / 2.0;
@@ -107,12 +108,12 @@ fn sphere_capacitance_vs_analytic() {
 
     // Solve V σ = φ_D (first-kind Dirichlet)
     let phi_d = vec![v0; n];
-    use faer::linalg::solvers::Solve;
-    let mut b = faer::Mat::<f64>::zeros(n, 1);
-    for i in 0..n { b[(i,0)] = phi_d[i]; }
-    let lu = v_mat.as_ref().partial_piv_lu();
-    let x = lu.solve(b.as_ref());
-    let sigma: Vec<f64> = (0..n).map(|i| x[(i,0)]).collect();
+    let b = DVector::<f64>::from_iterator(n, phi_d.iter().copied());
+    let lu = v_mat.clone().lu();
+    let x = lu
+        .solve(&b)
+        .expect("Dirichlet solve failed: V matrix may be singular");
+    let sigma: Vec<f64> = x.iter().copied().collect();
 
     let c_bem = capacitance(&sigma, &surf, v0);
 

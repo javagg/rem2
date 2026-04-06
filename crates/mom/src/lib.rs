@@ -7,9 +7,9 @@
 //! ```text
 //! RemMesh  →  SurfaceMesh  →  RwgBases
 //!                  ↓               ↓
-//!             quadrature      assemble Z (faer dense)
+//!             quadrature      assemble Z (dense matrix)
 //!                  ↓               ↓
-//!             singular.rs    faer LU solve → currents
+//!             singular.rs    LU solve → currents
 //!                                  ↓
 //!                            postprocess → RCS CSV
 //! ```

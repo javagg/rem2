@@ -18,7 +18,7 @@
 //!     ↓
 //! assemble_laplace_bem (V + K matrices)
 //!     ↓
-//! solve (LU via faer)
+//! solve (dense LU)
 //!     ↓
 //! postprocess (capacitance, potential)
 //! ```

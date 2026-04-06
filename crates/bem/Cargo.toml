@@ -10,10 +10,10 @@ rem-mesh     = { workspace = true }
 rem-parallel = { workspace = true }
 rem-mom      = { path = "../mom" }
 num-complex  = { workspace = true }
+nalgebra     = { workspace = true }
 thiserror    = { workspace = true }
 log          = { workspace = true }
 rayon        = "1"
-faer         = { version = "0.21", features = [] }
 
 [dev-dependencies]
 approx = "0.5"

@@ -9,9 +9,9 @@ rem-config   = { workspace = true }
 rem-mesh     = { workspace = true }
 rem-parallel = { workspace = true }
 num-complex  = { workspace = true }
+nalgebra     = { workspace = true }
 thiserror    = { workspace = true }
 log          = { workspace = true }
-faer         = { version = "0.21", default-features = false, features = ["std", "linalg", "npy"] }
 
 # Rayon only on non-WASM targets
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

@@ -5,16 +5,13 @@ use crate::quadrature::TriQuad;
 use crate::green::green3d;
 use crate::singular::{zmn_self_duffy_pulse, zmn_singular_pulse, classify_pair, TriPairType};
 use crate::basis::rwg::RwgBasis;
+use nalgebra::{DMatrix, DVector};
 use num_complex::Complex64;
 use rem_core::{RemError, RemResult, EPS0, MU0, C0};
 use std::f64::consts::PI;
-use faer::Mat;
 
 #[cfg(not(target_arch = "wasm32"))]
 use rayon::prelude::*;
-
-// faer::c64 == num_complex::Complex64 in faer 0.21
-type C64 = faer::c64;
 
 /// Assemble N×N impedance matrix for scalar EFIE with pulse (constant) basis functions.
 ///
@@ -26,30 +23,30 @@ pub fn assemble_efie_pulse(
     freq: f64,
     quad: &TriQuad,
     _singular_tol: f64,
-) -> RemResult<Mat<C64>> {
+) -> RemResult<DMatrix<Complex64>> {
     let n = surf.faces.len();
     let omega = 2.0 * PI * freq;
     let k     = omega / C0;
     let omega_mu0 = omega * MU0;
 
-    let compute_col = |ni: usize| -> Vec<C64> {
+    let compute_col = |ni: usize| -> Vec<Complex64> {
         let face_n = &surf.faces[ni];
-        let mut col = vec![C64::new(0.0, 0.0); n];
+        let mut col = vec![Complex64::ZERO; n];
         for mi in 0..n {
             let face_m = &surf.faces[mi];
             let pair = classify_pair(face_m, face_n);
             let val = match pair {
                 TriPairType::Identical => {
                     let zself = zmn_self_duffy_pulse(face_n, &surf.nodes, k, omega_mu0, 4);
-                    to_c64(zself)
+                    zself
                 }
                 TriPairType::SharedEdge | TriPairType::SharedVertex => {
                     let integral = zmn_singular_pulse(face_m, face_n, &surf.nodes, k, 4);
-                    to_c64(Complex64::new(0.0, -omega_mu0) * integral)
+                    Complex64::new(0.0, -omega_mu0) * integral
                 }
                 TriPairType::Disjoint => {
                     let zoff = zmn_regular_pulse(face_m, face_n, &surf.nodes, k, omega_mu0, quad);
-                    to_c64(zoff)
+                    zoff
                 }
             };
             col[mi] = val;
@@ -58,11 +55,11 @@ pub fn assemble_efie_pulse(
     };
 
     #[cfg(not(target_arch = "wasm32"))]
-    let cols: Vec<Vec<C64>> = (0..n).into_par_iter().map(compute_col).collect();
+    let cols: Vec<Vec<Complex64>> = (0..n).into_par_iter().map(compute_col).collect();
     #[cfg(target_arch = "wasm32")]
-    let cols: Vec<Vec<C64>> = (0..n).map(compute_col).collect();
+    let cols: Vec<Vec<Complex64>> = (0..n).map(compute_col).collect();
 
-    let mut z = Mat::<C64>::zeros(n, n);
+    let mut z = DMatrix::<Complex64>::from_element(n, n, Complex64::ZERO);
     for (ni, col) in cols.into_iter().enumerate() {
         for mi in 0..n {
             z[(mi, ni)] = col[mi];
@@ -107,7 +104,7 @@ pub fn assemble_cfie_rwg(
     alpha: f64,
     quad: &TriQuad,
     _singular_tol: f64,
-) -> RemResult<Mat<C64>> {
+) -> RemResult<DMatrix<Complex64>> {
     let n = bases.len();
     if n == 0 {
         return Err(RemError::Mesh("No RWG bases found — check surface mesh".to_string()));
@@ -125,11 +122,11 @@ pub fn assemble_cfie_rwg(
 
     let z_mfie = assemble_mfie_rwg(surf, bases, k, quad)?;
 
-    let mut z = Mat::<C64>::zeros(n, n);
+    let mut z = DMatrix::<Complex64>::from_element(n, n, Complex64::ZERO);
     for i in 0..n {
         for j in 0..n {
-            let v = z_efie[(i, j)] * C64::new(alpha, 0.0)
-                  + z_mfie[(i, j)] * C64::new((1.0 - alpha) * eta0, 0.0);
+            let v = z_efie[(i, j)] * Complex64::new(alpha, 0.0)
+                  + z_mfie[(i, j)] * Complex64::new((1.0 - alpha) * eta0, 0.0);
             z[(i, j)] = v;
         }
     }
@@ -143,19 +140,19 @@ fn assemble_efie_rwg(
     k: f64,
     omega: f64,
     quad: &TriQuad,
-) -> RemResult<Mat<C64>> {
+) -> RemResult<DMatrix<Complex64>> {
     let n = bases.len();
     let omega_mu0 = omega * MU0;
     let inv_omega_eps0 = 1.0 / (omega * EPS0);
 
-    let cols: Vec<Vec<C64>> = {
-        let compute = |ni: usize| -> Vec<C64> {
+    let cols: Vec<Vec<Complex64>> = {
+        let compute = |ni: usize| -> Vec<Complex64> {
             let bn = &bases[ni];
-            let mut col = vec![C64::new(0.0, 0.0); n];
+            let mut col = vec![Complex64::ZERO; n];
             for mi in 0..n {
                 let bm = &bases[mi];
                 let val = zmn_efie_rwg(bm, bn, surf, k, omega_mu0, inv_omega_eps0, quad);
-                col[mi] = to_c64(val);
+                col[mi] = val;
             }
             col
         };
@@ -165,7 +162,7 @@ fn assemble_efie_rwg(
         { (0..n).map(compute).collect() }
     };
 
-    let mut z = Mat::<C64>::zeros(n, n);
+    let mut z = DMatrix::<Complex64>::from_element(n, n, Complex64::ZERO);
     for (ni, col) in cols.into_iter().enumerate() {
         for mi in 0..n {
             z[(mi, ni)] = col[mi];
@@ -221,17 +218,17 @@ fn assemble_mfie_rwg(
     bases: &[RwgBasis],
     k: f64,
     quad: &TriQuad,
-) -> RemResult<Mat<C64>> {
+) -> RemResult<DMatrix<Complex64>> {
     let n = bases.len();
 
-    let cols: Vec<Vec<C64>> = {
-        let compute = |ni: usize| -> Vec<C64> {
+    let cols: Vec<Vec<Complex64>> = {
+        let compute = |ni: usize| -> Vec<Complex64> {
             let bn = &bases[ni];
-            let mut col = vec![C64::new(0.0, 0.0); n];
+            let mut col = vec![Complex64::ZERO; n];
             for mi in 0..n {
                 let bm = &bases[mi];
                 let val = zmn_mfie_rwg(bm, bn, surf, k, quad);
-                col[mi] = to_c64(val);
+                col[mi] = val;
             }
             col
         };
@@ -241,7 +238,7 @@ fn assemble_mfie_rwg(
         { (0..n).map(compute).collect() }
     };
 
-    let mut z = Mat::<C64>::zeros(n, n);
+    let mut z = DMatrix::<Complex64>::from_element(n, n, Complex64::ZERO);
     for (ni, col) in cols.into_iter().enumerate() {
         for mi in 0..n {
             z[(mi, ni)] = col[mi];
@@ -342,10 +339,8 @@ fn cross_c(a: &[Complex64; 3], b: &[Complex64; 3]) -> [Complex64; 3] {
 // LU solver
 // ---------------------------------------------------------------------------
 
-/// Solve Z·I = V using LU decomposition (faer).
-pub fn lu_solve(z: &Mat<C64>, rhs: &[Complex64]) -> RemResult<Vec<Complex64>> {
-    use faer::linalg::solvers::Solve;
-
+/// Solve Z·I = V using dense LU decomposition.
+pub fn lu_solve(z: &DMatrix<Complex64>, rhs: &[Complex64]) -> RemResult<Vec<Complex64>> {
     let n = rhs.len();
     if z.nrows() != n || z.ncols() != n {
         return Err(RemError::Config(format!(
@@ -353,24 +348,11 @@ pub fn lu_solve(z: &Mat<C64>, rhs: &[Complex64]) -> RemResult<Vec<Complex64>> {
         )));
     }
 
-    // Build RHS column vector
-    let mut b = Mat::<C64>::zeros(n, 1);
-    for i in 0..n {
-        b[(i, 0)] = C64::new(rhs[i].re, rhs[i].im);
-    }
+    let b = DVector::<Complex64>::from_iterator(n, rhs.iter().copied());
+    let lu = z.clone().lu();
+    let x = lu
+        .solve(&b)
+        .ok_or_else(|| RemError::Other("lu_solve failed: matrix may be singular".to_string()))?;
 
-    let lu = z.as_ref().partial_piv_lu();
-    let x  = lu.solve(b.as_ref());
-
-    Ok((0..n).map(|i| {
-        let v = x[(i, 0)];
-        Complex64::new(v.re, v.im)
-    }).collect())
+    Ok(x.iter().copied().collect())
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-#[inline]
-fn to_c64(v: Complex64) -> C64 { C64::new(v.re, v.im) }
