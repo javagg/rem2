@@ -44,7 +44,7 @@ pub fn run_example(key: &str) -> Result<SimRun, String> {
 
     let mesh_bytes = examples::get_mesh_bytes(key);
     let value = rem_wasm::run_simulation(example.config_json, &mesh_bytes)
-        .map_err(|_| format!("{} solve failed in WASM runtime", example.problem_type))?;
+        .map_err(|e| format!("{} solve failed in WASM runtime: {:?}", example.problem_type, e))?;
 
     let result: rem_wasm::SimulationResult = serde_wasm_bindgen::from_value(value)
         .map_err(|e| format!("Failed to decode simulation result: {}", e))?;
