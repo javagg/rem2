@@ -100,6 +100,42 @@ async fn refresh_output_files(
     }
 }
 
+fn generate_rank_summary_csv(rank_logs: &std::collections::BTreeMap<u32, RankLog>) -> String {
+    let mut out = String::from("rank,line_count,phases,last_line_snippet\n");
+    
+    for (rank, entry) in rank_logs.iter() {
+        let lines: Vec<&str> = entry.text.lines().filter(|l| !l.trim().is_empty()).collect();
+        let line_count = lines.len();
+        
+        // Extract phase information from log text
+        let phases_str = if entry.text.contains("phase=init") {
+            "init"
+        } else if entry.text.contains("phase=mesh-load") {
+            "mesh-load"
+        } else if entry.text.contains("phase=assemble") {
+            "assemble"
+        } else if entry.text.contains("phase=solve") {
+            "solve"
+        } else if entry.text.contains("barrier") {
+            "barrier"
+        } else if entry.text.contains("postprocess") {
+            "postprocess"
+        } else {
+            "unknown"
+        };
+        
+        let last_line = lines.last().map(|l| l.replace('\n', " ").replace(',', ";")).unwrap_or_else(|| "no output".to_string());
+        let last_snippet = if last_line.len() > 50 {
+            format!("{}...", &last_line[..50])
+        } else {
+            last_line
+        };
+        
+        out.push_str(&format!("{},{},{},{}\n", rank, line_count, phases_str, last_snippet));
+    }
+    out
+}
+
 #[function_component(App)]
 fn app() -> Html {
     let selected = use_state(|| "spheres".to_string());
@@ -350,6 +386,14 @@ fn app() -> Html {
                                     &format!("{}/metadata.json", base),
                                     &serde_json::to_string_pretty(&metadata)
                                         .unwrap_or_else(|_| "{}".to_string()),
+                                ).await {
+                                    write_error = Some(err);
+                                }
+
+                                let ranks_summary_csv = generate_rank_summary_csv(&rank_snapshot);
+                                if let Err(err) = opfs::write_text_file(
+                                    &format!("{}/ranks_summary.csv", base),
+                                    &ranks_summary_csv,
                                 ).await {
                                     write_error = Some(err);
                                 }
