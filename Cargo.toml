@@ -70,5 +70,3 @@ inherits  = "release"
 opt-level = "s"
 lto       = true
 
-[patch.crates-io]
-faer-traits = { path = "vendor/faer-traits-patched" }
