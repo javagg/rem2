@@ -66,5 +66,36 @@
 4. 阶段 D：OPFS 输出落盘 + 弹窗文件浏览器。
 5. 阶段 E：控制面板瘦身与 rank 面板 4 列布局优化。
 
+## 当前执行状态（已启动）
+
+### A1. Palace 同步基线矩阵（当前仓库快照）
+
+> 说明：本表用于后续逐项与 Palace 上游示例核对。
+> Source Commit 先留空，待首次对齐时回填。
+
+| Example Key | Config | Mesh Asset(s) | Yew Runtime | Palace Source Commit | Sync Status |
+|---|---|---|---|---|---|
+| spheres | `examples/spheres/spheres.json` | `examples/spheres/mesh/spheres.msh` | Ready | TBD | Pending Verify |
+| rings | `examples/rings/rings.json` | `examples/rings/mesh/rings.msh` | Ready | TBD | Pending Verify |
+| adapter | `examples/adapter/adapter.json` | `examples/adapter/mesh/adapter.msh` | Ready | TBD | Pending Verify |
+| antenna | `examples/antenna/antenna.json` | `examples/antenna/mesh/antenna.msh` | Ready | TBD | Pending Verify |
+| coaxial | `examples/coaxial/coaxial.json` | `examples/coaxial/mesh/coaxial.msh` | Ready | TBD | Pending Verify |
+| cpw | `examples/cpw/cpw.json` | `examples/cpw/mesh/cpw_coax.msh` | Ready | TBD | Pending Verify |
+| cylinder | `examples/cylinder/cylinder.json` | `examples/cylinder/mesh/cylinder_hex.msh` | Ready | TBD | Pending Verify |
+| parallel_plate | `examples/parallel_plate/parallel_plate.json` | `examples/parallel_plate/mesh/plate_2d.msh` | Ready | TBD | Pending Verify |
+| sbr_sphere | `examples/sbr_sphere/sbr_sphere.json` | `examples/sbr_sphere/mesh/sphere.msh` | Ready | TBD | Pending Verify |
+| transmon | `examples/transmon/transmon.json` | `examples/transmon/mesh/transmon.msh2` | Unimplemented | TBD | Pending Verify |
+
+### A2. 立即执行清单
+1. 逐例与 Palace 配置做字段差异核对（Problem/Model/Domains/Boundaries/Solver/Postprocessing）。
+2. 对每个示例回填 Palace 来源 commit，并在 PR 描述中附差异摘要。
+3. 对同名但多网格变体（如 cpw/coaxial/cylinder）明确 yew 默认使用网格，并记录选择理由。
+
+### A3. 同步状态标记规则
+- `Pending Verify`：仅完成本仓库盘点，尚未对齐上游。
+- `In Sync`：配置与网格已对齐，且记录了 Source Commit。
+- `Diverged`：与上游存在可见偏差，需说明原因与计划。
+- `Intentional Fork`：有意识地与上游不同，必须附设计理由。
+
 ## 备注
 - 本文档为改造基线，后续实现可在对应阶段补充“已完成/待完成”与具体 PR 链接。
