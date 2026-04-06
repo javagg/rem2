@@ -15,3 +15,5 @@ rem-config  = { workspace = true }
 rem-parallel = { workspace = true }
 log         = { workspace = true }
 rmetis      = { workspace = true, optional = true }
+rmsh-io     = { path = "../../vendor/rmsh/crates/io", default-features = false }
+rmsh-model  = { path = "../../vendor/rmsh/crates/model" }

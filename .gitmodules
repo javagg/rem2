@@ -7,3 +7,6 @@
 [submodule "vendor/jsmpi"]
 	path = vendor/jsmpi
 	url = https://github.com/jsmpi/jsmpi.git
+[submodule "vendor/rmsh"]
+	path = vendor/rmsh
+	url = https://github.com/rust-msh/rmsh.git
