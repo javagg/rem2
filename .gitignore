@@ -3,3 +3,4 @@ target/
 node_modules/
 output/
 Cargo.lock
+.DS_Store
