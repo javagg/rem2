@@ -99,19 +99,25 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
         ProblemType::SBR => {
-            // rem-sbr is WASM-compatible (rayon is excluded on wasm32 automatically).
-            rem_sbr::run_with_mesh(&cfg,
-                cfg.solver.sbr.as_ref()
-                    .ok_or_else(|| JsError::new("SBR requires Solver.SBR section"))?,
-                &mesh,
-            ).map_err(|e| JsError::new(&format!("SBR error: {}", e)))?;
-            let res = SimulationResult {
-                phi: vec![],
-                energy: 0.0,
-                e_field: None,
-                b_field: None,
-            };
-            Ok(serde_wasm_bindgen::to_value(&res)?)
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                rem_sbr::run_with_mesh(&cfg,
+                    cfg.solver.sbr.as_ref()
+                        .ok_or_else(|| JsError::new("SBR requires Solver.SBR section"))?,
+                    &mesh,
+                ).map_err(|e| JsError::new(&format!("SBR error: {}", e)))?;
+                let res = SimulationResult {
+                    phi: vec![],
+                    energy: 0.0,
+                    e_field: None,
+                    b_field: None,
+                };
+                Ok(serde_wasm_bindgen::to_value(&res)?)
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                Err(JsError::new("SBR solver not available in WASM build"))
+            }
         }
         _ => Err(JsError::new("Unsupported problem type")),
     }
