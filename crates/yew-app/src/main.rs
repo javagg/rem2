@@ -1,11 +1,13 @@
 mod examples;
+mod opfs;
 mod solver;
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use examples::{ExampleStatus, EXAMPLES};
-use solver::SimResult;
+use opfs::OpfsEntry;
+use solver::{SimResult, SimRun};
 use wasm_bindgen_futures::spawn_local;
 use web_sys::{HtmlInputElement, HtmlSelectElement};
 use yew::prelude::*;
@@ -27,6 +29,10 @@ enum Tab {
 struct RankLog {
     rank: u32,
     text: String,
+}
+
+fn sanitize_example_key(key: &str) -> String {
+    key.replace('/', "_")
 }
 
 const MIN_RANKS: u32 = 1;
@@ -61,6 +67,7 @@ fn append_line(existing: &str, line: &str) -> String {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
 fn strip_rank_prefix<'a>(text: &'a str, rank: u32) -> &'a str {
     let bracket_prefix = format!("[rank {}] ", rank);
     if let Some(stripped) = text.strip_prefix(&bracket_prefix) {
@@ -75,8 +82,22 @@ fn strip_rank_prefix<'a>(text: &'a str, rank: u32) -> &'a str {
     text
 }
 
+#[cfg(target_arch = "wasm32")]
 fn is_console_kind(kind: &str) -> bool {
     matches!(kind, "debug" | "info" | "log" | "trace" | "warn" | "error")
+}
+
+async fn refresh_output_files(
+    output_files: UseStateHandle<Vec<OpfsEntry>>,
+    output_error: UseStateHandle<Option<String>>,
+) {
+    match opfs::list_files().await {
+        Ok(files) => {
+            output_files.set(files);
+            output_error.set(None);
+        }
+        Err(err) => output_error.set(Some(err)),
+    }
 }
 
 #[function_component(App)]
@@ -94,6 +115,12 @@ fn app() -> Html {
     let result = use_state(|| None::<SimResult>);
     let active_tab = use_state(|| Tab::Config);
     let code_panel_collapsed = use_state(|| true);
+    let output_browser_open = use_state(|| false);
+    let output_files = use_state(Vec::<OpfsEntry>::new);
+    let selected_output_path = use_state(|| None::<String>);
+    let selected_output_content = use_state(String::new);
+    let output_loading = use_state(|| false);
+    let output_error = use_state(|| None::<String>);
 
     let example = examples::find_example(&selected).unwrap();
 
@@ -152,6 +179,35 @@ fn app() -> Html {
         })
     };
 
+    let on_open_output_browser = {
+        let output_browser_open = output_browser_open.clone();
+        let output_files = output_files.clone();
+        let selected_output_path = selected_output_path.clone();
+        let selected_output_content = selected_output_content.clone();
+        let output_loading = output_loading.clone();
+        let output_error = output_error.clone();
+        Callback::from(move |_: MouseEvent| {
+            output_browser_open.set(true);
+            output_loading.set(true);
+            output_error.set(None);
+            selected_output_path.set(None);
+            selected_output_content.set(String::new());
+
+            let output_files = output_files.clone();
+            let output_loading = output_loading.clone();
+            let output_error = output_error.clone();
+            spawn_local(async move {
+                refresh_output_files(output_files, output_error).await;
+                output_loading.set(false);
+            });
+        })
+    };
+
+    let on_close_output_browser = {
+        let output_browser_open = output_browser_open.clone();
+        Callback::from(move |_: MouseEvent| output_browser_open.set(false))
+    };
+
     // Run simulation
     let on_run = {
         let selected = selected.clone();
@@ -165,8 +221,12 @@ fn app() -> Html {
         let rank_logs_ref = rank_logs_ref.clone();
         let log_text = log_text.clone();
         let result = result.clone();
+        let output_files = output_files.clone();
+        let output_error = output_error.clone();
+        let example_config = example.config_json.to_string();
         Callback::from(move |_: MouseEvent| {
             let key = (*selected).clone();
+            let example_config = example_config.clone();
             let use_mpi = *mpi_enabled;
             let running = running.clone();
             let mpi_running = mpi_running.clone();
@@ -176,6 +236,8 @@ fn app() -> Html {
             let rank_logs_ref = rank_logs_ref.clone();
             let log_text = log_text.clone();
             let result = result.clone();
+            let output_files = output_files.clone();
+            let output_error = output_error.clone();
 
             if use_mpi {
                 let ranks = clamp_ranks(*rank_count);
@@ -213,6 +275,10 @@ fn app() -> Html {
                     let mpi_running_on_complete = mpi_running.clone();
                     let mpi_status_on_complete = mpi_status.clone();
                     let log_text_on_complete = log_text.clone();
+                    let rank_logs_ref_on_complete = rank_logs_ref.clone();
+                    let output_files_on_complete = output_files.clone();
+                    let output_error_on_complete = output_error.clone();
+                    let output_key = key.clone();
 
                     let job = jsmpi::launcher::create_job(
                         "/worker.js",
@@ -250,6 +316,60 @@ fn app() -> Html {
                                 &log_text_on_complete,
                                 &format!("MPI completion callback: {}/{} ranks done.", finished, total),
                             ));
+
+                            let rank_snapshot = rank_logs_ref_on_complete.borrow().clone();
+                            let global_log = (*log_text_on_complete).clone();
+                            let example_config = example_config.clone();
+                            let output_files_on_complete = output_files_on_complete.clone();
+                            let output_error_on_complete = output_error_on_complete.clone();
+                            let output_key = output_key.clone();
+                            spawn_local(async move {
+                                let base = format!("runs/{}/mpi", sanitize_example_key(&output_key));
+                                let mut write_error = None;
+                                if let Err(err) = opfs::write_text_file(
+                                    &format!("{}/global-log.txt", base),
+                                    &global_log,
+                                ).await {
+                                    write_error = Some(err);
+                                }
+
+                                if let Err(err) = opfs::write_text_file(
+                                    &format!("{}/config.json", base),
+                                    &example_config,
+                                ).await {
+                                    write_error = Some(err);
+                                }
+
+                                let metadata = serde_json::json!({
+                                    "example": output_key,
+                                    "mode": "mpi",
+                                    "rank_count": total,
+                                    "finished_ranks": finished,
+                                });
+                                if let Err(err) = opfs::write_text_file(
+                                    &format!("{}/metadata.json", base),
+                                    &serde_json::to_string_pretty(&metadata)
+                                        .unwrap_or_else(|_| "{}".to_string()),
+                                ).await {
+                                    write_error = Some(err);
+                                }
+
+                                for (rank, entry) in &rank_snapshot {
+                                    if let Err(err) = opfs::write_text_file(
+                                        &format!("{}/rank-{}.log", base, rank),
+                                        &entry.text,
+                                    ).await {
+                                        write_error = Some(err);
+                                        break;
+                                    }
+                                }
+
+                                refresh_output_files(output_files_on_complete, output_error_on_complete.clone()).await;
+
+                                if let Some(err) = write_error {
+                                    output_error_on_complete.set(Some(err));
+                                }
+                            });
                         },
                     );
                     mpi_job.set(Some(Rc::new(job)));
@@ -277,12 +397,61 @@ fn app() -> Html {
                 gloo::timers::future::sleep(std::time::Duration::from_millis(10)).await;
 
                 match solver::run_example(&key) {
-                    Ok(r) => {
+                    Ok(run) => {
+                        let SimRun { summary, artifacts } = run;
+                        let result_json = serde_json::to_string_pretty(&summary)
+                            .unwrap_or_else(|_| "{}".to_string());
+                        let log_snapshot = format!(
+                            "Starting simulation: {}...\nSimulation completed.\n",
+                            key
+                        );
                         log_text.set(format!(
                             "Starting simulation: {}...\nSimulation completed.\n",
                             key
                         ));
-                        result.set(Some(r));
+                        result.set(Some(summary));
+
+                        let output_files = output_files.clone();
+                        let output_error = output_error.clone();
+                        let output_key = key.clone();
+                        let artifacts = artifacts.clone();
+                        spawn_local(async move {
+                            let base = format!("runs/{}/serial", sanitize_example_key(&output_key));
+                            let mut write_error = None;
+                            if let Err(err) = opfs::write_text_file(
+                                &format!("{}/result.json", base),
+                                &result_json,
+                            ).await {
+                                write_error = Some(err);
+                            }
+                            if let Err(err) = opfs::write_text_file(
+                                &format!("{}/config.json", base),
+                                &example_config,
+                            ).await {
+                                write_error = Some(err);
+                            }
+                            if let Err(err) = opfs::write_text_file(
+                                &format!("{}/run.log", base),
+                                &log_snapshot,
+                            ).await {
+                                write_error = Some(err);
+                            }
+
+                            for artifact in &artifacts {
+                                if let Err(err) = opfs::write_text_file(
+                                    &format!("{}/{}", base, artifact.file_name),
+                                    &artifact.content,
+                                ).await {
+                                    write_error = Some(err);
+                                    break;
+                                }
+                            }
+
+                            refresh_output_files(output_files, output_error.clone()).await;
+                            if let Some(err) = write_error {
+                                output_error.set(Some(err));
+                            }
+                        });
                     }
                     Err(e) => {
                         log_text.set(format!(
@@ -392,6 +561,11 @@ fn app() -> Html {
                         onclick={on_run}
                         disabled={btn_disabled}>
                         {btn_text}
+                    </button>
+
+                    <button type="button" class="browse-btn"
+                        onclick={on_open_output_browser}>
+                        {"Browse Outputs"}
                     </button>
 
                     if *mpi_enabled {
@@ -505,6 +679,94 @@ fn app() -> Html {
                     }
                 </div>
             </div>
+
+            if *output_browser_open {
+                <div class="modal-backdrop" onclick={on_close_output_browser.clone()}>
+                    <div class="modal-card" onclick={Callback::from(|e: MouseEvent| e.stop_propagation())}>
+                        <div class="modal-header">
+                            <h3>{format!("OPFS Outputs ({})", output_files.len())}</h3>
+                            <div class="modal-actions">
+                                if let Some(path) = &*selected_output_path {
+                                    <button
+                                        type="button"
+                                        class="browse-btn output-download-btn"
+                                        onclick={{
+                                            let path = path.clone();
+                                            let output_error = output_error.clone();
+                                            Callback::from(move |_: MouseEvent| {
+                                                let path = path.clone();
+                                                let output_error = output_error.clone();
+                                                spawn_local(async move {
+                                                    if let Err(err) = opfs::download_text_file(&path).await {
+                                                        output_error.set(Some(err));
+                                                    }
+                                                });
+                                            })
+                                        }}>
+                                        {"Download"}
+                                    </button>
+                                }
+                                <button type="button" class="collapse-btn" onclick={on_close_output_browser}>{"Close"}</button>
+                            </div>
+                        </div>
+                        <div class="modal-content">
+                            <div class="output-file-list">
+                                if *output_loading {
+                                    <p>{"Loading files..."}</p>
+                                } else if let Some(err) = &*output_error {
+                                    <p>{format!("OPFS error: {}", err)}</p>
+                                } else {
+                                    { for output_files.iter().map(|entry| {
+                                        let selected_output_path = selected_output_path.clone();
+                                        let selected_output_content = selected_output_content.clone();
+                                        let output_loading = output_loading.clone();
+                                        let output_error = output_error.clone();
+                                        let path = entry.path.clone();
+                                        let label = format!("{} ({} bytes)", entry.path, entry.size);
+                                        let is_selected = selected_output_path.as_ref() == Some(&path);
+                                        let onclick = Callback::from(move |_: MouseEvent| {
+                                            selected_output_path.set(Some(path.clone()));
+                                            output_loading.set(true);
+                                            output_error.set(None);
+                                            let selected_output_content = selected_output_content.clone();
+                                            let output_loading = output_loading.clone();
+                                            let output_error = output_error.clone();
+                                            let path = path.clone();
+                                            spawn_local(async move {
+                                                match opfs::read_text_file(&path).await {
+                                                    Ok(content) => selected_output_content.set(content),
+                                                    Err(err) => output_error.set(Some(err)),
+                                                }
+                                                output_loading.set(false);
+                                            });
+                                        });
+
+                                        html! {
+                                            <button type="button"
+                                                class={classes!("output-file-btn", is_selected.then_some("active"))}
+                                                {onclick}>
+                                                {label}
+                                            </button>
+                                        }
+                                    }) }
+                                }
+                            </div>
+                            <div class="output-preview">
+                                if let Some(path) = &*selected_output_path {
+                                    <h4>{path.clone()}</h4>
+                                    if *output_loading {
+                                        <p>{"Loading preview..."}</p>
+                                    } else {
+                                        <pre>{&*selected_output_content}</pre>
+                                    }
+                                } else {
+                                    <p>{"Select a file to preview its contents."}</p>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            }
         </div>
     }
 }

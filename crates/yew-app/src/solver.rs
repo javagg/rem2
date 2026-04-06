@@ -1,6 +1,7 @@
 use crate::examples;
+use serde::Serialize;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct SimResult {
     pub energy: f64,
     pub node_count: usize,
@@ -8,7 +9,36 @@ pub struct SimResult {
     pub max_b: Option<f64>,
 }
 
-pub fn run_example(key: &str) -> Result<SimResult, String> {
+#[derive(Clone, Debug)]
+pub struct OutputArtifact {
+    pub file_name: String,
+    pub content: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct SimRun {
+    pub summary: SimResult,
+    pub artifacts: Vec<OutputArtifact>,
+}
+
+fn phi_csv(phi: &[f64]) -> String {
+    let mut out = String::from("index,phi\n");
+    for (i, v) in phi.iter().enumerate() {
+        out.push_str(&format!("{},{}\n", i, v));
+    }
+    out
+}
+
+fn vec3_csv(name: &str, field: &[[f64; 3]]) -> String {
+    let mut out = format!("index,{}_x,{}_y,{}_z,{}_norm\n", name, name, name, name);
+    for (i, v) in field.iter().enumerate() {
+        let norm = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+        out.push_str(&format!("{},{},{},{},{}\n", i, v[0], v[1], v[2], norm));
+    }
+    out
+}
+
+pub fn run_example(key: &str) -> Result<SimRun, String> {
     let example = examples::find_example(key)
         .ok_or_else(|| format!("Unknown example: {}", key))?;
 
@@ -32,10 +62,32 @@ pub fn run_example(key: &str) -> Result<SimResult, String> {
                 .fold(0.0f64, f64::max)
         });
 
-    Ok(SimResult {
-        energy: result.energy,
-        node_count: result.phi.len(),
-        max_e,
-        max_b,
+    let mut artifacts = vec![OutputArtifact {
+        file_name: "phi.csv".to_string(),
+        content: phi_csv(&result.phi),
+    }];
+
+    if let Some(field) = &result.e_field {
+        artifacts.push(OutputArtifact {
+            file_name: "e_field.csv".to_string(),
+            content: vec3_csv("e", field),
+        });
+    }
+
+    if let Some(field) = &result.b_field {
+        artifacts.push(OutputArtifact {
+            file_name: "b_field.csv".to_string(),
+            content: vec3_csv("b", field),
+        });
+    }
+
+    Ok(SimRun {
+        summary: SimResult {
+            energy: result.energy,
+            node_count: result.phi.len(),
+            max_e,
+            max_b,
+        },
+        artifacts,
     })
 }

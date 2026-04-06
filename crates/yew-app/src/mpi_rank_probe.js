@@ -17,15 +17,25 @@ export async function jsmpi_main() {
   const example = parseExampleFromModuleUrl();
 
   console.log(`[rank ${rank}] job started: example=${example}, world_size=${size}`);
+  console.info(`[rank ${rank}] phase=init`);
 
-  // Make each rank produce distinct, ordered output for UI verification.
+  // Emit multi-phase logs so MPI panel is informative in demo mode.
   await sleep(60 * (rank + 1));
-  console.log(`[rank ${rank}] local phase complete`);
+  console.debug(`[rank ${rank}] phase=mesh-load complete`);
+
+  await sleep(40);
+  console.info(`[rank ${rank}] phase=assemble complete`);
+
+  await sleep(40);
+  console.info(`[rank ${rank}] phase=solve complete`);
 
   if (typeof globalThis.__jsmpi_barrier_timeout === "function") {
     const ok = globalThis.__jsmpi_barrier_timeout(rank, size, 5000);
-    console.log(`[rank ${rank}] barrier ${ok ? "passed" : "timed-out"}`);
+    console.log(`[rank ${rank}] phase=barrier ${ok ? "passed" : "timed-out"}`);
   }
+
+  await sleep(30);
+  console.info(`[rank ${rank}] phase=postprocess complete`);
 
   await sleep(30);
   console.log(`[rank ${rank}] finished`);

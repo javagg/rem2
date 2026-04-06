@@ -48,6 +48,12 @@
 - 验收标准：
   - 浏览器刷新后，输出文件在同一 origin 下可继续访问（在浏览器策略允许范围内）。
 
+当前实现进度：
+- 已落地最小版本：串行与 MPI 运行结束后，将日志、配置和结果摘要写入 OPFS。
+- 已支持弹窗列出文件并预览文本内容。
+- Serial 模式已导出 `phi.csv`，并在可用时导出 `e_field.csv` / `b_field.csv`。
+- 下载能力以文本文件为第一版范围；后续二进制产物可单独扩展。
+
 ### 5. 控制面板瘦身 + rank 面板 1 行 4 列
 - 示例选择控制区当前占用过大，需要紧凑化：
   - 压缩垂直间距与组件高度。
@@ -90,6 +96,22 @@
 1. 逐例与 Palace 配置做字段差异核对（Problem/Model/Domains/Boundaries/Solver/Postprocessing）。
 2. 对每个示例回填 Palace 来源 commit，并在 PR 描述中附差异摘要。
 3. 对同名但多网格变体（如 cpw/coaxial/cylinder）明确 yew 默认使用网格，并记录选择理由。
+
+### A4. 多网格变体默认选择（第一版）
+
+> 目标：避免示例运行时因网格选择不一致导致的“看起来可运行但结果不可比”。
+
+| Example Key | 可选网格文件 | 当前 yew 默认 | 选择理由 | 何时切换 |
+|---|---|---|---|---|
+| `coaxial` | `coaxial.msh`, `coaxial_ascii.msh` | `coaxial.msh` | 与当前 examples 配置和 yew 内嵌路径一致，优先采用主版本网格 | 若 Palace 主线改为 ascii 版或主版本标注变更时切换 |
+| `cpw` | `cpw_coax.msh`, `cpw_coax_0.msh`, `cpw_lumped.msh`, `cpw_lumped_0.msh`, `cpw_wave.msh`, `cpw_wave_0.msh` | `cpw_coax.msh` | 与 `examples/cpw/cpw.json` 当前配置一致，作为 CPW 基线 | 增加“端口类型/边界模式”选项后，可按 UI 模式切换对应网格 |
+| `cylinder` | `cylinder_hex.msh`, `cylinder_prism.msh`, `cylinder_tet.msh` | `cylinder_hex.msh` | 当前 yew 示例已走 hex 网格，稳定且与示例配置一致 | 后续增加“网格类型”下拉后，允许在 hex/prism/tet 间切换 |
+
+### A5. 规则补充
+- 若示例目录下存在多个 mesh 变体：
+  - 必须在本表明确“默认值 + 理由 + 切换条件”。
+  - yew 运行态与 `examples/*.json` 默认值保持一致。
+  - 若运行态默认与配置默认不一致，必须在 PR 中写明偏差原因。
 
 ### A3. 同步状态标记规则
 - `Pending Verify`：仅完成本仓库盘点，尚未对齐上游。
