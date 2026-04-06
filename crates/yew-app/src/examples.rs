@@ -61,7 +61,7 @@ pub const EXAMPLES: &[ExampleMeta] = &[
         key: "adapter",
         label: "Adapter (Driven, v0.2)",
         problem_type: "Driven",
-        status: ExampleStatus::Unimplemented,
+      status: ExampleStatus::Ready,
         config_json: r#"{
   "Problem": { "Type": "Driven", "Output": "." },
   "Model": { "Mesh": "adapter.msh", "L0": 1.0 },
@@ -72,13 +72,13 @@ pub const EXAMPLES: &[ExampleMeta] = &[
   },
   "Solver": { "Order": 1, "Driven": { "MinFreq": 1e9, "MaxFreq": 10e9, "FreqStep": 0.1e9 } }
 }"#,
-        source_code: "// Driven solver not yet implemented",
+        source_code: "// Driven frequency sweep example (wasm-enabled)",
     },
     ExampleMeta {
         key: "antenna",
         label: "Antenna (Driven, v0.2)",
         problem_type: "Driven",
-        status: ExampleStatus::Unimplemented,
+      status: ExampleStatus::Ready,
         config_json: r#"{
   "Problem": { "Type": "Driven", "Output": "." },
   "Model": { "Mesh": "antenna.msh", "L0": 0.001 },
@@ -89,7 +89,7 @@ pub const EXAMPLES: &[ExampleMeta] = &[
   },
   "Solver": { "Order": 2, "Driven": { "MinFreq": 2e9, "MaxFreq": 3e9, "FreqStep": 0.05e9 } }
 }"#,
-        source_code: "// Driven solver not yet implemented",
+        source_code: "// Driven frequency sweep example (wasm-enabled)",
     },
     ExampleMeta {
         key: "coaxial",
@@ -112,7 +112,7 @@ pub const EXAMPLES: &[ExampleMeta] = &[
         key: "cpw",
         label: "CPW (Driven, v0.2)",
         problem_type: "Driven",
-        status: ExampleStatus::Unimplemented,
+      status: ExampleStatus::Ready,
         config_json: r#"{
   "Problem": { "Type": "Driven", "Output": "." },
   "Model": { "Mesh": "cpw.msh", "L0": 1e-6 },
@@ -123,13 +123,13 @@ pub const EXAMPLES: &[ExampleMeta] = &[
   },
   "Solver": { "Order": 2, "Driven": { "MinFreq": 4e9, "MaxFreq": 8e9, "FreqStep": 0.1e9 } }
 }"#,
-        source_code: "// Driven solver not yet implemented",
+        source_code: "// Driven frequency sweep example (wasm-enabled)",
     },
     ExampleMeta {
         key: "cylinder",
-        label: "Cylinder (Magnetostatic 3D, v0.2)",
+      label: "Cylinder (Magnetostatic)",
         problem_type: "Magnetostatic",
-        status: ExampleStatus::Unimplemented,
+      status: ExampleStatus::Ready,
         config_json: r#"{
   "Problem": { "Type": "Magnetostatic", "Output": "." },
   "Model": { "Mesh": "cylinder.msh", "L0": 0.001 },
@@ -141,6 +141,84 @@ pub const EXAMPLES: &[ExampleMeta] = &[
   "Solver": { "Order": 1 }
 }"#,
         source_code: "// Magnetostatic cylinder example\n// Physical groups: 1=cylinder(vol), 2=top, 3=bottom, 4=exterior, 5=symmetry",
+    },
+    ExampleMeta {
+        key: "parallel_plate",
+        label: "Parallel Plate (Electrostatic)",
+        problem_type: "Electrostatic",
+        status: ExampleStatus::Ready,
+        config_json: r#"{
+  "Problem": { "Type": "Electrostatic", "Output": "." },
+  "Model": { "Mesh": "plate_2d.msh", "L0": 0.001 },
+  "Domains": {
+    "Materials": [{ "Attributes": [10], "Permittivity": 1.0 }]
+  },
+  "Boundaries": {
+    "Ground": { "Attributes": [1] },
+    "Terminal": [{ "Index": 1, "Attributes": [2] }]
+  },
+  "Solver": { "Order": 1, "Linear": { "Type": "GMRES", "Tol": 1e-10, "MaxIter": 500 } }
+}"#,
+        source_code: "// Electrostatic parallel plate example",
+    },
+    ExampleMeta {
+        key: "sbr_sphere",
+        label: "Sphere (SBR+)",
+        problem_type: "SBR",
+        status: ExampleStatus::Ready,
+        config_json: r#"{
+  "Problem": { "Type": "SBR", "Output": "." },
+  "Model": { "Mesh": "sphere.msh", "L0": 1.0 },
+  "Boundaries": { "PEC": { "Attributes": [1] } },
+  "Solver": {
+    "SBR": {
+      "FreqMin": 1.0e9,
+      "FreqMax": 1.0e9,
+      "FreqStep": 0.0,
+      "RayDensity": 3000.0,
+      "MaxBounces": 2,
+      "WeightThresh": 1.0e-4,
+      "TargetType": "PEC",
+      "ThetaInc": 0.0,
+      "PhiInc": 0.0,
+      "Polarization": "theta"
+    }
+  },
+  "Postprocessing": {
+    "RCS": {
+      "ThetaDeg": [180.0],
+      "PhiDeg": [0.0]
+    }
+  }
+}"#,
+        source_code: "// SBR+ PEC sphere example (Mie-comparison setup)",
+    },
+    ExampleMeta {
+        key: "mom_sphere",
+        label: "Sphere (MoM)",
+        problem_type: "MoM",
+        status: ExampleStatus::Ready,
+        config_json: r#"{
+  "Problem": { "Type": "MoM", "Output": "." },
+  "Model": { "Mesh": "sphere.msh", "L0": 1.0 },
+  "Boundaries": { "PEC": { "Attributes": [1] } },
+  "Solver": {
+    "MoM": {
+      "Equation": "CFIE",
+      "Basis": "RWG",
+      "FreqMin": 1.0e9,
+      "FreqMax": 1.0e9,
+      "FreqStep": 1.0,
+      "Alpha": 0.5,
+      "SingularTol": 1.0e-6,
+      "FastSolver": "Direct",
+      "ThetaInc": 0.0,
+      "PhiInc": 0.0,
+      "Polarization": "theta"
+    }
+  }
+}"#,
+        source_code: "// MoM PEC sphere example with CFIE + RWG basis",
     },
     ExampleMeta {
         key: "transmon",
@@ -171,6 +249,8 @@ pub fn get_mesh_bytes(key: &str) -> Vec<u8> {
         "coaxial" => include_bytes!("../../../examples/coaxial/mesh/coaxial.msh").to_vec(),
         "cpw" => include_bytes!("../../../examples/cpw/mesh/cpw_coax.msh").to_vec(),
         "cylinder" => include_bytes!("../../../examples/cylinder/mesh/cylinder_hex.msh").to_vec(),
+        "parallel_plate" => include_bytes!("../../../examples/parallel_plate/mesh/plate_2d.msh").to_vec(),
+        "sbr_sphere" | "mom_sphere" => include_bytes!("../../../examples/sbr_sphere/mesh/sphere.msh").to_vec(),
         "transmon" => include_bytes!("../../../examples/transmon/mesh/transmon.msh2").to_vec(),
         _ => vec![],
     }

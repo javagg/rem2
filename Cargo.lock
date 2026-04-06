@@ -580,8 +580,6 @@ dependencies = [
 [[package]]
 name = "faer-traits"
 version = "0.21.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1430e111b20872c7eaa82c7ada071bff1c3e3ac09cc6f4df676065fd2d41eb62"
 dependencies = [
  "bytemuck",
  "dyn-stack",
@@ -2273,6 +2271,7 @@ dependencies = [
 name = "rem-parallel"
 version = "0.1.0"
 dependencies = [
+ "js-sys",
  "log",
  "serde",
  "serde_json",
@@ -2311,6 +2310,7 @@ dependencies = [
  "log",
  "rem-config",
  "rem-core",
+ "rem-driven",
  "rem-electrostatic",
  "rem-magnetostatic",
  "rem-materials",
@@ -2330,15 +2330,12 @@ dependencies = [
  "console_error_panic_hook",
  "console_log",
  "gloo 0.11.0",
+ "jsmpi",
  "log",
- "rem-config",
- "rem-core",
- "rem-electrostatic",
- "rem-magnetostatic",
- "rem-materials",
  "rem-mesh",
- "rem-parallel",
+ "rem-wasm",
  "serde",
+ "serde-wasm-bindgen 0.6.5",
  "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-futures",

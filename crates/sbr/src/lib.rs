@@ -87,6 +87,7 @@ pub fn run_with_mesh(
 
     // ── 2. Output directory ───────────────────────────────────────────────
     let output_dir = std::path::Path::new(config.problem.output_dir());
+    #[cfg(not(target_arch = "wasm32"))]
     std::fs::create_dir_all(output_dir.join("postpro"))?;
 
     // ── 3. RCS observation angles ─────────────────────────────────────────
@@ -136,19 +137,23 @@ pub fn run_with_mesh(
             }
         }
 
-        // ── Stage 3: Far-field RCS → CSV ───────────────────────────────────
-        write_rcs(output_dir, freq, &currents, &surf, k, &theta_deg, &phi_deg)?;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            write_rcs(output_dir, freq, &currents, &surf, k, &theta_deg, &phi_deg)?;
 
-        // ── Stage 4: Surface current VTK ───────────────────────────────────
-        let vtk_path = output_dir
-            .join("postpro")
-            .join(format!("sbr_{:.3e}Hz.vtk", freq));
-        write_surface_vtk(&vtk_path, &currents, &surf)?;
+            let vtk_path = output_dir
+                .join("postpro")
+                .join(format!("sbr_{:.3e}Hz.vtk", freq));
+            write_surface_vtk(&vtk_path, &currents, &surf)?;
+        }
 
         freq += freq_step;
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     log::info!("SBR+ complete. Results in {}", output_dir.display());
+    #[cfg(target_arch = "wasm32")]
+    log::info!("SBR+ complete.");
     Ok(())
 }
 

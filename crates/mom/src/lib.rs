@@ -70,6 +70,7 @@ pub fn run_with_mesh(
     let freq_max  = mom_cfg.freq_max;
     let freq_step = mom_cfg.freq_step;
     let output_dir = std::path::Path::new(config.problem.output_dir());
+    #[cfg(not(target_arch = "wasm32"))]
     std::fs::create_dir_all(output_dir.join("postpro"))?;
 
     // RCS angles
@@ -113,26 +114,30 @@ pub fn run_with_mesh(
         // Solve Z·I = V
         let currents = assemble::lu_solve(&z_mat, &rhs)?;
 
-        // Post-process: RCS
-        postprocess::write_rcs(
-            output_dir,
-            freq,
-            &currents,
-            &surf,
-            k,
-            &theta_deg,
-            &phi_deg,
-        )?;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            postprocess::write_rcs(
+                output_dir,
+                freq,
+                &currents,
+                &surf,
+                k,
+                &theta_deg,
+                &phi_deg,
+            )?;
 
-        // Post-process: surface current VTK
-        let vtk_path = output_dir
-            .join("postpro")
-            .join(format!("surface_current_{:.3e}Hz.vtk", freq));
-        postprocess::write_surface_vtk(&vtk_path, &currents, &surf)?;
+            let vtk_path = output_dir
+                .join("postpro")
+                .join(format!("surface_current_{:.3e}Hz.vtk", freq));
+            postprocess::write_surface_vtk(&vtk_path, &currents, &surf)?;
+        }
 
         freq += freq_step;
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     log::info!("MoM solve complete. Results in {}", output_dir.display());
+    #[cfg(target_arch = "wasm32")]
+    log::info!("MoM solve complete.");
     Ok(())
 }

@@ -34,14 +34,22 @@ const C0: f64 = 2.997_924_58e8;
 pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
     log::info!("=== Driven (frequency-domain) solver ===");
 
-    let drv_cfg = config.solver.driven.as_ref().ok_or_else(|| {
-        RemError::Config("Driven problem requires a [Solver.Driven] section".into())
-    })?;
-
     let mesh_path = Path::new(&config.model.mesh);
     let raw = read_msh_file(mesh_path)?;
     let mut mesh = RemMesh::from_raw(raw, config)?;
     mesh.set_comm(comm.rank(), comm.size());
+
+    run_with_mesh(config, &mesh, comm)
+}
+
+/// Entry point for pre-loaded mesh (used by WASM path).
+pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> RemResult<()> {
+    log::info!("=== Driven (frequency-domain) solver ===");
+
+    let drv_cfg = config.solver.driven.as_ref().ok_or_else(|| {
+        RemError::Config("Driven problem requires a [Solver.Driven] section".into())
+    })?;
+
     let domain_map = DomainMap::from_config(config)?;
 
     // Build frequency sweep
@@ -66,6 +74,7 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
     let m_mat = m_triplet.to_csr();
 
     let out_dir = config.problem.output_dir();
+    #[cfg(not(target_arch = "wasm32"))]
     std::fs::create_dir_all(out_dir).map_err(RemError::Io)?;
 
     let lin = &config.solver.linear;
@@ -124,11 +133,15 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
         });
 
         // Save VTK if requested
-        if step % save_step == 0 {
-            output::write_field_vtk(out_dir, &mesh, &result.solution, step + 1)?;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if step % save_step == 0 {
+                output::write_field_vtk(out_dir, &mesh, &result.solution, step + 1)?;
+            }
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     output::write_s_params(out_dir, &freq_results)?;
     log::info!("Driven solve complete: {} frequency points", freq_results.len());
     Ok(())

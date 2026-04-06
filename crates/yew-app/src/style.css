@@ -38,6 +38,36 @@ h1 {
     overflow: hidden;
 }
 
+.code-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #2a2a2a;
+    color: #f0f0f0;
+    padding: 10px 12px;
+    border-bottom: 1px solid #3a3a3a;
+}
+
+.code-panel-header h3 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.collapse-btn {
+    border: 1px solid #4a4a4a;
+    background: #3b3b3b;
+    color: #f5f5f5;
+    border-radius: 4px;
+    font-size: 12px;
+    padding: 6px 10px;
+    cursor: pointer;
+}
+
+.collapse-btn:hover {
+    background: #4a4a4a;
+}
+
 .control-group {
     display: flex;
     flex-direction: column;
@@ -71,6 +101,38 @@ h1 {
 .run-btn:disabled {
     background: #ccc;
     cursor: not-allowed;
+}
+
+.stop-btn {
+    padding: 10px;
+    background: #dc3545;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+    font-size: 14px;
+}
+
+.stop-btn:disabled {
+    background: #d4a7ac;
+    cursor: not-allowed;
+}
+
+.mpi-toggle-row {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.info-text {
+    color: #1d4f91;
+    background: #e8f0ff;
+    border: 1px solid #c7dbff;
+    padding: 8px;
+    border-radius: 4px;
+    margin: 0;
+    font-size: 13px;
 }
 
 .warning-text {
@@ -116,6 +178,76 @@ h1 {
     white-space: pre-wrap;
 }
 
+.rank-logs-panel {
+    background: #eef8f3;
+    border: 1px solid #b9dfce;
+    border-radius: 4px;
+    padding: 10px;
+}
+
+.rank-logs-panel h3 {
+    margin: 0 0 8px 0;
+    font-size: 14px;
+}
+
+.rank-panel-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.rank-output-panel {
+    background: #ffffff;
+    border: 1px solid #c9d7d0;
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.rank-output-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #f2f7f4;
+    border-bottom: 1px solid #dbe6e0;
+    padding: 8px 10px;
+}
+
+.rank-output-header h4 {
+    margin: 0;
+    font-size: 13px;
+}
+
+.rank-output-meta {
+    font-size: 11px;
+    color: #4f6a5f;
+}
+
+.rank-output-body {
+    padding: 8px;
+}
+
+.rank-output-body pre {
+    margin: 0;
+    background: #f4f6f5;
+    border-radius: 4px;
+    padding: 8px;
+    max-height: 140px;
+    overflow-y: auto;
+    font-size: 12px;
+    white-space: pre-wrap;
+}
+
+.rank-output-empty .rank-output-header {
+    background: #f6f7f7;
+}
+
+@media (max-width: 960px) {
+    .main-layout {
+        flex-direction: column;
+        height: auto;
+    }
+}
+
 .tabs {
     display: flex;
     background: #333;
@@ -153,4 +285,11 @@ h1 {
     font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
     white-space: pre-wrap;
     word-break: break-word;
+}
+
+.collapsed-hint {
+    padding: 14px;
+    color: #bfc7d1;
+    font-size: 13px;
+    line-height: 1.5;
 }
