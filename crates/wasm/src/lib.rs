@@ -5,6 +5,7 @@ use rem_materials::DomainMap;
 use rem_parallel::WorldComm;
 use rem_electrostatic::{solve_one as solve_es, postprocess as post_es};
 use rem_magnetostatic::{solve_one as solve_ms};
+use rem_eigenmode::solve as solve_eigen;
 
 extern crate console_error_panic_hook;
 
@@ -24,6 +25,7 @@ pub struct SimulationResult {
     pub energy: f64,
     pub e_field: Option<Vec<[f64; 3]>>,
     pub b_field: Option<Vec<[f64; 3]>>,
+    pub frequencies_hz: Option<Vec<f64>>,
 }
 
 #[wasm_bindgen]
@@ -53,6 +55,7 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
                 energy,
                 e_field,
                 b_field: None,
+                frequencies_hz: None,
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
@@ -72,6 +75,7 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
                 energy,
                 e_field: None,
                 b_field: Some(b_field),
+                frequencies_hz: None,
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
@@ -84,6 +88,7 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
                 energy: 0.0,
                 e_field: None,
                 b_field: None,
+                frequencies_hz: None,
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
@@ -93,12 +98,12 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
                     .ok_or_else(|| JsError::new("MoM requires Solver.MoM section"))?,
                 &mesh,
             ).map_err(|e| JsError::new(&format!("MoM error: {}", e)))?;
-            // MoM writes output files; return minimal result
             let res = SimulationResult {
                 phi: vec![],
                 energy: 0.0,
                 e_field: None,
                 b_field: None,
+                frequencies_hz: None,
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
@@ -113,6 +118,21 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
                 energy: 0.0,
                 e_field: None,
                 b_field: None,
+                frequencies_hz: None,
+            };
+            Ok(serde_wasm_bindgen::to_value(&res)?)
+        }
+        ProblemType::Eigenmode => {
+            let eigen = solve_eigen(&cfg, &mesh, &dm, &comm)
+                .map_err(|e| JsError::new(&format!("Eigenmode error: {}", e)))?;
+
+            let phi = eigen.eigenvectors.into_iter().next().unwrap_or_default();
+            let res = SimulationResult {
+                phi,
+                energy: 0.0,
+                e_field: None,
+                b_field: None,
+                frequencies_hz: Some(eigen.frequencies_hz),
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }

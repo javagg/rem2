@@ -24,3 +24,4 @@ console_error_panic_hook = { workspace = true }
 rem-sbr = { workspace = true }
 
 rem-mom = { workspace = true }
+rem-eigenmode = { workspace = true }

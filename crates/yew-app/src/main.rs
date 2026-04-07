@@ -300,6 +300,12 @@ fn app() -> Html {
                 result.set(None);
                 mpi_running.set(true);
                 mpi_status.set("Running".to_string());
+
+                // Clear previous outputs for this example before MPI run
+                let run_dir = format!("runs/{}", sanitize_example_key(&key));
+                spawn_local(async move {
+                    let _ = opfs::delete_dir(&run_dir).await;
+                });
                 log_text.set(format!(
                     "Starting MPI job: example={}, ranks={}\n",
                     key, ranks
@@ -443,6 +449,10 @@ fn app() -> Html {
             result.set(None);
 
             spawn_local(async move {
+                // Clear previous outputs for this example before running
+                let run_dir = format!("runs/{}", sanitize_example_key(&key));
+                let _ = opfs::delete_dir(&run_dir).await;
+
                 // Yield to let UI update before heavy computation
                 gloo::timers::future::sleep(std::time::Duration::from_millis(10)).await;
 
@@ -635,8 +645,21 @@ fn app() -> Html {
                     if let Some(r) = &*result {
                         <div class="results-panel">
                             <h3>{"Summary Result:"}</h3>
-                            <p><strong>{"Energy: "}</strong>{format!("{:.6} pJ", r.energy * 1e12)}</p>
-                            <p><strong>{"Nodes: "}</strong>{r.node_count}</p>
+                            if let Some(freqs) = &r.frequencies_hz {
+                                <div>
+                                    <p><strong>{"Eigenfrequencies:"}</strong></p>
+                                    <ul>
+                                        { for freqs.iter().enumerate().map(|(i, &f)| html! {
+                                            <li>{format!("Mode {}: {:.4} GHz", i + 1, f / 1e9)}</li>
+                                        }) }
+                                    </ul>
+                                </div>
+                            } else {
+                                <p><strong>{"Energy: "}</strong>{format!("{:.6} pJ", r.energy * 1e12)}</p>
+                            }
+                            if r.node_count > 0 {
+                                <p><strong>{"Nodes: "}</strong>{r.node_count}</p>
+                            }
                             if let Some(max_e) = r.max_e {
                                 <p><strong>{"Max |E|: "}</strong>{format!("{:.4} V/m", max_e)}</p>
                             }
@@ -734,7 +757,7 @@ fn app() -> Html {
                 <div class="modal-backdrop" onclick={on_close_output_browser.clone()}>
                     <div class="modal-card" onclick={Callback::from(|e: MouseEvent| e.stop_propagation())}>
                         <div class="modal-header">
-                            <h3>{format!("OPFS Outputs ({})", output_files.len())}</h3>
+                            <h3>{format!("Outputs: {} ({})", example.key, output_files.iter().filter(|e| e.path.starts_with(&format!("runs/{}", sanitize_example_key(example.key)))).count())}</h3>
                             <div class="modal-actions">
                                 if let Some(path) = &*selected_output_path {
                                     <button
@@ -810,13 +833,13 @@ fn app() -> Html {
                                     </div>
 
                                     { {
+                                        let example_prefix = format!("runs/{}", sanitize_example_key(example.key));
                                         let mut filtered: Vec<_> = output_files.iter().filter(|e| {
-                                            let matches_filter = 
-                                                (*output_filter_log && e.path.ends_with(".log")) ||
+                                            e.path.starts_with(&example_prefix) && (
+                                                (*output_filter_log && (e.path.ends_with(".log") || e.path.ends_with(".txt"))) ||
                                                 (*output_filter_json && e.path.ends_with(".json")) ||
-                                                (*output_filter_csv && e.path.ends_with(".csv")) ||
-                                                (e.path.ends_with(".txt") && *output_filter_log);
-                                            matches_filter
+                                                (*output_filter_csv && e.path.ends_with(".csv"))
+                                            )
                                         }).collect();
 
                                         match *output_sort_by {
@@ -834,7 +857,9 @@ fn app() -> Html {
                                                     let output_loading = output_loading.clone();
                                                     let output_error = output_error.clone();
                                                     let path = entry.path.clone();
-                                                    let label = format!("{} ({} bytes)", entry.path, entry.size);
+                                                    let example_prefix = format!("runs/{}/", sanitize_example_key(example.key));
+                                                    let short_path = entry.path.strip_prefix(&example_prefix).unwrap_or(&entry.path).to_string();
+                                                    let label = format!("{} ({} bytes)", short_path, entry.size);
                                                     let is_selected = selected_output_path.as_ref() == Some(&path);
                                                     let onclick = Callback::from(move |_: MouseEvent| {
                                                         selected_output_path.set(Some(path.clone()));

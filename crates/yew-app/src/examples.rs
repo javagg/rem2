@@ -224,7 +224,7 @@ pub const EXAMPLES: &[ExampleMeta] = &[
         key: "transmon",
         label: "Transmon (Eigenmode, v0.2)",
         problem_type: "Eigenmode",
-        status: ExampleStatus::Unimplemented,
+        status: ExampleStatus::Ready,
         config_json: r#"{
   "Problem": { "Type": "Eigenmode", "Output": "." },
   "Model": { "Mesh": "transmon.msh", "L0": 1e-6 },

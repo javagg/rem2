@@ -84,4 +84,25 @@ globalThis.remOpfs = {
     anchor.remove();
     URL.revokeObjectURL(url);
   },
+
+  async deleteDir(path) {
+    const parts = path.split("/").filter(Boolean);
+    const dirName = parts.pop();
+    if (!dirName) return;
+
+    const root = await getRoot();
+    let parent = root;
+    for (const part of parts) {
+      try {
+        parent = await parent.getDirectoryHandle(part);
+      } catch (_) {
+        return; // parent doesn't exist — nothing to delete
+      }
+    }
+    try {
+      await parent.removeEntry(dirName, { recursive: true });
+    } catch (_) {
+      // directory didn't exist — that's fine
+    }
+  },
 };

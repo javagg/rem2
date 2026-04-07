@@ -23,6 +23,9 @@ extern "C" {
 
     #[wasm_bindgen(js_namespace = remOpfs, js_name = downloadTextFile)]
     fn download_text_file_js(path: &str) -> Promise;
+
+    #[wasm_bindgen(js_namespace = remOpfs, js_name = deleteDir)]
+    fn delete_dir_js(path: &str) -> Promise;
 }
 
 pub async fn write_text_file(path: &str, content: &str) -> Result<(), String> {
@@ -51,4 +54,11 @@ pub async fn download_text_file(path: &str) -> Result<(), String> {
         .await
         .map(|_| ())
         .map_err(|err| format!("download_text_file failed: {:?}", err))
+}
+
+pub async fn delete_dir(path: &str) -> Result<(), String> {
+    JsFuture::from(delete_dir_js(path))
+        .await
+        .map(|_| ())
+        .map_err(|err| format!("delete_dir failed: {:?}", err))
 }

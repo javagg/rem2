@@ -7,6 +7,7 @@ pub struct SimResult {
     pub node_count: usize,
     pub max_e: Option<f64>,
     pub max_b: Option<f64>,
+    pub frequencies_hz: Option<Vec<f64>>,
 }
 
 #[derive(Clone, Debug)]
@@ -62,10 +63,25 @@ pub fn run_example(key: &str) -> Result<SimRun, String> {
                 .fold(0.0f64, f64::max)
         });
 
-    let mut artifacts = vec![OutputArtifact {
-        file_name: "phi.csv".to_string(),
-        content: phi_csv(&result.phi),
-    }];
+    let mut artifacts = vec![];
+
+    if !result.phi.is_empty() {
+        artifacts.push(OutputArtifact {
+            file_name: "phi.csv".to_string(),
+            content: phi_csv(&result.phi),
+        });
+    }
+
+    if let Some(freqs) = &result.frequencies_hz {
+        let mut csv = String::from("mode,frequency_hz,frequency_ghz\n");
+        for (i, &f) in freqs.iter().enumerate() {
+            csv.push_str(&format!("{},{},{:.6}\n", i + 1, f, f / 1e9));
+        }
+        artifacts.push(OutputArtifact {
+            file_name: "eigenfrequencies.csv".to_string(),
+            content: csv,
+        });
+    }
 
     if let Some(field) = &result.e_field {
         artifacts.push(OutputArtifact {
@@ -87,6 +103,7 @@ pub fn run_example(key: &str) -> Result<SimRun, String> {
             node_count: result.phi.len(),
             max_e,
             max_b,
+            frequencies_hz: result.frequencies_hz,
         },
         artifacts,
     })

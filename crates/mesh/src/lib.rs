@@ -21,12 +21,9 @@ pub fn load_mesh(config: &PalaceConfig, comm: &impl Comm) -> RemResult<RemMesh> 
     Ok(mesh)
 }
 
-/// Load a mesh from bytes (GMSH v4.1 ASCII). Used in WASM where there is no filesystem.
-/// Load a mesh from bytes (GMSH v4.1 ASCII). Used in WASM where there is no filesystem.
+/// Load a mesh from bytes (GMSH v2.2 or v4.1, ASCII or binary). Used in WASM where there is no filesystem.
 pub fn load_mesh_from_bytes(config: &PalaceConfig, data: &[u8], comm: &impl Comm) -> RemResult<RemMesh> {
-    let text = std::str::from_utf8(data)
-        .map_err(|_| rem_core::RemError::Mesh("mesh bytes are not valid UTF-8".into()))?;
-    let raw = gmsh::read_msh_str(text)?;
+    let raw = gmsh::read_msh_bytes(data)?;
     let mut mesh = RemMesh::from_raw(raw, config)?;
     mesh.set_comm(comm.rank(), comm.size());
     Ok(mesh)
