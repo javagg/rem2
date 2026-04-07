@@ -41,6 +41,21 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
         RemError::Config("Eigenmode problem requires a [Solver.Eigenmode] section".into())
     })?;
 
+    if config.solver.order > 1 {
+        log::warn!(
+            "Solver.Order={} requested but only P1 (order=1) is implemented; \
+             higher-order assembly is pending. Running P1.",
+            config.solver.order
+        );
+    }
+    if config.model.refinement.max_iter > 0 {
+        log::warn!(
+            "Model.Refinement.MaxIter={} requested but AMR loop is not yet integrated \
+             into the solver; running a single solve pass.",
+            config.model.refinement.max_iter
+        );
+    }
+
     let mesh_path = Path::new(&config.model.mesh);
     let raw = read_msh_file(mesh_path)?;
     let mut mesh = RemMesh::from_raw(raw, config)?;

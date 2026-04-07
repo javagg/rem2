@@ -50,6 +50,21 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
         RemError::Config("Driven problem requires a [Solver.Driven] section".into())
     })?;
 
+    if config.solver.order > 1 {
+        log::warn!(
+            "Solver.Order={} requested but only P1 (order=1) is implemented; \
+             higher-order assembly is pending. Running P1.",
+            config.solver.order
+        );
+    }
+    if config.model.refinement.max_iter > 0 {
+        log::warn!(
+            "Model.Refinement.MaxIter={} requested but AMR loop is not yet integrated \
+             into the solver; running a single solve pass.",
+            config.model.refinement.max_iter
+        );
+    }
+
     let domain_map = DomainMap::from_config(config)?;
 
     // Build frequency sweep
@@ -176,22 +191,38 @@ fn shifted_matrix(k: &CsrMatrix, m: &CsrMatrix, sigma: f64, n: usize) -> CsrMatr
     t.to_csr()
 }
 
-/// Find the first excited lumped port index in the mesh.
+/// Find the first excited lumped port or wave port index in the mesh.
 fn find_excited_lumped_port(mesh: &RemMesh) -> Option<u32> {
     for bc in mesh.boundary_tags.values() {
-        if let BoundaryTag::LumpedPort { index, .. } = bc {
-            return Some(*index);
+        match bc {
+            BoundaryTag::LumpedPort { index, .. } => return Some(*index),
+            BoundaryTag::WavePort { index } => {
+                log::warn!(
+                    "WavePort index={}: using TEM approximation (Dirichlet φ=V). \
+                     Full TE/TM modal field matching not yet implemented.",
+                    index
+                );
+                return Some(*index);
+            }
+            _ => {}
         }
     }
     None
 }
 
 /// Get port resistance from config (default 50 Ω).
+/// WavePort is treated as matched 50-Ω load for TEM approximation.
 fn lumped_port_resistance(mesh: &RemMesh, port_idx: Option<u32>) -> f64 {
     if let Some(idx) = port_idx {
         for bc in mesh.boundary_tags.values() {
-            if let BoundaryTag::LumpedPort { index, r } = bc {
-                if *index == idx { return if *r > 0.0 { *r } else { 50.0 }; }
+            match bc {
+                BoundaryTag::LumpedPort { index, r } if *index == idx => {
+                    return if *r > 0.0 { *r } else { 50.0 };
+                }
+                BoundaryTag::WavePort { index } if *index == idx => {
+                    return 50.0;  // TEM characteristic impedance
+                }
+                _ => {}
             }
         }
     }

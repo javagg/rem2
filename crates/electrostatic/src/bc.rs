@@ -42,6 +42,12 @@ pub fn collect_dirichlet_dofs(
             BoundaryTag::LumpedPort { index, .. } => {
                 if Some(*index) == excited_index { excitation_val } else { 0.0 }
             }
+            // WavePort (TEM approximation): treat as LumpedPort — apply Dirichlet φ=V on port face.
+            // This is exact for TEM modes and a reasonable approximation for quasi-TEM modes.
+            // Full TE/TM modal field matching is deferred to a future release.
+            BoundaryTag::WavePort { index } => {
+                if Some(*index) == excited_index { excitation_val } else { 0.0 }
+            }
             _ => continue,
         };
 
@@ -117,5 +123,44 @@ mod tests {
         assert!((result.solution[0] - 0.0).abs() < 1e-10, "φ[0]={}", result.solution[0]);
         assert!((result.solution[1] - 0.5).abs() < 1e-10, "φ[1]={}", result.solution[1]);
         assert!((result.solution[2] - 1.0).abs() < 1e-10, "φ[2]={}", result.solution[2]);
+    }
+
+    /// WavePort BC: identical DOF values to LumpedPort with same index.
+    #[test]
+    fn waveport_treated_as_dirichlet() {
+        use rem_mesh::{Node, Element, ElementKind, RemMesh};
+        use std::collections::HashMap;
+
+        let nodes = vec![
+            Node { id: 0, x: 0.0, y: 0.0, z: 0.0 },
+            Node { id: 1, x: 1.0, y: 0.0, z: 0.0 },
+            Node { id: 2, x: 1.0, y: 1.0, z: 0.0 },
+            Node { id: 3, x: 0.0, y: 1.0, z: 0.0 },
+        ];
+        let volume_elements = vec![
+            Element { id: 1, kind: ElementKind::Tri3, tag: 1, node_ids: vec![0, 1, 2], rank: 0 },
+            Element { id: 2, kind: ElementKind::Tri3, tag: 1, node_ids: vec![0, 2, 3], rank: 0 },
+        ];
+        let boundary_elements = vec![
+            Element { id: 3, kind: ElementKind::Line2, tag: 10, node_ids: vec![0, 1], rank: 0 },
+            Element { id: 4, kind: ElementKind::Line2, tag: 11, node_ids: vec![2, 3], rank: 0 },
+        ];
+        let mut boundary_tags: HashMap<u32, rem_mesh::BoundaryTag> = HashMap::new();
+        boundary_tags.insert(10, rem_mesh::BoundaryTag::Ground);
+        boundary_tags.insert(11, rem_mesh::BoundaryTag::WavePort { index: 1 });
+
+        let mesh = RemMesh {
+            nodes, volume_elements, boundary_elements,
+            domain_tags: Default::default(), boundary_tags,
+            dim: 2, rank: 0, size: 1,
+        };
+
+        let dofs = collect_dirichlet_dofs(&mesh, Some(1), 1.0);
+
+        // Bottom (Ground) nodes 0,1 → 0.0; top (WavePort) nodes 2,3 → 1.0
+        assert_eq!(dofs.get(&0), Some(&0.0), "node 0 should be Ground=0");
+        assert_eq!(dofs.get(&1), Some(&0.0), "node 1 should be Ground=0");
+        assert_eq!(dofs.get(&2), Some(&1.0), "node 2 should be WavePort=1");
+        assert_eq!(dofs.get(&3), Some(&1.0), "node 3 should be WavePort=1");
     }
 }

@@ -28,6 +28,21 @@ use std::path::Path;
 pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
     log::info!("=== Electrostatic solver ===");
 
+    if config.solver.order > 1 {
+        log::warn!(
+            "Solver.Order={} requested but only P1 (order=1) is implemented; \
+             higher-order assembly is pending. Running P1.",
+            config.solver.order
+        );
+    }
+    if config.model.refinement.max_iter > 0 {
+        log::warn!(
+            "Model.Refinement.MaxIter={} requested but AMR loop is not yet integrated \
+             into the solver; running a single solve pass.",
+            config.model.refinement.max_iter
+        );
+    }
+
     // 1. Load mesh
     let mesh_path = Path::new(&config.model.mesh);
     log::info!("Loading mesh: {}", mesh_path.display());
@@ -127,12 +142,13 @@ fn finalize(
     Ok(())
 }
 
-/// Return the INDEX of the first Terminal or LumpedPort boundary.
+/// Return the INDEX of the first Terminal, LumpedPort, or WavePort boundary.
 fn find_excited_port(mesh: &RemMesh) -> Option<u32> {
     for bc in mesh.boundary_tags.values() {
         match bc {
             BoundaryTag::Terminal { index } => return Some(*index),
             BoundaryTag::LumpedPort { index, .. } => return Some(*index),
+            BoundaryTag::WavePort { index } => return Some(*index),
             _ => {}
         }
     }

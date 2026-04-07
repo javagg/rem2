@@ -29,9 +29,9 @@ REM（Rust Electromagnetic）是一款对标 [Palace](https://github.com/awslabs
 | **时域瞬态** (Transient) | ✅ | 🔲 | 配置解析已就绪；TD-FEM v1.0（Newmark-β）和 v1.1（IMEX-ARK 自适应）规划中，详见 FDTD_PLAN.md |
 | **S 参数提取** | ✅ | ✅ | `postpro/port-S.csv`，Palace 格式兼容 |
 | **集总端口** (Lumped Port) | ✅ | ✅ | LumpedPort 激励 + 阻抗边界 |
-| **波导端口** (Wave Port) | ✅ | 🔲 | 配置字段已定义；场型匹配待实现 |
-| **自适应网格细化** (AMR) | ✅ | 🔲 | fem-rs 已提供 ZZ/Kelly/Dörfler 估计器（v0.8.1 引入）；集成待完成 |
-| **高阶基函数** (p-FEM) | ✅ | ✅ | 配置字段 `Solver.Order` 已解析；P1 为当前默认 |
+| **波导端口** (Wave Port) | ✅ | ✅ | TEM 近似（Dirichlet φ=V），与 LumpedPort 行为等价；TE/TM 模态场匹配待实现 |
+| **自适应网格细化** (AMR) | ✅ | 🔲 | fem-rs 已提供 ZZ/Kelly/Dörfler 估计器；`Model.Refinement` 配置可解析，solver 侧 AMR 循环未集成，配置时打印警告 |
+| **高阶基函数** (p-FEM) | ✅ | ✅ | 配置字段 `Solver.Order` 已解析；order > 1 时打印警告并降级为 P1；P2+ 装配集成待完成 |
 | GMSH .msh 网格导入 | ✅ | ✅ | 完整 .msh v2/v4 解析，物理组 → 边界/材料映射 |
 | ParaView VTK 输出 | ✅ | ✅ | ASCII VTK legacy，可直接用 ParaView 打开 |
 | JSON 配置文件 | ✅ | ✅ | 完整 Palace JSON schema，支持 C++ 风格注释剥除 |
@@ -332,7 +332,7 @@ REM 完全兼容 Palace JSON/YAML 配置文件格式。Palace 用户无需修改
 | `Boundaries.Ground` | ✅ | `Ground` |
 | `Boundaries.Terminal` | ✅ | `Terminal { index }` |
 | `Boundaries.LumpedPort` | ✅ | `LumpedPort { index, r }` |
-| `Boundaries.WavePort` | ✅（解析，场求解待完成） | `WavePort { index }` |
+| `Boundaries.WavePort` | ✅（TEM 近似，施加 Dirichlet φ=V；TE/TM 模态场匹配待实现） | `WavePort { index }` |
 | `Boundaries.SurfaceCurrent` | ✅ | `SurfaceCurrent { index }` |
 
 ### 9.2 支持的材料参数
@@ -412,10 +412,10 @@ S 参数、集总端口匹配        → Driven
 | 项目 | 说明 | 优先级 |
 |------|------|--------|
 | 3-D 静磁（Nedelec H(curl)） | 当前仅 2-D A_z 标量 | 中 |
-| 波导端口场匹配 | 配置已支持，场型积分待实现 | 中 |
-| AMR 集成 | fem-rs AMR 估计器已就绪，与求解器对接待完成 | 中 |
+| 波导端口 TE/TM 场匹配 | TEM 近似已实现（Dirichlet φ=V）；TE/TM 模态需在端口截面解 2-D 特征值问题 | 中 |
+| AMR 集成 | fem-rs AMR 估计器已就绪；solver 侧循环（Estimate→Mark→Refine→Prolongate）待实现；配置时打印警告 | 中 |
 | 时域瞬态（TD-FEM） | v1.0：Nedelec H(curl) + Newmark-β 固定步长（FDTD_PLAN.md §9.1，20–26 天）；v1.1：IMEX-ARK 自适应步长（§9.2，+8–12 天） | 高 |
 | MoM 介质目标（PMCHWT） | PEC 目标已完整，介质扩展待实现 | 低 |
 | MoM ACA / FMM 加速 | `FastSolver: "ACA"/"FMM"` 配置可识别，运行时返回错误；ACA 可将矩阵装配从 O(N²) 降至 O(N log N) | 低 |
 | SBR+ 边缘绕射（PTD） | 大角度散射精度提升 | 低 |
-| p-FEM（P2+）实际应用 | 配置字段已有，单元装配待扩展 | 低 |
+| p-FEM（P2+）实际应用 | order > 1 时打印警告并降级 P1；P2 装配需接入 fem-rs `H1Space` + `Assembler` API | 低 |

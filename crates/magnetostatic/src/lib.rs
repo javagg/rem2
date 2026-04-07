@@ -29,6 +29,21 @@ use std::path::Path;
 pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
     log::info!("=== Magnetostatic solver (2-D A_z) ===");
 
+    if config.solver.order > 1 {
+        log::warn!(
+            "Solver.Order={} requested but only P1 (order=1) is implemented; \
+             higher-order assembly is pending. Running P1.",
+            config.solver.order
+        );
+    }
+    if config.model.refinement.max_iter > 0 {
+        log::warn!(
+            "Model.Refinement.MaxIter={} requested but AMR loop is not yet integrated \
+             into the solver; running a single solve pass.",
+            config.model.refinement.max_iter
+        );
+    }
+
     let mesh_path = Path::new(&config.model.mesh);
     log::info!("Loading mesh: {}", mesh_path.display());
     let raw = read_msh_file(mesh_path)?;
