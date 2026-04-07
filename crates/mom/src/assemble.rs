@@ -356,3 +356,225 @@ pub fn lu_solve(z: &DMatrix<Complex64>, rhs: &[Complex64]) -> RemResult<Vec<Comp
 
     Ok(x.iter().copied().collect())
 }
+
+// ---------------------------------------------------------------------------
+// GMRES solver (restarted, complex, for large Z matrices)
+// ---------------------------------------------------------------------------
+
+/// Solve Z·I = V using restarted GMRES (restart=30, tol=1e-8, max 500 iters).
+///
+/// Uses modified Gram-Schmidt Arnoldi process. Suitable when N > ~1000 where
+/// dense LU would be prohibitively expensive (O(N³) vs O(N²·restart) per outer).
+pub fn gmres_solve(z: &DMatrix<Complex64>, rhs: &[Complex64]) -> RemResult<Vec<Complex64>> {
+    let n = rhs.len();
+    if z.nrows() != n || z.ncols() != n {
+        return Err(RemError::Config(format!(
+            "gmres_solve: matrix {}×{} but rhs length {}", z.nrows(), z.ncols(), n
+        )));
+    }
+
+    const RESTART: usize = 30;
+    const TOL: f64 = 1e-8;
+    const MAX_OUTER: usize = 500 / RESTART + 1;
+
+    // Initial guess x = 0
+    let mut x = vec![Complex64::new(0.0, 0.0); n];
+
+    let rhs_norm = vec_norm(rhs);
+    if rhs_norm < f64::EPSILON {
+        return Ok(x);
+    }
+
+    for _outer in 0..MAX_OUTER {
+        // Compute residual r = b - A·x
+        let mut r = rhs.to_vec();
+        matvec_sub(z, &x, &mut r);          // r -= A·x
+        let beta = vec_norm(&r);
+
+        if beta / rhs_norm < TOL {
+            return Ok(x);
+        }
+
+        // Arnoldi basis V (n × (restart+1))
+        let mut v: Vec<Vec<Complex64>> = Vec::with_capacity(RESTART + 1);
+        let scale = Complex64::new(1.0 / beta, 0.0);
+        v.push(r.iter().map(|&c| c * scale).collect());
+
+        // Upper Hessenberg H ((restart+1) × restart)
+        let mut h = vec![vec![Complex64::new(0.0, 0.0); RESTART]; RESTART + 1];
+
+        // Givens rotation cosines and sines
+        let mut cs = vec![0.0f64; RESTART];
+        let mut sn = vec![Complex64::new(0.0, 0.0); RESTART];
+        let mut g = vec![Complex64::new(0.0, 0.0); RESTART + 1];
+        g[0] = Complex64::new(beta, 0.0);
+
+        let mut j_end = RESTART;
+        for j in 0..RESTART {
+            // w = A · v[j]
+            let mut w = vec![Complex64::new(0.0, 0.0); n];
+            matvec(z, &v[j], &mut w);
+
+            // Modified Gram-Schmidt orthogonalization
+            for i in 0..=j {
+                h[i][j] = dot_conj(&v[i], &w);
+                let hij = h[i][j];
+                for k in 0..n {
+                    w[k] -= hij * v[i][k];
+                }
+            }
+            h[j + 1][j] = Complex64::new(vec_norm(&w), 0.0);
+
+            // Normalize to get next basis vector
+            let h_norm = h[j + 1][j].re;
+            if h_norm > f64::EPSILON {
+                let inv = Complex64::new(1.0 / h_norm, 0.0);
+                v.push(w.iter().map(|&c| c * inv).collect());
+            } else {
+                v.push(vec![Complex64::new(0.0, 0.0); n]);
+            }
+
+            // Apply previous Givens rotations to new column
+            for i in 0..j {
+                let tmp = cs[i] * h[i][j] + sn[i].conj() * h[i + 1][j];
+                h[i + 1][j] = -sn[i] * h[i][j] + cs[i] * h[i + 1][j];
+                h[i][j] = tmp;
+            }
+
+            // Compute new Givens rotation to zero out h[j+1][j]
+            let (c, s) = givens_rotation(h[j][j], h[j + 1][j]);
+            cs[j] = c;
+            sn[j] = s;
+            h[j][j] = c * h[j][j] + s.conj() * h[j + 1][j];
+            h[j + 1][j] = Complex64::new(0.0, 0.0);
+
+            // Update residual estimate
+            g[j + 1] = -sn[j] * g[j];
+            g[j] = cs[j] * g[j];
+
+            if g[j + 1].norm() / rhs_norm < TOL {
+                j_end = j + 1;
+                break;
+            }
+        }
+
+        // Back-substitution to get y (j_end × 1)
+        let m = j_end;
+        let mut y = vec![Complex64::new(0.0, 0.0); m];
+        for i in (0..m).rev() {
+            y[i] = g[i];
+            for k in (i + 1)..m {
+                let hik_yk = h[i][k] * y[k];
+                y[i] -= hik_yk;
+            }
+            if h[i][i].norm() < f64::EPSILON {
+                return Err(RemError::Other("gmres_solve: singular Hessenberg".to_string()));
+            }
+            y[i] /= h[i][i];
+        }
+
+        // Update solution x += V_m · y
+        for j in 0..m {
+            let yj = y[j];
+            for k in 0..n {
+                x[k] += yj * v[j][k];
+            }
+        }
+    }
+
+    Ok(x)
+}
+
+// --- helpers ---
+
+fn vec_norm(v: &[Complex64]) -> f64 {
+    v.iter().map(|c| c.norm_sqr()).sum::<f64>().sqrt()
+}
+
+fn dot_conj(a: &[Complex64], b: &[Complex64]) -> Complex64 {
+    a.iter().zip(b.iter()).map(|(&ai, &bi)| ai.conj() * bi).sum()
+}
+
+fn matvec(a: &DMatrix<Complex64>, x: &[Complex64], out: &mut [Complex64]) {
+    let n = x.len();
+    for i in 0..n {
+        out[i] = (0..n).map(|j| a[(i, j)] * x[j]).sum();
+    }
+}
+
+fn matvec_sub(a: &DMatrix<Complex64>, x: &[Complex64], r: &mut [Complex64]) {
+    let n = x.len();
+    for i in 0..n {
+        let ax_i: Complex64 = (0..n).map(|j| a[(i, j)] * x[j]).sum();
+        r[i] -= ax_i;
+    }
+}
+
+/// Compute Givens rotation (c, s) such that [c s*; -s c] · [a; b] = [r; 0].
+fn givens_rotation(a: Complex64, b: Complex64) -> (f64, Complex64) {
+    let norm = (a.norm_sqr() + b.norm_sqr()).sqrt();
+    if norm < f64::EPSILON {
+        return (1.0, Complex64::new(0.0, 0.0));
+    }
+    let c = a.norm() / norm;
+    let s = if a.norm() < f64::EPSILON {
+        Complex64::new(1.0, 0.0)
+    } else {
+        (a / a.norm()) * (b.conj() / norm)
+    };
+    (c, s)
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a known diagonally-dominant complex system and verify GMRES matches LU.
+    #[test]
+    fn gmres_matches_lu_small() {
+        let n = 8usize;
+        let mut z = DMatrix::<Complex64>::zeros(n, n);
+        let mut rhs = vec![Complex64::new(0.0, 0.0); n];
+
+        // Fill with a diagonally dominant complex matrix
+        for i in 0..n {
+            for j in 0..n {
+                if i == j {
+                    z[(i, j)] = Complex64::new(10.0 + i as f64, 1.0);
+                } else {
+                    z[(i, j)] = Complex64::new(0.5 / (1.0 + (i as f64 - j as f64).abs()), -0.2);
+                }
+            }
+            rhs[i] = Complex64::new(i as f64 + 1.0, -(i as f64));
+        }
+
+        let x_lu = lu_solve(&z, &rhs).unwrap();
+        let x_gmres = gmres_solve(&z, &rhs).unwrap();
+
+        for i in 0..n {
+            let err = (x_lu[i] - x_gmres[i]).norm();
+            assert!(err < 1e-6, "index {i}: LU={} GMRES={} err={err:.2e}",
+                x_lu[i], x_gmres[i]);
+        }
+    }
+
+    /// GMRES on trivial identity system: I·x = b → x = b.
+    #[test]
+    fn gmres_identity_system() {
+        let n = 5usize;
+        let mut z = DMatrix::<Complex64>::zeros(n, n);
+        for i in 0..n { z[(i, i)] = Complex64::new(1.0, 0.0); }
+        let rhs: Vec<Complex64> = (0..n).map(|i| Complex64::new(i as f64, 1.0)).collect();
+
+        let x = gmres_solve(&z, &rhs).unwrap();
+        for i in 0..n {
+            let err = (x[i] - rhs[i]).norm();
+            assert!(err < 1e-10, "index {i}: got {}, expected {}, err={err:.2e}",
+                x[i], rhs[i]);
+        }
+    }
+}

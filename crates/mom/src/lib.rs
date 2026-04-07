@@ -111,8 +111,17 @@ pub fn run_with_mesh(
         };
         let rhs = excitation::plane_wave_rhs_general(&surf, k, &wave, &mom_cfg.basis);
 
-        // Solve Z·I = V
-        let currents = assemble::lu_solve(&z_mat, &rhs)?;
+        // Solve Z·I = V  (solver chosen by config.FastSolver)
+        let currents = match mom_cfg.fast_solver.to_uppercase().as_str() {
+            "GMRES" => assemble::gmres_solve(&z_mat, &rhs)?,
+            "ACA" | "FMM" => {
+                return Err(rem_core::RemError::Config(format!(
+                    "FastSolver \"{}\" is not yet implemented; use \"Direct\" or \"GMRES\"",
+                    mom_cfg.fast_solver
+                )));
+            }
+            _ => assemble::lu_solve(&z_mat, &rhs)?,   // "Direct" (default)
+        };
 
         #[cfg(not(target_arch = "wasm32"))]
         {
