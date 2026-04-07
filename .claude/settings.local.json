@@ -12,7 +12,17 @@
       "Bash(mkdir -p \"$dir/src\")",
       "Bash(done)",
       "Bash(ls -d crates/*)",
-      "Bash(wasm-pack build:*)"
+      "Bash(wasm-pack build:*)",
+      "Bash(find /c/Users/lilu/works/rem2 -type f -name \"*.json\" -exec grep -l \"MoM\" {} \\\\;)",
+      "Bash(grep -n \"gmres\\\\|GMRES\\\\|iterative\\\\|iter_solve\" c:/Users/lilu/works/rem2/crates/mom/src/assemble.rs c:/Users/lilu/works/rem2/crates/core/src/*.rs)",
+      "Read(//d C:/Users/lilu/works/**)",
+      "Read(//c/Users/lilu/works/rem2/**)",
+      "Bash(grep -r \"fem-rs\\\\|fem_rs\" crates/*/Cargo.toml)",
+      "Bash(grep -n \"to_simplex\\\\|from_simplex\\\\|SimplexMesh\\\\|simplex\" c:/Users/lilu/works/rem2/crates/mesh/src/*.rs)",
+      "Read(//c/Users/lilu/works/rem2/{for\\(i=1;i<=NF;i++\\) if\\($i~/^[0-9]+$/**)",
+      "Bash(git commit -m ':*)",
+      "Bash(find /tmp/palace -name \"*labels.hpp\" -exec cat {} \\\\;)",
+      "WebFetch(domain:crates.io)"
     ]
   }
 }
