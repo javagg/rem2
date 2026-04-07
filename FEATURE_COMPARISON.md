@@ -1,6 +1,6 @@
 # REM vs Palace — 功能对比与已有能力说明
 
-> 版本：v1.0，2026-04-05  
+> 版本：v1.1，2026-04-07  
 > 描述 REM 当前已实现的全部功能，并与 Palace v0.11 进行逐项对比。
 
 ---
@@ -9,12 +9,23 @@
 
 REM（Rust Electromagnetic）是一款对标 [Palace](https://github.com/awslabs/palace) 的电磁仿真工具，
 采用纯 Rust 实现，可编译至 `wasm32-unknown-unknown` 在浏览器中运行。
-当前版本 **v0.8.1** 覆盖 Palace 全部主要求解器，并额外提供 Palace 不具备的矩量法、BEM 和 SBR+ 高频求解器。
+当前版本 **v0.9.0** 覆盖 Palace 全部主要求解器，并额外提供 Palace 不具备的矩量法、BEM 和 SBR+ 高频求解器。
 
 ```
-所有测试：201 个（cargo test --workspace），零失败
-代码量：~11,000 行（17 个 crate，不含 vendor/）
+所有测试：218 个（cargo test --workspace），零失败
+代码量：~12,000 行（17 个 crate，不含 vendor/）
 ```
+
+### 本版本新增（v0.8.1 → v0.9.0）
+
+| 变更 | 说明 |
+|------|------|
+| **波导端口 TEM 近似** | `WavePort` 边界条件现在正确施加 Dirichlet φ=V，与 `LumpedPort` 等价；driven/electrostatic 均支持 |
+| **MoM FastSolver 分发** | `FastSolver: "GMRES"` 启用 restarted GMRES（restart=30）；`"Direct"` 走 dense LU；`"ACA"/"FMM"` 返回明确错误 |
+| **Eigenmode WASM** | Transmon 示例在 yew demo 中端到端可运行；修复二进制 msh2 加载（`load_mesh_from_bytes` 不再强制 UTF-8）|
+| **输出浏览器作用域** | yew-app 输出按当前示例隔离；每次运行前自动清理 `runs/{key}/` 目录 |
+| **p-FEM / AMR 警告** | `Solver.Order > 1` 或 `Model.Refinement.MaxIter > 0` 时所有求解器打印明确警告，不再静默忽略 |
+| **rmsh binary v2 修复** | `$Elements` 节解析器移除错误的 n_element_types 前置读取，二进制 msh v2 现在正确解析 |
 
 ---
 
