@@ -160,7 +160,7 @@ REM（Rust Electromagnetic）是一款对标 [Palace](https://github.com/awslabs
 | `quadrature.rs` | Dunavant 三角形高斯求积（阶次 1/3/5/7/9，内嵌系数） |
 | `green.rs` | 3D Helmholtz Green 函数 G = exp(-jkR)/(4πR) 及法向导数 |
 | `singular.rs` | Duffy 自积分（对角块）+ Sauter-Schwab 奇异积分（共边/共顶点块）|
-| `assemble.rs` | EFIE/MFIE/CFIE Z 矩阵装配，faer 密集矩阵，rayon 并行 |
+| `assemble.rs` | EFIE/MFIE/CFIE Z 矩阵装配，nalgebra 密集矩阵，rayon 并行；内置 LU 和 GMRES 求解器 |
 | `excitation.rs` | 平面波激励向量（θ/φ 极化，任意入射方向） |
 | `postprocess.rs` | RCS 远场积分，VTK 表面电流输出 |
 | `mie.rs` | Mie 级数解析解（用于验证） |
@@ -174,8 +174,18 @@ REM（Rust Electromagnetic）是一款对标 [Palace](https://github.com/awslabs
 | `Basis` | `"RWG"` \| `"Pulse"` | `"RWG"` |
 | `FreqMin` / `FreqMax` | 频率范围 [Hz] | — |
 | `Alpha` | CFIE 混合系数（0=MFIE, 1=EFIE） | 0.5 |
+| `FastSolver` | `"Direct"`（dense LU）\| `"GMRES"`（restarted，restart=30）| `"Direct"` |
 | `ThetaInc` / `PhiInc` | 入射角 [°] | 0.0 |
 | `Polarization` | `"theta"` \| `"phi"` | `"theta"` |
+
+**FastSolver 选型建议**：
+
+| N（RWG 基函数数）| 推荐求解器 | 说明 |
+|----------------|-----------|------|
+| N < 500 | `"Direct"` | Dense LU，O(N³)，精度最高 |
+| 500 ≤ N < 3000 | `"Direct"` 或 `"GMRES"` | GMRES（restart=30, tol=1e-8）在内存上有优势 |
+| N ≥ 3000 | `"GMRES"` | LU 内存/时间开销过大；GMRES 每外迭代 O(N²·restart) |
+| ACA / FMM | 未实现 | 配置可识别，运行时返回错误 |
 
 **输出**（`Postprocessing.RCS`）：
 - `postpro/rcs.csv`：RCS 方向图（θ, φ, σ_dBsm）
@@ -193,7 +203,9 @@ REM（Rust Electromagnetic）是一款对标 [Palace](https://github.com/awslabs
     "MoM": {
       "Equation": "CFIE", "Basis": "RWG",
       "FreqMin": 1.0e9, "FreqMax": 1.0e9,
-      "Alpha": 0.5, "ThetaInc": 0.0, "PhiInc": 0.0
+      "Alpha": 0.5,
+      "FastSolver": "Direct",
+      "ThetaInc": 0.0, "PhiInc": 0.0
     }
   },
   "Postprocessing": { "RCS": { "ThetaDeg": "0:5:180", "PhiDeg": [0.0] } }
@@ -389,7 +401,7 @@ S 参数、集总端口匹配        → Driven
 | 线程 | 单线程（无 rayon） | MoM/SBR+ 退化为串行 |
 | 内存 | ~30 MB 堆 | MoM 建议 N < 1000 面元 |
 | 文件系统 | 无磁盘 IO | 输出返回 Blob URL |
-| `rem-mom` | 可用 | rayon 条件编译排除 |
+| `rem-mom` | 可用 | rayon 条件编译排除；建议 N < 1000，使用 `FastSolver: "Direct"` |
 | `rem-sbr` | 可用 | rayon cfg-excluded |
 | `rem-bem` | 可用 | faer LU 支持 WASM |
 
@@ -404,5 +416,6 @@ S 参数、集总端口匹配        → Driven
 | AMR 集成 | fem-rs AMR 估计器已就绪，与求解器对接待完成 | 中 |
 | 时域瞬态（TD-FEM） | v1.0：Nedelec H(curl) + Newmark-β 固定步长（FDTD_PLAN.md §9.1，20–26 天）；v1.1：IMEX-ARK 自适应步长（§9.2，+8–12 天） | 高 |
 | MoM 介质目标（PMCHWT） | PEC 目标已完整，介质扩展待实现 | 低 |
+| MoM ACA / FMM 加速 | `FastSolver: "ACA"/"FMM"` 配置可识别，运行时返回错误；ACA 可将矩阵装配从 O(N²) 降至 O(N log N) | 低 |
 | SBR+ 边缘绕射（PTD） | 大角度散射精度提升 | 低 |
 | p-FEM（P2+）实际应用 | 配置字段已有，单元装配待扩展 | 低 |
