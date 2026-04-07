@@ -1,6 +1,6 @@
 # REM vs Palace — 功能对比与已有能力说明
 
-> 版本：v1.1，2026-04-07  
+> 版本：v1.2，2026-04-07  
 > 描述 REM 当前已实现的全部功能，并与 Palace v0.11 进行逐项对比。
 
 ---
@@ -9,23 +9,19 @@
 
 REM（Rust Electromagnetic）是一款对标 [Palace](https://github.com/awslabs/palace) 的电磁仿真工具，
 采用纯 Rust 实现，可编译至 `wasm32-unknown-unknown` 在浏览器中运行。
-当前版本 **v0.9.0** 覆盖 Palace 全部主要求解器，并额外提供 Palace 不具备的矩量法、BEM 和 SBR+ 高频求解器。
+当前版本 **v0.10.0** 覆盖 Palace 全部主要求解器，并额外提供 Palace 不具备的矩量法、BEM 和 SBR+ 高频求解器。
 
 ```
-所有测试：218 个（cargo test --workspace），零失败
-代码量：~12,000 行（17 个 crate，不含 vendor/）
+所有测试：224 个（cargo test --workspace），零失败
+代码量：~12,500 行（17 个 crate，不含 vendor/）
 ```
 
-### 本版本新增（v0.8.1 → v0.9.0）
+### 本版本新增（v0.9.0 → v0.10.0）
 
 | 变更 | 说明 |
 |------|------|
-| **波导端口 TEM 近似** | `WavePort` 边界条件现在正确施加 Dirichlet φ=V，与 `LumpedPort` 等价；driven/electrostatic 均支持 |
-| **MoM FastSolver 分发** | `FastSolver: "GMRES"` 启用 restarted GMRES（restart=30）；`"Direct"` 走 dense LU；`"ACA"/"FMM"` 返回明确错误 |
-| **Eigenmode WASM** | Transmon 示例在 yew demo 中端到端可运行；修复二进制 msh2 加载（`load_mesh_from_bytes` 不再强制 UTF-8）|
-| **输出浏览器作用域** | yew-app 输出按当前示例隔离；每次运行前自动清理 `runs/{key}/` 目录 |
-| **p-FEM / AMR 警告** | `Solver.Order > 1` 或 `Model.Refinement.MaxIter > 0` 时所有求解器打印明确警告，不再静默忽略 |
-| **rmsh binary v2 修复** | `$Elements` 节解析器移除错误的 n_element_types 前置读取，二进制 msh v2 现在正确解析 |
+| **AMR 全求解器集成** | 静电、静磁、特征模、频域驱动求解器全部支持 `Model.Refinement.MaxIter` AMR 循环；ZZ 误差估计→Dörfler 标记→Tri3 红细分→重解；静磁/特征模/驱动均去除"未集成"警告 |
+| **驱动求解器 AMR 预细化** | 在频率扫描前先在中心频率处执行 AMR 预细化，得到适应性网格后再做全频段扫描 |
 
 ---
 
@@ -41,7 +37,7 @@ REM（Rust Electromagnetic）是一款对标 [Palace](https://github.com/awslabs
 | **S 参数提取** | ✅ | ✅ | `postpro/port-S.csv`，Palace 格式兼容 |
 | **集总端口** (Lumped Port) | ✅ | ✅ | LumpedPort 激励 + 阻抗边界 |
 | **波导端口** (Wave Port) | ✅ | ✅ | TEM 近似（Dirichlet φ=V），与 LumpedPort 行为等价；TE/TM 模态场匹配待实现 |
-| **自适应网格细化** (AMR) | ✅ | 🔲 | fem-rs 已提供 ZZ/Kelly/Dörfler 估计器；`Model.Refinement` 配置可解析，solver 侧 AMR 循环未集成，配置时打印警告 |
+| **自适应网格细化** (AMR) | ✅ | ✅ | ZZ 误差估计 + Dörfler 标记 + Tri3 红细分 + P1 延拓；静电/静磁/特征模/驱动均已集成 AMR 循环 |
 | **高阶基函数** (p-FEM) | ✅ | ✅ | 配置字段 `Solver.Order` 已解析；order > 1 时打印警告并降级为 P1；P2+ 装配集成待完成 |
 | GMSH .msh 网格导入 | ✅ | ✅ | 完整 .msh v2/v4 解析，物理组 → 边界/材料映射 |
 | ParaView VTK 输出 | ✅ | ✅ | ASCII VTK legacy，可直接用 ParaView 打开 |
@@ -424,7 +420,7 @@ S 参数、集总端口匹配        → Driven
 |------|------|--------|
 | 3-D 静磁（Nedelec H(curl)） | 当前仅 2-D A_z 标量 | 中 |
 | 波导端口 TE/TM 场匹配 | TEM 近似已实现（Dirichlet φ=V）；TE/TM 模态需在端口截面解 2-D 特征值问题 | 中 |
-| AMR 集成 | fem-rs AMR 估计器已就绪；solver 侧循环（Estimate→Mark→Refine→Prolongate）待实现；配置时打印警告 | 中 |
+| AMR 集成 | ✅ 已完成：ZZ 估计器 + Dörfler 标记 + Tri3 红细分 + P1 延拓；electrostatic/magnetostatic/eigenmode/driven 均已集成 | — |
 | 时域瞬态（TD-FEM） | v1.0：Nedelec H(curl) + Newmark-β 固定步长（FDTD_PLAN.md §9.1，20–26 天）；v1.1：IMEX-ARK 自适应步长（§9.2，+8–12 天） | 高 |
 | MoM 介质目标（PMCHWT） | PEC 目标已完整，介质扩展待实现 | 低 |
 | MoM ACA / FMM 加速 | `FastSolver: "ACA"/"FMM"` 配置可识别，运行时返回错误；ACA 可将矩阵装配从 O(N²) 降至 O(N log N) | 低 |

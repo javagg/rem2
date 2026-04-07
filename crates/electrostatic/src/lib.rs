@@ -20,7 +20,7 @@ use rem_config::PalaceConfig;
 use rem_core::{RemResult, solve_pcg};
 use rem_parallel::Comm;
 use rem_materials::DomainMap;
-use rem_mesh::{RemMesh, BoundaryTag};
+use rem_mesh::{RemMesh, BoundaryTag, amr};
 use rem_mesh::gmsh::read_msh_file;
 use std::path::Path;
 
@@ -33,13 +33,6 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
             "Solver.Order={} requested but only P1 (order=1) is implemented; \
              higher-order assembly is pending. Running P1.",
             config.solver.order
-        );
-    }
-    if config.model.refinement.max_iter > 0 {
-        log::warn!(
-            "Model.Refinement.MaxIter={} requested but AMR loop is not yet integrated \
-             into the solver; running a single solve pass.",
-            config.model.refinement.max_iter
         );
     }
 
@@ -62,8 +55,50 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
     let excited_port = find_excited_port(&mesh);
     let output_dir = Path::new(config.problem.output_dir());
 
-    // 4. Solve
-    if let Some(exc_tag) = excited_port {
+    // 4. Solve (with optional AMR loop)
+    let amr_cfg = &config.model.refinement;
+    let max_amr_iter = if amr_cfg.max_iter > 0 { amr_cfg.max_iter } else { 0 };
+    let amr_theta    = if amr_cfg.tol > 0.0 { amr_cfg.tol } else { 0.5 };
+
+    if max_amr_iter > 0 {
+        log::info!("AMR enabled: max_iter={}, θ={}", max_amr_iter, amr_theta);
+        let mut cur_mesh = mesh;
+        let mut phi = if let Some(exc_tag) = excited_port {
+            solve_one(config, &cur_mesh, &domain_map, Some(exc_tag), 1.0, comm)?
+        } else {
+            solve_one(config, &cur_mesh, &domain_map, None, 0.0, comm)?
+        };
+
+        for amr_iter in 1..=max_amr_iter {
+            let eta = amr::zz_estimator(&cur_mesh, &phi);
+            let total_err: f64 = eta.iter().map(|&e| e * e).sum::<f64>().sqrt();
+            log::info!("AMR iter {amr_iter}: nodes={}, |η|={total_err:.3e}", cur_mesh.n_nodes());
+
+            let marked = amr::dorfler_mark(&eta, amr_theta);
+            if marked.is_empty() {
+                log::info!("AMR converged: no elements marked.");
+                break;
+            }
+
+            let (fine_mesh, midpoints) = amr::refine_marked(&cur_mesh, &marked);
+            // Prolongate solution as initial guess (not used for linear Poisson — re-solve)
+            let _ = amr::prolongate_p1(&phi, fine_mesh.n_nodes(), &midpoints);
+
+            // Re-solve on fine mesh
+            let exc = if let Some(exc_tag) = excited_port { Some(exc_tag) } else { None };
+            phi = if let Some(exc_tag) = exc {
+                solve_one(config, &fine_mesh, &domain_map, Some(exc_tag), 1.0, comm)?
+            } else {
+                solve_one(config, &fine_mesh, &domain_map, None, 0.0, comm)?
+            };
+            cur_mesh = fine_mesh;
+        }
+
+        let eta_final = amr::zz_estimator(&cur_mesh, &phi);
+        let total_err: f64 = eta_final.iter().map(|&e| e * e).sum::<f64>().sqrt();
+        log::info!("AMR final: nodes={}, |η|={total_err:.3e}", cur_mesh.n_nodes());
+        finalize(config, &cur_mesh, &domain_map, &phi, output_dir, None)?;
+    } else if let Some(exc_tag) = excited_port {
         log::info!("Excited port tag: {}", exc_tag);
         let phi = solve_one(config, &mesh, &domain_map, Some(exc_tag), 1.0, comm)?;
         finalize(config, &mesh, &domain_map, &phi, output_dir, None)?;
@@ -268,5 +303,44 @@ mod tests {
             (energy - eps_r * EPS0 / 2.0).abs() < 1e-28,
             "energy={:.6e}, expected={:.6e}", energy, eps_r * EPS0 / 2.0
         );
+    }
+
+    #[test]
+    fn amr_loop_refines_and_resolves() {
+        // AMR loop: force refinement by marking all elements, verify fine mesh + re-solve
+        use rem_config::{load_config_from_str, ConfigFormat};
+        use rem_mesh::amr;
+
+        let mesh = unit_square_mesh();
+        let config = load_config_from_str(
+            r#"{"Problem":{"Type":"Electrostatic"},"Model":{"Mesh":"x.msh"},
+                "Solver":{"Linear":{"Tol":1e-12,"MaxIter":200}}}"#,
+            ConfigFormat::Json,
+        ).unwrap();
+        let domain_map = DomainMap::from_config(&config).unwrap();
+
+        // Mark all elements explicitly (simulate AMR trigger)
+        let all_marked: Vec<usize> = (0..mesh.volume_elements.len()).collect();
+        let (fine, midpoints) = amr::refine_marked(&mesh, &all_marked);
+        assert!(fine.n_nodes() > mesh.n_nodes(),
+            "red refinement should add midpoint nodes");
+        assert!(fine.volume_elements.len() >= 4 * mesh.volume_elements.len(),
+            "each Tri3 should produce 4 children");
+
+        // Re-solve on fine mesh: φ=y should still be exact
+        let phi1 = solve_one(&config, &fine, &domain_map, Some(1), 1.0, &NoComm).unwrap();
+        for (i, node) in fine.nodes.iter().enumerate() {
+            assert!((phi1[i] - node.y).abs() < 1e-8,
+                "node {i} at y={:.3}: φ={:.6}, err={:.2e}",
+                node.y, phi1[i], (phi1[i] - node.y).abs());
+        }
+
+        // Prolongation preserves linear fields
+        let phi0: Vec<f64> = mesh.nodes.iter().map(|n| n.y).collect();
+        let phi_prolonged = amr::prolongate_p1(&phi0, fine.n_nodes(), &midpoints);
+        for (i, node) in fine.nodes.iter().enumerate() {
+            assert!((phi_prolonged[i] - node.y).abs() < 1e-12,
+                "prolongated node {i}: expected y={:.3}, got {:.6}", node.y, phi_prolonged[i]);
+        }
     }
 }

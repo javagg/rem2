@@ -1,6 +1,7 @@
 pub mod gen;
 pub mod gmsh;
 pub mod mesh_data;
+pub mod amr;
 
 pub use mesh_data::{BoundaryTag, Node, Element, ElementKind, RemMesh};
 

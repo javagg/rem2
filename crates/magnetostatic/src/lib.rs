@@ -18,7 +18,7 @@ use rem_config::PalaceConfig;
 use rem_core::{RemResult, solve_pcg};
 use rem_parallel::Comm;
 use rem_materials::DomainMap;
-use rem_mesh::{RemMesh, BoundaryTag};
+use rem_mesh::{RemMesh, BoundaryTag, amr};
 use rem_mesh::gmsh::read_msh_file;
 use rem_electrostatic::assemble;
 use rem_electrostatic::bc;
@@ -36,14 +36,6 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
             config.solver.order
         );
     }
-    if config.model.refinement.max_iter > 0 {
-        log::warn!(
-            "Model.Refinement.MaxIter={} requested but AMR loop is not yet integrated \
-             into the solver; running a single solve pass.",
-            config.model.refinement.max_iter
-        );
-    }
-
     let mesh_path = Path::new(&config.model.mesh);
     log::info!("Loading mesh: {}", mesh_path.display());
     let raw = read_msh_file(mesh_path)?;
@@ -61,23 +53,56 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
     // Find surface current excitation (analogous to LumpedPort in electrostatics)
     let excited_tag = find_surface_current_tag(&mesh); // returns SurfaceCurrent INDEX
 
-    let az = solve_one(config, &mesh, &domain_map, excited_tag, comm)?;
+    // AMR loop
+    let amr_cfg = &config.model.refinement;
+    let max_amr_iter = if amr_cfg.max_iter > 0 { amr_cfg.max_iter } else { 0 };
+    let amr_theta    = if amr_cfg.tol > 0.0 { amr_cfg.tol } else { 0.5 };
+
+    let (final_mesh, az) = if max_amr_iter > 0 {
+        log::info!("AMR enabled: max_iter={}, θ={}", max_amr_iter, amr_theta);
+        let mut cur_mesh = mesh;
+        let mut az = solve_one(config, &cur_mesh, &domain_map, excited_tag, comm)?;
+
+        for amr_iter in 1..=max_amr_iter {
+            let eta = amr::zz_estimator(&cur_mesh, &az);
+            let total_err: f64 = eta.iter().map(|&e| e * e).sum::<f64>().sqrt();
+            log::info!("AMR iter {amr_iter}: nodes={}, |η|={total_err:.3e}", cur_mesh.n_nodes());
+
+            let marked = amr::dorfler_mark(&eta, amr_theta);
+            if marked.is_empty() {
+                log::info!("AMR converged: no elements marked.");
+                break;
+            }
+
+            let (fine_mesh, _midpoints) = amr::refine_marked(&cur_mesh, &marked);
+            az = solve_one(config, &fine_mesh, &domain_map, excited_tag, comm)?;
+            cur_mesh = fine_mesh;
+        }
+
+        let eta_final = amr::zz_estimator(&cur_mesh, &az);
+        let total_err: f64 = eta_final.iter().map(|&e| e * e).sum::<f64>().sqrt();
+        log::info!("AMR final: nodes={}, |η|={total_err:.3e}", cur_mesh.n_nodes());
+        (cur_mesh, az)
+    } else {
+        let az = solve_one(config, &mesh, &domain_map, excited_tag, comm)?;
+        (mesh, az)
+    };
 
     // gradient_recovery returns −∇A_z (same sign convention as E = −∇φ).
     // So g = (−∂Az/∂x, −∂Az/∂y).
     // B_x = ∂Az/∂y = −g[1],   B_y = −∂Az/∂x = g[0]
-    let grad_az = postprocess::gradient_recovery(&az, &mesh);
+    let grad_az = postprocess::gradient_recovery(&az, &final_mesh);
     let b_field: Vec<[f64; 3]> = grad_az.iter()
         .map(|g| [-g[1], g[0], 0.0])
         .collect();
 
     // Magnetic energy U = (1/2) ∫ ν |∇A_z|² dΩ
     let nu_fn = |tag: u32| domain_map.get(tag).reluctivity();
-    let energy = postprocess::electrostatic_energy(&az, &mesh, nu_fn);
+    let energy = postprocess::electrostatic_energy(&az, &final_mesh, nu_fn);
     log::info!("Magnetic energy: {:.6e} J/m", energy);
 
     // Write CSV + VTK
-    write_outputs(output_dir, &mesh, &az, &b_field, energy)?;
+    write_outputs(output_dir, &final_mesh, &az, &b_field, energy)?;
 
     Ok(())
 }

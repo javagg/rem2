@@ -101,6 +101,7 @@ pub enum BoundaryTag {
 // ---------------------------------------------------------------------------
 
 /// The central mesh structure used by all solvers.
+#[derive(Clone)]
 pub struct RemMesh {
     /// All nodes, coordinates in SI metres (after L0 scaling).
     pub nodes: Vec<Node>,

@@ -24,7 +24,7 @@ use rem_config::PalaceConfig;
 use rem_core::{CsrMatrix, RemError, RemResult, TripletMatrix, solve_pcg};
 use rem_electrostatic::{assemble::assemble_stiffness, bc::collect_dirichlet_dofs, bc::apply_dirichlet};
 use rem_materials::DomainMap;
-use rem_mesh::RemMesh;
+use rem_mesh::{RemMesh, amr};
 use rem_mesh::gmsh::read_msh_file;
 use rem_parallel::Comm;
 use nalgebra::DMatrix;
@@ -48,21 +48,47 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
             config.solver.order
         );
     }
-    if config.model.refinement.max_iter > 0 {
-        log::warn!(
-            "Model.Refinement.MaxIter={} requested but AMR loop is not yet integrated \
-             into the solver; running a single solve pass.",
-            config.model.refinement.max_iter
-        );
-    }
-
     let mesh_path = Path::new(&config.model.mesh);
     let raw = read_msh_file(mesh_path)?;
     let mut mesh = RemMesh::from_raw(raw, config)?;
     mesh.set_comm(comm.rank(), comm.size());
     let domain_map = DomainMap::from_config(config)?;
 
-    let result = solve(config, &mesh, &domain_map, comm)?;
+    // AMR loop: refine mesh adaptively and re-solve
+    let amr_cfg = &config.model.refinement;
+    let max_amr_iter = if amr_cfg.max_iter > 0 { amr_cfg.max_iter } else { 0 };
+    let amr_theta    = if amr_cfg.tol > 0.0 { amr_cfg.tol } else { 0.5 };
+
+    let (final_mesh, result) = if max_amr_iter > 0 {
+        log::info!("AMR enabled: max_iter={}, θ={}", max_amr_iter, amr_theta);
+        let mut cur_mesh = mesh;
+        let mut result = solve(config, &cur_mesh, &domain_map, comm)?;
+
+        for amr_iter in 1..=max_amr_iter {
+            // Use first eigenvector as error indicator field
+            if let Some(phi) = result.eigenvectors.first() {
+                let eta = amr::zz_estimator(&cur_mesh, phi);
+                let total_err: f64 = eta.iter().map(|&e| e * e).sum::<f64>().sqrt();
+                log::info!("AMR iter {amr_iter}: nodes={}, |η|={total_err:.3e}", cur_mesh.n_nodes());
+
+                let marked = amr::dorfler_mark(&eta, amr_theta);
+                if marked.is_empty() {
+                    log::info!("AMR converged: no elements marked.");
+                    break;
+                }
+
+                let (fine_mesh, _midpoints) = amr::refine_marked(&cur_mesh, &marked);
+                result = solve(config, &fine_mesh, &domain_map, comm)?;
+                cur_mesh = fine_mesh;
+            } else {
+                break;
+            }
+        }
+        (cur_mesh, result)
+    } else {
+        let result = solve(config, &mesh, &domain_map, comm)?;
+        (mesh, result)
+    };
 
     let out_dir = config.problem.output_dir();
     std::fs::create_dir_all(out_dir).map_err(RemError::Io)?;
@@ -70,7 +96,7 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
 
     let save_n = eig_cfg.save.min(result.frequencies_hz.len());
     for (mode_idx, phi) in result.eigenvectors.iter().enumerate().take(save_n) {
-        output::write_mode_vtk(out_dir, &mesh, phi, mode_idx + 1)?;
+        output::write_mode_vtk(out_dir, &final_mesh, phi, mode_idx + 1)?;
     }
 
     log::info!("Eigenmode solve complete: {} modes found", result.frequencies_hz.len());

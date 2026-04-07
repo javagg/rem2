@@ -23,7 +23,7 @@ use rem_core::{CsrMatrix, RemError, RemResult, TripletMatrix, solve_pcg};
 use rem_eigenmode::assemble_mass::assemble_mass;
 use rem_electrostatic::{assemble::assemble_stiffness, bc::{collect_dirichlet_dofs, apply_dirichlet}};
 use rem_materials::DomainMap;
-use rem_mesh::{RemMesh, BoundaryTag};
+use rem_mesh::{RemMesh, BoundaryTag, amr};
 use rem_mesh::gmsh::read_msh_file;
 use rem_parallel::Comm;
 use std::path::Path;
@@ -57,17 +57,69 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
             config.solver.order
         );
     }
-    if config.model.refinement.max_iter > 0 {
-        log::warn!(
-            "Model.Refinement.MaxIter={} requested but AMR loop is not yet integrated \
-             into the solver; running a single solve pass.",
-            config.model.refinement.max_iter
-        );
-    }
 
     let domain_map = DomainMap::from_config(config)?;
 
-    // Build frequency sweep
+    // AMR pre-refinement: refine mesh at center frequency before the full sweep
+    let amr_cfg = &config.model.refinement;
+    let max_amr_iter = if amr_cfg.max_iter > 0 { amr_cfg.max_iter } else { 0 };
+    let amr_theta    = if amr_cfg.tol > 0.0 { amr_cfg.tol } else { 0.5 };
+
+    let refined_mesh: RemMesh;
+    let work_mesh: &RemMesh = if max_amr_iter > 0 {
+        log::info!("AMR pre-refinement enabled: max_iter={}, θ={}", max_amr_iter, amr_theta);
+        let f_center = (drv_cfg.min_freq + drv_cfg.max_freq) * 0.5;
+        let k_wave = 2.0 * std::f64::consts::PI * f_center / C0;
+        let k2 = k_wave * k_wave;
+        let excited_port = find_excited_lumped_port(mesh);
+
+        let eps_fn = |tag: u32| domain_map.get(tag).epsilon_abs();
+        let mut cur_mesh = mesh.clone();
+        for amr_iter in 1..=max_amr_iter {
+            let k_mat = assemble_stiffness(&cur_mesh, eps_fn)?.to_csr();
+            let m_mat = assemble_mass(&cur_mesh, eps_fn)?.to_csr();
+            let a_mat = shifted_matrix(&k_mat, &m_mat, k2, cur_mesh.n_nodes());
+            let mut a_bc = a_mat;
+            let dofs = collect_dirichlet_dofs(&cur_mesh, excited_port, 1.0);
+            let mut rhs = vec![0.0f64; cur_mesh.n_nodes()];
+            apply_dirichlet(&mut a_bc, &mut rhs, &dofs);
+            let lin = &config.solver.linear;
+            let result = solve_pcg(&a_bc, &rhs, lin.tol, lin.max_iter, comm);
+            let phi = result.solution;
+
+            let eta = amr::zz_estimator(&cur_mesh, &phi);
+            let total_err: f64 = eta.iter().map(|&e| e * e).sum::<f64>().sqrt();
+            log::info!("AMR iter {amr_iter}: nodes={}, |η|={total_err:.3e}", cur_mesh.n_nodes());
+
+            let marked = amr::dorfler_mark(&eta, amr_theta);
+            if marked.is_empty() {
+                log::info!("AMR pre-refinement converged: no elements marked.");
+                break;
+            }
+            let (fine_mesh, _) = amr::refine_marked(&cur_mesh, &marked);
+            cur_mesh = fine_mesh;
+        }
+        log::info!("AMR pre-refinement complete: {} nodes", cur_mesh.n_nodes());
+        refined_mesh = cur_mesh;
+        &refined_mesh
+    } else {
+        mesh
+    };
+
+    run_frequency_sweep(config, drv_cfg, work_mesh, &domain_map, comm)
+}
+
+// ---------------------------------------------------------------------------
+// Frequency sweep (inner loop, used after optional AMR pre-refinement)
+// ---------------------------------------------------------------------------
+
+fn run_frequency_sweep(
+    config: &PalaceConfig,
+    drv_cfg: &rem_config::DrivenSolver,
+    mesh: &RemMesh,
+    domain_map: &DomainMap,
+    comm: &dyn Comm,
+) -> RemResult<()> {
     let f_min  = drv_cfg.min_freq;
     let f_max  = drv_cfg.max_freq;
     let f_step = drv_cfg.freq_step;
@@ -83,21 +135,16 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
 
     // Assemble K and M once (frequency-independent)
     let eps_fn = |tag: u32| domain_map.get(tag).epsilon_abs();
-    let k_triplet = assemble_stiffness(&mesh, eps_fn)?;
-    let m_triplet = assemble_mass(&mesh, eps_fn)?;
-    let k_mat = k_triplet.to_csr();
-    let m_mat = m_triplet.to_csr();
+    let k_mat = assemble_stiffness(mesh, eps_fn)?.to_csr();
+    let m_mat = assemble_mass(mesh, eps_fn)?.to_csr();
 
     let out_dir = config.problem.output_dir();
     #[cfg(not(target_arch = "wasm32"))]
     std::fs::create_dir_all(out_dir).map_err(RemError::Io)?;
 
     let lin = &config.solver.linear;
-
     let mut freq_results: Vec<FreqResult> = Vec::with_capacity(n_steps);
-
-    // Find excited port index
-    let excited_port = find_excited_lumped_port(&mesh);
+    let excited_port = find_excited_lumped_port(mesh);
 
     for step in 0..n_steps {
         let freq = f_min + step as f64 * f_step;
@@ -106,13 +153,9 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
         let k_wave = 2.0 * std::f64::consts::PI * freq / C0;
         let k2 = k_wave * k_wave;
 
-        // A = K − k² M
         let a_mat = shifted_matrix(&k_mat, &m_mat, k2, mesh.n_nodes());
         let mut a_bc = a_mat;
-
-        // Collect BCs: Dirichlet for PEC/Ground + excited port = 1V
-        let dofs = collect_dirichlet_dofs(&mesh, excited_port, 1.0);
-
+        let dofs = collect_dirichlet_dofs(mesh, excited_port, 1.0);
         let mut rhs = vec![0.0f64; mesh.n_nodes()];
         apply_dirichlet(&mut a_bc, &mut rhs, &dofs);
 
@@ -124,11 +167,8 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
             );
         }
 
-        // Compute port voltage and current for S-parameter extraction
-        let (v_port, i_port) = compute_port_vi(&mesh, &result.solution, &k_mat, excited_port);
-
-        // Z_port = V/I,  S11 = (Z - Z0)/(Z + Z0)
-        let z0 = lumped_port_resistance(&mesh, excited_port);
+        let (v_port, i_port) = compute_port_vi(mesh, &result.solution, &k_mat, excited_port);
+        let z0 = lumped_port_resistance(mesh, excited_port);
         let s11 = if i_port.abs() > 1e-300 {
             let z = v_port / i_port;
             (z - z0) / (z + z0)
@@ -141,18 +181,11 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
             freq, s11.abs(), result.converged
         );
 
-        freq_results.push(FreqResult {
-            freq_hz: freq,
-            s11_re: s11,
-            s11_im: 0.0,  // real arithmetic
-        });
+        freq_results.push(FreqResult { freq_hz: freq, s11_re: s11, s11_im: 0.0 });
 
-        // Save VTK if requested
         #[cfg(not(target_arch = "wasm32"))]
-        {
-            if step % save_step == 0 {
-                output::write_field_vtk(out_dir, &mesh, &result.solution, step + 1)?;
-            }
+        if step % save_step == 0 {
+            output::write_field_vtk(out_dir, mesh, &result.solution, step + 1)?;
         }
     }
 
