@@ -26,7 +26,7 @@ REM（Rust Electromagnetic）是一款对标 [Palace](https://github.com/awslabs
 | **静磁场** (Magnetostatic) | ✅ | ✅ | P1 FEM（2-D A_z），变磁导率，电感矩阵提取 |
 | **特征模** (Eigenmode) | ✅ | ✅ | Lanczos 移位逆迭代，多模式，VTK 模态输出 |
 | **频域驱动** (Driven) | ✅ | ✅ | 频率扫描，S 参数提取，集总端口 |
-| **时域瞬态** (Transient) | ✅ | 🔲 | 配置解析已就绪；TD-FEM 求解器待实现（FDTD_PLAN.md）|
+| **时域瞬态** (Transient) | ✅ | 🔲 | 配置解析已就绪；TD-FEM v1.0（Newmark-β）和 v1.1（IMEX-ARK 自适应）规划中，详见 FDTD_PLAN.md |
 | **S 参数提取** | ✅ | ✅ | `postpro/port-S.csv`，Palace 格式兼容 |
 | **集总端口** (Lumped Port) | ✅ | ✅ | LumpedPort 激励 + 阻抗边界 |
 | **波导端口** (Wave Port) | ✅ | 🔲 | 配置字段已定义；场型匹配待实现 |
@@ -375,7 +375,9 @@ REM 完全兼容 Palace JSON/YAML 配置文件格式。Palace 用户无需修改
 静态磁场/电感提取           → Magnetostatic FEM（2-D）
 谐振腔本征频率              → Eigenmode
 S 参数、集总端口匹配        → Driven
-时域宽带脉冲响应            → Transient（TD-FEM，规划中）
+时域宽带脉冲响应            → Transient（TD-FEM）
+  · 固定步长（v1.0 规划）  → time_scheme: "newmark"，Newmark-β，无条件稳定
+  · 自适应步长（v1.1 规划）→ time_scheme: "imex_ark"，IMEX-ARK3(2)4L[2]SA，误差控制
 ```
 
 ---
@@ -400,7 +402,7 @@ S 参数、集总端口匹配        → Driven
 | 3-D 静磁（Nedelec H(curl)） | 当前仅 2-D A_z 标量 | 中 |
 | 波导端口场匹配 | 配置已支持，场型积分待实现 | 中 |
 | AMR 集成 | fem-rs AMR 估计器已就绪，与求解器对接待完成 | 中 |
-| 时域瞬态（TD-FEM） | 详见 FDTD_PLAN.md | 高 |
+| 时域瞬态（TD-FEM） | v1.0：Nedelec H(curl) + Newmark-β 固定步长（FDTD_PLAN.md §9.1，20–26 天）；v1.1：IMEX-ARK 自适应步长（§9.2，+8–12 天） | 高 |
 | MoM 介质目标（PMCHWT） | PEC 目标已完整，介质扩展待实现 | 低 |
 | SBR+ 边缘绕射（PTD） | 大角度散射精度提升 | 低 |
 | p-FEM（P2+）实际应用 | 配置字段已有，单元装配待扩展 | 低 |

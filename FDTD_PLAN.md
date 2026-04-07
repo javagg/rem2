@@ -82,7 +82,9 @@ M_ε ë + C_σ ė + K E = F(t)
 - `K` = 刚度矩阵 `∫ μ⁻¹ (∇×E)·(∇×v) dΩ`
 - `F(t)` = 激励源向量
 
-### 2.3 时间推进方案：Newmark-β
+### 2.3 时间推进方案对比
+
+#### 2.3.1 Newmark-β（v1.0 默认方案）
 
 采用无条件稳定的 Newmark-β 方案（β=0.25, γ=0.5，即梯形法则）：
 
@@ -100,6 +102,103 @@ A_eff = M_ε/(βΔt²) + γC_σ/(βΔt) + K
 
 > 优势：无条件稳定，时间步长仅受精度约束，不受 CFL 条件限制。  
 > 替代方案：如追求效率可使用显式中心差分（γ=0.5, β=0），但需满足 CFL。
+
+#### 2.3.2 SUNDIALS ARKODE IMEX 方案（v1.1 高级方案）
+
+[SUNDIALS](https://computing.llnl.gov/projects/sundials) 是 LLNL 开发的 ODE/DAE 求解库，其中 ARKODE 模块提供
+**隐显分裂 Runge-Kutta（IMEX-ARK）** 时间积分，具有自适应步长控制。
+
+**一阶化**：将二阶 ODE 改写为一阶方程组：
+
+```
+令 u = E，v = Ė，状态向量 x = [u; v]
+
+ẋ = f_I(x) + f_E(t)
+
+f_I(x) = [v; −M_ε⁻¹(K·u + C_σ·v)]   （刚性隐式部分）
+f_E(t) = [0; M_ε⁻¹ F(t)]              （非刚性显式部分）
+```
+
+**IMEX-ARK 每子步**：
+
+```
+k_i^I = f_I(t_n + c_i Δt,  x_n + Δt Σ_{j<i} a_ij^I k_j^I + Δt Σ_j a_ij^E k_j^E)
+k_i^E = f_E(t_n + c_i Δt,  ...)
+x_{n+1} = x_n + Δt Σ_i (b_i^I k_i^I + b_i^E k_i^E)
+```
+
+其中 `a^I`（隐式 Butcher 表）为下三角矩阵（SDIRK），`a^E`（显式 Butcher 表）为严格下三角。
+每隐式子步求解 `(M_ε + Δt·a_ii^I·C_σ + Δt²·a_ii^{I²}·K)·Δu = rhs`，结构与 Newmark-β 完全一致。
+
+**自适应步长**：利用嵌入式低阶方法估计局部截断误差 `ε`，按如下公式调整步长：
+
+```
+Δt_{new} = Δt · min(η_max, max(η_min, safety · (tol/‖ε‖)^{1/(p+1)}))
+```
+
+其中 `p` 为方案阶次（典型 3–4 阶），`safety = 0.9`，`η ∈ [0.1, 5]`。
+
+**与 Newmark-β 对比**：
+
+| 维度 | Newmark-β (v1.0) | IMEX-ARK (v1.1) |
+|------|-----------------|-----------------|
+| 时间阶次 | 2 阶 | 3–4 阶 |
+| 步长控制 | 固定 Δt（用户指定）| 自适应（误差控制）|
+| 每步线性求解 | 1 次 | s 次（s = 阶段数，典型 2–4）|
+| 刚性问题 | 无条件稳定 | 隐式子步无条件稳定 |
+| 激励源耦合 | 需插值 F(t_n+1) | 显式部分精确求值 |
+| 实现复杂度 | 低 | 中（需嵌入式 Butcher 表） |
+| WASM 支持 | ✅ 原生支持 | ✅（纯 Rust 实现，见 §2.4）|
+
+### 2.4 WASM 兼容策略：纯 Rust IMEX 积分器
+
+SUNDIALS 本身为 C 库，无官方 WASM/`wasm32` Rust 绑定。REM 采用**纯 Rust 自研 IMEX-ARK** 策略，分两阶段：
+
+#### 阶段 v1.0：Newmark-β（已规划，见 §3.3）
+
+固定步长，无 C FFI 依赖，直接 WASM 可编译。
+
+#### 阶段 v1.1：内置 IMEX-ARK3(2)4L[2]SA 积分器
+
+采用 Kennedy & Carpenter (2003) 推荐的 3(2) 阶嵌入方案（ARK3(2)4L[2]SA）：
+
+```rust
+// crates/transient/src/time_stepper.rs
+
+/// IMEX-ARK3(2)4L[2]SA Butcher 表（Kennedy & Carpenter 2003）
+const ARKODE_IMPLICIT_BUTCHER: [[f64; 4]; 4] = [
+    [0.0,               0.0,           0.0,           0.0  ],
+    [1767732205903./4055673282236., 1767732205903./4055673282236., 0.0, 0.0],
+    [2746238789719./10658868560708., -640167445237./6845629431997., 1767732205903./4055673282236., 0.0],
+    [1471266399579./7840856788654., -4482444167858./7529755066697., 11266239266428./11593286722821., 1767732205903./4055673282236.],
+];
+
+pub struct ImexArkStepper {
+    pub rtol: f64,     // 相对误差容限，默认 1e-4
+    pub atol: f64,     // 绝对误差容限，默认 1e-8
+    pub dt_min: f64,   // 最小步长
+    pub dt_max: f64,   // 最大步长
+}
+
+impl ImexArkStepper {
+    pub fn step_adaptive(
+        &self, state: &mut TimeDomainState,
+        t: f64, dt: f64,
+        k_mat: &CsrMatrix, m_mat: &CsrMatrix, c_mat: &CsrMatrix,
+        source: &dyn Fn(f64) -> Vec<f64>,
+    ) -> (f64, bool) {   // 返回 (新步长, 是否接受本步)
+        // 1. 计算各阶段 k_i^I, k_i^E
+        // 2. 计算高阶估计 x_{n+1}^3 和低阶估计 x_{n+1}^2
+        // 3. 误差范数 ‖x^3 - x^2‖ / (atol + rtol·‖x‖)
+        // 4. 按 PI 控制律调整步长
+        todo!()
+    }
+}
+```
+
+> **外部 crate 参考**：可选择 [`ode-solvers`](https://crates.io/crates/ode-solvers)（支持 Dormand-Prince RK45）
+> 或 [`diffsol`](https://crates.io/crates/diffsol)（支持 SDIRK，纯 Rust，wasm32 可编译）作为原型验证；
+> 生产环境建议自研 IMEX-ARK 以完全控制线性系统装配接口。
 
 ---
 
@@ -196,6 +295,9 @@ pub struct TimeDomainState {
 }
 ```
 
+> **v1.1 升级路径**：`TimeStepper` 将抽象为 trait，`NewmarkStepper` 和 `ImexArkStepper`（§2.3.2）
+> 均实现该 trait，通过配置字段 `time_scheme: "newmark" | "imex_ark"` 选择。
+
 ### 3.4 激励源
 
 **文件**：`crates/transient/src/excitation.rs`
@@ -272,6 +374,10 @@ rem-mesh    = { path = "../mesh" }
 rem-materials = { path = "../materials" }
 rem-result  = { path = "../result" }
 rem-parallel = { path = "../parallel" }
+
+[dev-dependencies]
+# 可选：用于原型验证 IMEX-ARK 前的参考实现
+# diffsol = { version = "0.4", features = ["faer"] }
 ```
 
 ---
@@ -283,14 +389,16 @@ rem-parallel = { path = "../parallel" }
 ```rust
 #[derive(Deserialize, Debug, Clone)]
 pub struct TransientConfig {
-    pub dt: f64,                     // 时间步长 [s]
+    pub dt: f64,                     // 时间步长 [s]（imex_ark 时为初始步长）
     pub t_end: f64,                  // 终止时间 [s]
     pub output_interval: usize,      // 每 N 步输出一次 VTK
-    pub time_scheme: TimeScheme,     // "newmark" | "leapfrog"
+    pub time_scheme: TimeScheme,     // "newmark" | "leapfrog" | "imex_ark"
     pub excitation: ExcitationType,  // "gaussian" | "sinusoidal" | "planewave"
     pub absorbing_bc: AbcType,       // "mur1" | "pml"
-    pub newmark_beta: Option<f64>,   // 默认 0.25
+    pub newmark_beta: Option<f64>,   // 默认 0.25（time_scheme="newmark" 时有效）
     pub newmark_gamma: Option<f64>,  // 默认 0.5
+    pub rtol: Option<f64>,           // 相对误差容限，默认 1e-4（time_scheme="imex_ark" 时有效）
+    pub atol: Option<f64>,           // 绝对误差容限，默认 1e-8
 }
 ```
 
@@ -358,6 +466,8 @@ pub fn run_transient(config_json: &str, mesh_bytes: &[u8]) -> JsValue {
 
 ## 9. 实施计划
 
+### 9.1 v1.0：Newmark-β 固定步长（20–26 天）
+
 | 阶段 | 内容 | 工作量 | 依赖 |
 |------|------|--------|------|
 | P1 | 配置扩展 + Crate 骨架 | 1 天 | 无 |
@@ -371,6 +481,17 @@ pub fn run_transient(config_json: &str, mesh_bytes: &[u8]) -> JsValue {
 | **合计** | | **20–26 天** | |
 
 > Nedelec 基函数（P2）是唯一不可绕过的技术壁垒，建议优先突破。
+
+### 9.2 v1.1：IMEX-ARK 自适应步长（+8–12 天）
+
+| 阶段 | 内容 | 工作量 | 依赖 |
+|------|------|--------|------|
+| Q1 | `TimeStepper` trait 抽象化 | 1 天 | v1.0 P4 完成 |
+| Q2 | IMEX-ARK3(2)4L[2]SA 积分器（§2.3.2 Butcher 表）| 3–4 天 | Q1 完成 |
+| Q3 | PI 步长控制器（误差范数 + 安全系数）| 2 天 | Q2 完成 |
+| Q4 | 配置扩展（`time_scheme: imex_ark`, `rtol`, `atol`）| 1 天 | Q1 完成 |
+| Q5 | 与 v1.0 结果对比验证（矩形腔、平面波）| 2–3 天 | Q2–Q4 完成 |
+| **合计** | | **+8–12 天** | |
 
 ---
 
@@ -393,3 +514,6 @@ pub fn run_transient(config_json: &str, mesh_bytes: &[u8]) -> JsValue {
 2. Nédélec, J.-C. "A new family of mixed finite elements in ℝ³." *Numerische Mathematik* 50, 57–81 (1986).
 3. Newmark, N.M. "A method of computation for structural dynamics." *J. Eng. Mech. Div.* 85, 67–94 (1959).
 4. Mur, G. "Absorbing boundary conditions for the finite-difference approximation of the time-domain electromagnetic-field equations." *IEEE Trans. EMC* 23(4), 377–382 (1981).
+5. Kennedy, C.A. & Carpenter, M.H. "Additive Runge–Kutta schemes for convection–diffusion–reaction equations." *Applied Numerical Mathematics* 44(1–2), 139–181 (2003). ← IMEX-ARK Butcher 表来源
+6. Hindmarsh, A.C. et al. "SUNDIALS: Suite of nonlinear and differential/algebraic equation solvers." *ACM Trans. Math. Softw.* 31(3), 363–396 (2005).
+7. diffsol crate: <https://crates.io/crates/diffsol> — 纯 Rust SDIRK/BDF ODE 求解器，wasm32 可编译，可用于原型验证。
