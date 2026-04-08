@@ -20,6 +20,14 @@ pub fn init_logger() {
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct RcsPoint {
+    pub theta_deg: f64,
+    pub phi_deg:   f64,
+    pub rcs_m2:    f64,
+    pub rcs_dbsm:  f64,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct SParam {
     pub freq_hz: f64,
     pub s11_re:  f64,
@@ -42,6 +50,8 @@ pub struct SimulationResult {
     pub port_voltages: Option<Vec<f64>>,
     /// Eigenmode: Q-factors from dielectric loss perturbation (None if lossless)
     pub q_factors: Option<Vec<f64>>,
+    /// MoM/SBR: RCS pattern data, one entry per frequency
+    pub rcs_data: Option<Vec<(f64, Vec<RcsPoint>)>>,
 }
 
 #[wasm_bindgen]
@@ -73,7 +83,7 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
                 b_field: None,
                 frequencies_hz: None,
                 s_params: None,
-                time_points: None, port_voltages: None, q_factors: None,
+                time_points: None, port_voltages: None, q_factors: None, rcs_data: None,
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
@@ -95,7 +105,7 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
                 b_field: Some(b_field),
                 frequencies_hz: None,
                 s_params: None,
-                time_points: None, port_voltages: None, q_factors: None,
+                time_points: None, port_voltages: None, q_factors: None, rcs_data: None,
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
@@ -112,33 +122,49 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
             let res = SimulationResult {
                 phi: vec![], energy: 0.0, e_field: None, b_field: None,
                 frequencies_hz: None, s_params: Some(s_params),
-                time_points: None, port_voltages: None, q_factors: None,
+                time_points: None, port_voltages: None, q_factors: None, rcs_data: None,
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
         ProblemType::MoM => {
-            rem_mom::run_with_mesh(&cfg,
+            let mom_result = rem_mom::run_with_mesh(&cfg,
                 cfg.solver.mom.as_ref()
                     .ok_or_else(|| JsError::new("MoM requires Solver.MoM section"))?,
                 &mesh,
             ).map_err(|e| JsError::new(&format!("MoM error: {}", e)))?;
+            let rcs_data: Vec<(f64, Vec<RcsPoint>)> = mom_result.rcs.into_iter().map(|(f, pts)| {
+                let pts2 = pts.into_iter().map(|p| RcsPoint {
+                    theta_deg: p.theta_deg, phi_deg: p.phi_deg,
+                    rcs_m2: p.rcs_m2, rcs_dbsm: p.rcs_dbsm,
+                }).collect();
+                (f, pts2)
+            }).collect();
             let res = SimulationResult {
                 phi: vec![], energy: 0.0, e_field: None, b_field: None,
                 frequencies_hz: None, s_params: None,
                 time_points: None, port_voltages: None, q_factors: None,
+                rcs_data: Some(rcs_data),
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
         ProblemType::SBR => {
-            rem_sbr::run_with_mesh(&cfg,
+            let sbr_result = rem_sbr::run_with_mesh(&cfg,
                 cfg.solver.sbr.as_ref()
                     .ok_or_else(|| JsError::new("SBR requires Solver.SBR section"))?,
                 &mesh,
             ).map_err(|e| JsError::new(&format!("SBR error: {}", e)))?;
+            let rcs_data: Vec<(f64, Vec<RcsPoint>)> = sbr_result.rcs.into_iter().map(|(f, pts)| {
+                let pts2 = pts.into_iter().map(|p| RcsPoint {
+                    theta_deg: p.theta_deg, phi_deg: p.phi_deg,
+                    rcs_m2: p.rcs_m2, rcs_dbsm: p.rcs_dbsm,
+                }).collect();
+                (f, pts2)
+            }).collect();
             let res = SimulationResult {
                 phi: vec![], energy: 0.0, e_field: None, b_field: None,
                 frequencies_hz: None, s_params: None,
                 time_points: None, port_voltages: None, q_factors: None,
+                rcs_data: Some(rcs_data),
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
@@ -151,7 +177,7 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
                 phi, energy: 0.0, e_field: None, b_field: None,
                 frequencies_hz: Some(eigen.frequencies_hz), s_params: None,
                 time_points: None, port_voltages: None,
-                q_factors: eigen.q_factors,
+                q_factors: eigen.q_factors, rcs_data: None,
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
@@ -162,7 +188,7 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
                 phi: vec![], energy: 0.0, e_field: None, b_field: None,
                 frequencies_hz: None, s_params: None,
                 time_points: Some(time_points), port_voltages: Some(port_voltages),
-                q_factors: None,
+                q_factors: None, rcs_data: None,
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }

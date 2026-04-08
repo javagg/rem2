@@ -150,10 +150,34 @@ fn run_frequency_sweep(
 
     let n_steps = ((f_max - f_min) / f_step).ceil() as usize + 1;
 
-    // Assemble K and M once (frequency-independent)
-    let eps_fn = |tag: u32| domain_map.get(tag).epsilon_abs();
+    // Assemble K and M once (frequency-independent, real part)
+    let eps_fn     = |tag: u32| domain_map.get(tag).epsilon_abs();
     let k_mat = assemble_stiffness(mesh, eps_fn)?.to_csr();
     let m_mat = assemble_mass(mesh, eps_fn)?.to_csr();
+
+    // Pre-assemble loss matrices if any domain has dielectric loss or conductivity.
+    // K_loss uses ε₀·εᵣ·tanδ;  M_loss is the same weight (for tanδ part).
+    // K_cond/M_cond use σ [S/m]; conductivity adds −j·σ/ω to ε_eff (per-step).
+    let any_lossy = mesh.domain_tags.keys()
+        .any(|&tag| domain_map.get(tag).is_lossy());
+    let (k_loss_dense, m_loss_dense, k_cond_dense, m_cond_dense) = if any_lossy {
+        let tan_fn  = |tag: u32| { let m = domain_map.get(tag); m.epsilon_abs() * m.loss_tangent };
+        let cond_fn = |tag: u32| { domain_map.get(tag).conductivity };   // σ [S/m]
+        let n = mesh.n_nodes();
+        let kl = assemble_stiffness(mesh, tan_fn)?.to_csr();
+        let ml = assemble_mass(mesh,     tan_fn)?.to_csr();
+        let kc = assemble_stiffness(mesh, cond_fn)?.to_csr();
+        let mc = assemble_mass(mesh,     cond_fn)?.to_csr();
+        (Some(csr_to_complex_dense(&kl, n)),
+         Some(csr_to_complex_dense(&ml, n)),
+         Some(csr_to_complex_dense(&kc, n)),
+         Some(csr_to_complex_dense(&mc, n)))
+    } else {
+        (None, None, None, None)
+    };
+    if any_lossy {
+        log::info!("Lossy materials detected: complex ε assembly enabled");
+    }
 
     let out_dir = config.problem.output_dir();
     #[cfg(not(target_arch = "wasm32"))]
@@ -184,7 +208,7 @@ fn run_frequency_sweep(
         None
     };
 
-    // Pre-convert K and M to complex nalgebra matrices for GMRES
+    // Pre-convert real K and M to complex dense matrices for GMRES
     let n = mesh.n_nodes();
     let k_dense = csr_to_complex_dense(&k_mat, n);
     let m_dense = csr_to_complex_dense(&m_mat, n);
@@ -193,14 +217,32 @@ fn run_frequency_sweep(
         let freq = f_min + step as f64 * f_step;
         if freq > f_max + f_step * 0.5 { break; }
 
-        let k_wave = 2.0 * std::f64::consts::PI * freq / C0;
+        let omega = 2.0 * std::f64::consts::PI * freq;
+        let k_wave = omega / C0;
         let k2 = k_wave * k_wave;
 
-        // A = K − k² M  (complex, allows near-resonance solution)
+        // Build complex system matrix:
+        //   A = (K_re + j·K_loss) − k²·(M_re + j·M_loss) − j·(σ/ω)·M_cond
+        // where the imaginary parts encode dielectric loss (tanδ) and conductivity.
         let mut a = k_dense.clone();
         for i in 0..n {
             for j in 0..n {
                 a[(i, j)] -= Complex64::new(k2, 0.0) * m_dense[(i, j)];
+            }
+        }
+        if let (Some(kl), Some(ml), Some(kc), Some(mc)) =
+            (&k_loss_dense, &m_loss_dense, &k_cond_dense, &m_cond_dense)
+        {
+            for i in 0..n {
+                for j in 0..n {
+                    // tanδ part: A += j·(K_loss − k²·M_loss)
+                    let tan_contrib = Complex64::new(0.0, 1.0)
+                        * (kl[(i,j)] - Complex64::new(k2, 0.0) * ml[(i,j)]);
+                    // conductivity part: A += (−j/ω)·(K_cond − k²·M_cond)
+                    let cond_contrib = Complex64::new(0.0, -1.0 / omega)
+                        * (kc[(i,j)] - Complex64::new(k2, 0.0) * mc[(i,j)]);
+                    a[(i, j)] += tan_contrib + cond_contrib;
+                }
             }
         }
 

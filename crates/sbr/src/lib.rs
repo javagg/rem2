@@ -44,9 +44,28 @@ use rem_parallel::NoComm;
 use bvh::Bvh;
 use excitation::{PlaneWave, incident_fields, launch_aperture_rays};
 use fresnel::{Interface, reflect_field, po_current_pec};
-use po_integral::{zero_currents, CurrentMap};
+use po_integral::{zero_currents, CurrentMap, rcs_pattern, rcs_pattern_with_ptd};
 use ptd::{extract_boundary_edges};
 use output::{write_rcs_with_ptd, write_surface_vtk};
+
+// ---------------------------------------------------------------------------
+// Result types
+// ---------------------------------------------------------------------------
+
+/// One RCS observation point.
+#[derive(Debug, Clone)]
+pub struct RcsPoint {
+    pub theta_deg: f64,
+    pub phi_deg:   f64,
+    pub rcs_m2:    f64,
+    pub rcs_dbsm:  f64,
+}
+
+/// Result returned by `run_with_mesh`.
+#[derive(Debug, Clone)]
+pub struct SbrResult {
+    pub rcs: Vec<(f64, Vec<RcsPoint>)>,   // (freq_hz, points)
+}
 
 // ---------------------------------------------------------------------------
 // Public entry point
@@ -60,7 +79,7 @@ pub fn run(config: &PalaceConfig) -> RemResult<()> {
         ))?;
 
     let mesh = rem_mesh::load_mesh(config, &NoComm)?;
-    run_with_mesh(config, sbr_cfg, &mesh)
+    run_with_mesh(config, sbr_cfg, &mesh).map(|_| ())
 }
 
 /// Inner function (also callable from tests / WASM).
@@ -68,7 +87,7 @@ pub fn run_with_mesh(
     config: &PalaceConfig,
     sbr_cfg: &SbrSolverConfig,
     mesh: &rem_mesh::RemMesh,
-) -> RemResult<()> {
+) -> RemResult<SbrResult> {
     // ── 1. Surface mesh + BVH ─────────────────────────────────────────────
     let pec_attrs: Vec<u32> = config.boundaries.pec
         .as_ref()
@@ -111,6 +130,7 @@ pub fn run_with_mesh(
         sbr_cfg.freq_max - sbr_cfg.freq_min + 1.0
     };
     let mut freq = sbr_cfg.freq_min;
+    let mut all_rcs: Vec<(f64, Vec<RcsPoint>)> = Vec::new();
     while freq <= sbr_cfg.freq_max + 1e-3 * freq_step {
         log::info!("SBR+ solve at f = {:.3e} Hz", freq);
 
@@ -143,19 +163,40 @@ pub fn run_with_mesh(
             }
         }
 
+        // ── Compute RCS pattern (always, not just non-WASM) ──────────────────
+        let wave_ptd = wave.clone();
+        let k_ptd = k;
+        let e_fn = move |r: &[f64; 3]| -> [Complex64; 3] {
+            let (e, _h) = incident_fields(&wave_ptd, k_ptd, r);
+            e
+        };
+        let pattern = rcs_pattern_with_ptd(
+            &currents, &surf, k, &theta_deg, &phi_deg,
+            &wave, &ptd_edges, &e_fn,
+        );
+        let mut pts = Vec::new();
+        for (ti, &th) in theta_deg.iter().enumerate() {
+            for (pi, &ph) in phi_deg.iter().enumerate() {
+                let rcs_m2 = pattern[ti][pi];
+                let rcs_dbsm = if rcs_m2 > 1e-40 { 10.0 * rcs_m2.log10() } else { -300.0 };
+                pts.push(RcsPoint { theta_deg: th, phi_deg: ph, rcs_m2, rcs_dbsm });
+            }
+        }
+        all_rcs.push((freq, pts));
+
         #[cfg(not(target_arch = "wasm32"))]
         {
             // Build incident field closure for PTD (captures k, wave)
-            let wave_ptd = wave.clone();
-            let k_ptd = k;
-            let e_fn = move |r: &[f64; 3]| -> [Complex64; 3] {
-                let (e, _h) = incident_fields(&wave_ptd, k_ptd, r);
+            let wave_ptd2 = wave.clone();
+            let k_ptd2 = k;
+            let e_fn2 = move |r: &[f64; 3]| -> [Complex64; 3] {
+                let (e, _h) = incident_fields(&wave_ptd2, k_ptd2, r);
                 e
             };
 
             write_rcs_with_ptd(
                 output_dir, freq, &currents, &surf, k,
-                &theta_deg, &phi_deg, &wave, &ptd_edges, &e_fn,
+                &theta_deg, &phi_deg, &wave, &ptd_edges, &e_fn2,
             )?;
 
             let vtk_path = output_dir
@@ -171,7 +212,7 @@ pub fn run_with_mesh(
     log::info!("SBR+ complete. Results in {}", output_dir.display());
     #[cfg(target_arch = "wasm32")]
     log::info!("SBR+ complete.");
-    Ok(())
+    Ok(SbrResult { rcs: all_rcs })
 }
 
 // ---------------------------------------------------------------------------

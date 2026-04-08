@@ -31,6 +31,23 @@ use rem_core::RemResult;
 use rem_mesh::RemMesh;
 use rem_parallel::NoComm;
 
+/// One observation angle's RCS result.
+#[derive(Debug, Clone)]
+pub struct RcsPoint {
+    pub theta_deg: f64,
+    pub phi_deg:   f64,
+    pub rcs_m2:    f64,
+    /// RCS in dBsm = 10·log10(rcs_m2); -300 if rcs_m2 ≈ 0
+    pub rcs_dbsm:  f64,
+}
+
+/// Result returned by `run_with_mesh`.
+#[derive(Debug, Clone)]
+pub struct MomResult {
+    /// Per-frequency RCS pattern data
+    pub rcs: Vec<(f64, Vec<RcsPoint>)>,   // (freq_hz, points)
+}
+
 /// Entry point called from the CLI for `Problem.Type = "MoM"`.
 pub fn run(config: &PalaceConfig) -> RemResult<()> {
     let mom_cfg = config.solver.mom.as_ref()
@@ -39,7 +56,7 @@ pub fn run(config: &PalaceConfig) -> RemResult<()> {
         ))?;
 
     let mesh = rem_mesh::load_mesh(config, &NoComm)?;
-    run_with_mesh(config, mom_cfg, &mesh)
+    run_with_mesh(config, mom_cfg, &mesh).map(|_| ())
 }
 
 /// Run MoM solve on an already-loaded mesh (also used from WASM / tests).
@@ -47,7 +64,7 @@ pub fn run_with_mesh(
     config: &PalaceConfig,
     mom_cfg: &MomSolverConfig,
     mesh: &RemMesh,
-) -> RemResult<()> {
+) -> RemResult<MomResult> {
     use std::f64::consts::PI;
 
     // Collect PEC surface attribute IDs
@@ -88,6 +105,8 @@ pub fn run_with_mesh(
     let quad = quadrature::TriQuad::new(5);
 
     let mut freq = freq_min;
+    let mut all_rcs: Vec<(f64, Vec<RcsPoint>)> = Vec::new();
+
     while freq <= freq_max + 1e-3 * freq_step {
         log::info!("MoM solve at f = {:.3e} Hz", freq);
 
@@ -101,79 +120,59 @@ pub fn run_with_mesh(
         };
 
         // PMCHWT path: dielectric target (J + M unknowns, 2N×2N system)
-        if mom_cfg.equation.to_uppercase() == "PMCHWT" {
-            // Get material parameters from Domains.Materials (first entry, or defaults)
+        let currents = if mom_cfg.equation.to_uppercase() == "PMCHWT" {
             let (eps_r, mu_r) = config.domains.materials.first()
                 .map(|m| (m.permittivity, m.permeability))
                 .unwrap_or((2.0, 1.0));
             let mat = pmchwt::DielectricMaterial::new(eps_r, mu_r);
-
             log::info!("MoM PMCHWT: ε_r={eps_r:.2}, μ_r={mu_r:.2}, f={freq:.3e} Hz");
-
             let (j_coeffs, _m_coeffs) = pmchwt::solve_pmchwt(
                 &surf, mat, freq, &wave, &quad, &mom_cfg.fast_solver,
             )?;
-
-            // Use J coefficients for RCS postprocessing (PO-equivalent)
-            // For PMCHWT the surface J produces the scattered E-field via PO integral
-            let currents = j_coeffs;
-
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                postprocess::write_rcs(
-                    output_dir, freq, &currents, &surf, k, &theta_deg, &phi_deg,
-                )?;
-                let vtk_path = output_dir
-                    .join("postpro")
-                    .join(format!("surface_current_{:.3e}Hz.vtk", freq));
-                postprocess::write_surface_vtk(&vtk_path, &currents, &surf)?;
+            j_coeffs
+        } else {
+            // Assemble impedance matrix Z  (PEC EFIE/MFIE/CFIE path)
+            let z_mat = match mom_cfg.basis.as_str() {
+                "Pulse" | "pulse" => {
+                    assemble::assemble_efie_pulse(&surf, freq, &quad, mom_cfg.singular_tol)
+                }
+                _ => {
+                    let bases = basis::rwg::generate_rwg_bases(&surf);
+                    assemble::assemble_cfie_rwg(&surf, &bases, freq, mom_cfg.alpha, &quad, mom_cfg.singular_tol)
+                }
+            }?;
+            let rhs = excitation::plane_wave_rhs_general(&surf, k, &wave, &mom_cfg.basis);
+            match mom_cfg.fast_solver.to_uppercase().as_str() {
+                "GMRES" => assemble::gmres_solve(&z_mat, &rhs)?,
+                "ACA" => {
+                    log::info!("MoM: using ACA+GMRES (tol_aca=1e-4, tol_gmres=1e-8)");
+                    assemble::aca_gmres_solve(&z_mat, &rhs, 1e-4, 1e-8)?
+                }
+                "FMM" => {
+                    return Err(rem_core::RemError::Config(
+                        "FastSolver \"FMM\" is not yet implemented; use \"Direct\", \"GMRES\", or \"ACA\"".to_string()
+                    ));
+                }
+                _ => assemble::lu_solve(&z_mat, &rhs)?,
             }
-
-            freq += freq_step;
-            continue;
-        }
-
-        // Assemble impedance matrix Z  (PEC EFIE/MFIE/CFIE path)
-        let z_mat = match mom_cfg.basis.as_str() {
-            "Pulse" | "pulse" => {
-                assemble::assemble_efie_pulse(&surf, freq, &quad, mom_cfg.singular_tol)
-            }
-            _ => {
-                // RWG default
-                let bases = basis::rwg::generate_rwg_bases(&surf);
-                assemble::assemble_cfie_rwg(&surf, &bases, freq, mom_cfg.alpha, &quad, mom_cfg.singular_tol)
-            }
-        }?;
-
-        let rhs = excitation::plane_wave_rhs_general(&surf, k, &wave, &mom_cfg.basis);
-
-        // Solve Z·I = V  (solver chosen by config.FastSolver)
-        let currents = match mom_cfg.fast_solver.to_uppercase().as_str() {
-            "GMRES" => assemble::gmres_solve(&z_mat, &rhs)?,
-            "ACA" => {
-                log::info!("MoM: using ACA+GMRES (tol_aca=1e-4, tol_gmres=1e-8)");
-                assemble::aca_gmres_solve(&z_mat, &rhs, 1e-4, 1e-8)?
-            }
-            "FMM" => {
-                return Err(rem_core::RemError::Config(
-                    "FastSolver \"FMM\" is not yet implemented; use \"Direct\", \"GMRES\", or \"ACA\"".to_string()
-                ));
-            }
-            _ => assemble::lu_solve(&z_mat, &rhs)?,   // "Direct" (default)
         };
+
+        // Compute RCS pattern (always, not just for file output)
+        let rcs_grid = postprocess::rcs_pattern(&currents, &surf, k, &theta_deg, &phi_deg);
+        let mut pts = Vec::new();
+        for (ti, &th) in theta_deg.iter().enumerate() {
+            for (pi, &ph) in phi_deg.iter().enumerate() {
+                let rcs_m2 = rcs_grid[ti][pi];
+                let rcs_dbsm = if rcs_m2 > 1e-300 { 10.0 * rcs_m2.log10() } else { -300.0 };
+                pts.push(RcsPoint { theta_deg: th, phi_deg: ph, rcs_m2, rcs_dbsm });
+            }
+        }
+        log::info!("  RCS computed: {} angle pairs", pts.len());
+        all_rcs.push((freq, pts));
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            postprocess::write_rcs(
-                output_dir,
-                freq,
-                &currents,
-                &surf,
-                k,
-                &theta_deg,
-                &phi_deg,
-            )?;
-
+            postprocess::write_rcs(output_dir, freq, &currents, &surf, k, &theta_deg, &phi_deg)?;
             let vtk_path = output_dir
                 .join("postpro")
                 .join(format!("surface_current_{:.3e}Hz.vtk", freq));
@@ -187,5 +186,5 @@ pub fn run_with_mesh(
     log::info!("MoM solve complete. Results in {}", output_dir.display());
     #[cfg(target_arch = "wasm32")]
     log::info!("MoM solve complete.");
-    Ok(())
+    Ok(MomResult { rcs: all_rcs })
 }

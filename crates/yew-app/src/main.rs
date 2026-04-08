@@ -718,7 +718,33 @@ fn app() -> Html {
                                     }
                                 </div>
                             }
-                            if r.frequencies_hz.is_none() && r.s_params.is_none() && r.time_points.is_none() {
+                            if let Some(rd) = &r.rcs_data {
+                                <div>
+                                    <p><strong>{"RCS Pattern:"}</strong>
+                                       {format!(" {} angle points (download rcs.csv)", rd.len())}</p>
+                                    if rd.len() <= 20 {
+                                        <table class="s-param-table">
+                                            <thead><tr>
+                                                <th>{"Freq (GHz)"}</th>
+                                                <th>{"θ (°)"}</th>
+                                                <th>{"φ (°)"}</th>
+                                                <th>{"RCS (dBsm)"}</th>
+                                            </tr></thead>
+                                            <tbody>
+                                            { for rd.iter().map(|&(f, th, ph, db)| html! {
+                                                <tr>
+                                                    <td>{format!("{:.4}", f / 1e9)}</td>
+                                                    <td>{format!("{:.1}", th)}</td>
+                                                    <td>{format!("{:.1}", ph)}</td>
+                                                    <td>{format!("{:.2}", db)}</td>
+                                                </tr>
+                                            }) }
+                                            </tbody>
+                                        </table>
+                                    }
+                                </div>
+                            }
+                            if r.frequencies_hz.is_none() && r.s_params.is_none() && r.time_points.is_none() && r.rcs_data.is_none() {
                                 <p><strong>{"Energy: "}</strong>{format!("{:.6} pJ", r.energy * 1e12)}</p>
                             }
                             if r.node_count > 0 {

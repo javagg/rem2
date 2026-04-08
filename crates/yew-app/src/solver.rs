@@ -42,6 +42,8 @@ pub struct SimResult {
     pub port_voltages: Option<Vec<f64>>,
     /// Eigenmode: Q-factors per mode (dielectric loss perturbation)
     pub q_factors: Option<Vec<f64>>,
+    /// MoM/SBR: RCS pattern, (freq_hz, theta_deg, phi_deg, rcs_dbsm)
+    pub rcs_data: Option<Vec<(f64, f64, f64, f64)>>,
 }
 
 #[derive(Clone, Debug)]
@@ -92,6 +94,14 @@ fn time_series_csv(times: &[f64], voltages: &[f64]) -> String {
     out
 }
 
+fn rcs_csv(data: &[(f64, f64, f64, f64)]) -> String {
+    let mut out = String::from("freq_hz,freq_ghz,theta_deg,phi_deg,rcs_dbsm\n");
+    for &(f, th, ph, db) in data {
+        out.push_str(&format!("{},{:.6},{:.1},{:.1},{:.4}\n", f, f / 1e9, th, ph, db));
+    }
+    out
+}
+
 pub async fn run_example(key: &str) -> Result<SimRun, String> {
     let example = examples::find_example(key)
         .ok_or_else(|| format!("Unknown example: {}", key))?;
@@ -130,10 +140,19 @@ pub async fn run_example(key: &str) -> Result<SimRun, String> {
         }).collect()
     });
 
+    // Flatten rcs_data: Vec<(freq, Vec<RcsPoint>)> → Vec<(freq, theta, phi, dbsm)>
+    let rcs_data: Option<Vec<(f64, f64, f64, f64)>> = result.rcs_data.as_ref().map(|freqs| {
+        freqs.iter().flat_map(|(f, pts)| {
+            pts.iter().map(move |p| (*f, p.theta_deg, p.phi_deg, p.rcs_dbsm))
+        }).collect()
+    });
+
     let node_count = if !result.phi.is_empty() {
         result.phi.len()
     } else if let Some(pts) = &s_params {
-        pts.len() // number of frequency points for driven
+        pts.len()
+    } else if let Some(rd) = &rcs_data {
+        rd.len()
     } else {
         0
     };
@@ -189,6 +208,13 @@ pub async fn run_example(key: &str) -> Result<SimRun, String> {
         });
     }
 
+    if let Some(rd) = &rcs_data {
+        artifacts.push(OutputArtifact {
+            file_name: "rcs.csv".to_string(),
+            content: rcs_csv(rd),
+        });
+    }
+
     Ok(SimRun {
         summary: SimResult {
             energy: result.energy,
@@ -200,6 +226,7 @@ pub async fn run_example(key: &str) -> Result<SimRun, String> {
             time_points: result.time_points,
             port_voltages: result.port_voltages,
             q_factors: result.q_factors,
+            rcs_data,
         },
         artifacts,
     })
