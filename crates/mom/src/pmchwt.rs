@@ -294,11 +294,12 @@ fn assemble_k_matrix(
                                 Complex64::new(nm[2], 0.0),
                             ];
                             let n_x_curl = cross_c(&nm_c, &curl_gfn);
-                            let dot_val = fm[0]*n_x_curl[0].re
-                                        + fm[1]*n_x_curl[1].re
-                                        + fm[2]*n_x_curl[2].re;
+                            let dot_val = Complex64::new(
+                                fm[0]*n_x_curl[0].re + fm[1]*n_x_curl[1].re + fm[2]*n_x_curl[2].re,
+                                fm[0]*n_x_curl[0].im + fm[1]*n_x_curl[1].im + fm[2]*n_x_curl[2].im,
+                            );
 
-                            curl_term += Complex64::new(dot_val, 0.0)
+                            curl_term += dot_val
                                        * (wm * wn * 4.0 * face_m.area * face_n.area);
                         }
                     }

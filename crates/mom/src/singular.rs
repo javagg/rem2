@@ -77,6 +77,208 @@ pub fn zmn_singular_pulse(
     }
 }
 
+// ---------------------------------------------------------------------------
+// RWG singular integrals
+// ---------------------------------------------------------------------------
+
+/// Compute the EFIE integrand ⟨f_m, L(f_n)⟩ using Sauter-Schwab/Duffy quadrature
+/// for a near-singular pair of RWG half-support faces.
+///
+/// The EFIE vector potential kernel is:
+///   A_term = ∫∫ G(r,r') f_m(r) · f_n(r') dS' dS
+///   Phi_term = ∫∫ G(r,r') divS_fm · divS_fn dS' dS  (scalar)
+///
+/// Both are integrated with singular-safe quadrature when r and r' are on
+/// coincident, shared-edge, or shared-vertex triangles.
+///
+/// Returns (a_term, phi_term) as Complex64 values.
+/// The caller assembles: Z[m,n] += -jωμ (a_term - inv_omega_eps/omega_mu * phi_term)
+pub fn zmn_efie_rwg_singular(
+    face_m: &TriFace,
+    face_n: &TriFace,
+    fm_fn: &dyn Fn(&[f64; 3], &[f64; 3]) -> (f64, f64),  // (f_m·f_n, div_m*div_n) at (r,r')
+    nodes: &[[f64; 3]],
+    k: f64,
+    n_gauss: usize,
+) -> (Complex64, Complex64) {
+    let pair = classify_pair(face_m, face_n);
+    match pair {
+        TriPairType::Identical => {
+            rwg_efie_duffy_self(face_m, fm_fn, nodes, k, n_gauss)
+        }
+        TriPairType::SharedEdge => {
+            rwg_efie_sauter_schwab_edge(face_m, face_n, fm_fn, nodes, k, n_gauss)
+        }
+        TriPairType::SharedVertex => {
+            rwg_efie_sauter_schwab_vertex(face_m, face_n, fm_fn, nodes, k, n_gauss)
+        }
+        TriPairType::Disjoint => {
+            panic!("zmn_efie_rwg_singular called on disjoint pair");
+        }
+    }
+}
+
+/// Duffy self-integral for RWG EFIE (identical faces).
+fn rwg_efie_duffy_self(
+    face: &TriFace,
+    fm_fn: &dyn Fn(&[f64; 3], &[f64; 3]) -> (f64, f64),
+    nodes: &[[f64; 3]],
+    k: f64,
+    n_gauss: usize,
+) -> (Complex64, Complex64) {
+    let (gl_pts, gl_wts) = gauss_legendre_1d(n_gauss);
+    let [i0, i1, i2] = face.nodes;
+    let v = [nodes[i0], nodes[i1], nodes[i2]];
+    let area = face.area;
+
+    let mut a_sum = Complex64::ZERO;
+    let mut phi_sum = Complex64::ZERO;
+
+    for &pivot in &[0usize, 1, 2] {
+        let va = &v[pivot];
+        let vb = &v[(pivot + 1) % 3];
+        let vc = &v[(pivot + 2) % 3];
+        let area_sub = sub_triangle_area(va, vb, vc);
+
+        // Outer loop: observation point r (standard Gauss on face)
+        for (bm_pt_idx, &wm) in gl_pts.iter().enumerate() {
+            // Use face-level Gauss for outer (observation)
+            for (bm_pt_jdx, &wm2) in gl_pts.iter().enumerate() {
+                let bary_m = [(1.0 - wm) * (1.0 - wm2), (1.0 - wm) * wm2, wm];
+                let rm = bary_to_cart(&bary_m, &v);
+                let wm_combined = wm * wm2 * area * 4.0;
+                let _ = wm_combined; // used below
+
+                // Inner Duffy loop: source point r' (Duffy-transformed on same face)
+                for (&rho, &w_rho) in gl_pts.iter().zip(gl_wts.iter()) {
+                    for (&theta, &w_theta) in gl_pts.iter().zip(gl_wts.iter()) {
+                        let rp = interp3(va, vb, vc, rho, theta);
+                        let g = green3d(&rm, &rp, k);
+                        let jac_inner = 4.0 * area_sub * rho;
+                        let (dot_ff, div_prod) = fm_fn(&rm, &rp);
+                        let weight = wm * wm2 * w_rho * w_theta * jac_inner * (area * 4.0);
+                        let _ = (bm_pt_idx, bm_pt_jdx);
+                        a_sum   += g * dot_ff   * weight;
+                        phi_sum += g * div_prod * weight;
+                    }
+                }
+            }
+        }
+    }
+
+    (a_sum, phi_sum)
+}
+
+/// Sauter-Schwab shared-edge for RWG EFIE.
+fn rwg_efie_sauter_schwab_edge(
+    face_m: &TriFace,
+    face_n: &TriFace,
+    fm_fn: &dyn Fn(&[f64; 3], &[f64; 3]) -> (f64, f64),
+    nodes: &[[f64; 3]],
+    k: f64,
+    n_gauss: usize,
+) -> (Complex64, Complex64) {
+    let shared: Vec<usize> = face_m.nodes.iter()
+        .filter(|&&nm| face_n.nodes.contains(&nm))
+        .copied().collect();
+    let unshared_m = face_m.nodes.iter().find(|&&nm| !shared.contains(&nm)).copied().unwrap();
+    let unshared_n = face_n.nodes.iter().find(|&&nn| !shared.contains(&nn)).copied().unwrap();
+
+    let vm = [nodes[shared[0]], nodes[shared[1]], nodes[unshared_m]];
+    let vn = [nodes[shared[0]], nodes[shared[1]], nodes[unshared_n]];
+    let area_m = sub_triangle_area(&vm[0], &vm[1], &vm[2]);
+    let area_n = sub_triangle_area(&vn[0], &vn[1], &vn[2]);
+
+    let (gl, gw) = gauss_legendre_1d(n_gauss);
+    let mut a_sum = Complex64::ZERO;
+    let mut phi_sum = Complex64::ZERO;
+
+    for region in 0usize..5 {
+        for (&x1, &w1) in gl.iter().zip(gw.iter()) {
+            for (&x2, &w2) in gl.iter().zip(gw.iter()) {
+                for (&x3, &w3) in gl.iter().zip(gw.iter()) {
+                    for (&x4, &w4) in gl.iter().zip(gw.iter()) {
+                        let (xi1, xi2, eta1, eta2, jac_extra) = match region {
+                            0 => (x1, x1*x2, x1*x3, x1*x3*x4, x1*x1*x1*x3),
+                            1 => (x1, x1*x2, x1*x3*x4, x1*x3, x1*x1*x1*x3),
+                            2 => (x1*x2, x1, x1*x3, x1*x3*x4, x1*x1*x1*x3),
+                            3 => (x1*x2, x1, x1*x3*x4, x1*x3, x1*x1*x1*x3),
+                            _ => (x1, x1*x2*x3, x1*x2, x1*x4, x1*x1*x1*x2),
+                        };
+                        let bm = [1.0-xi1, xi1-xi2, xi2];
+                        let bn = [1.0-eta1, eta1-eta2, eta2];
+                        if bm[0] < 0.0 || bm[1] < 0.0 || bm[2] < 0.0 { continue; }
+                        if bn[0] < 0.0 || bn[1] < 0.0 || bn[2] < 0.0 { continue; }
+
+                        let rm = bary_to_cart(&bm, &vm);
+                        let rn = bary_to_cart(&bn, &vn);
+                        let g = green3d(&rm, &rn, k);
+                        let jac = jac_extra * 4.0 * area_m * 4.0 * area_n;
+                        let (dot_ff, div_prod) = fm_fn(&rm, &rn);
+                        let weight = w1 * w2 * w3 * w4 * jac;
+                        a_sum   += g * dot_ff   * weight;
+                        phi_sum += g * div_prod * weight;
+                    }
+                }
+            }
+        }
+    }
+
+    (a_sum, phi_sum)
+}
+
+/// Sauter-Schwab shared-vertex for RWG EFIE.
+fn rwg_efie_sauter_schwab_vertex(
+    face_m: &TriFace,
+    face_n: &TriFace,
+    fm_fn: &dyn Fn(&[f64; 3], &[f64; 3]) -> (f64, f64),
+    nodes: &[[f64; 3]],
+    k: f64,
+    n_gauss: usize,
+) -> (Complex64, Complex64) {
+    let shared = face_m.nodes.iter()
+        .find(|&&nm| face_n.nodes.contains(&nm))
+        .copied().unwrap();
+    let vm = reorder_with_first(face_m.nodes, shared, nodes);
+    let vn = reorder_with_first(face_n.nodes, shared, nodes);
+    let area_m = sub_triangle_area(&vm[0], &vm[1], &vm[2]);
+    let area_n = sub_triangle_area(&vn[0], &vn[1], &vn[2]);
+
+    let (gl, gw) = gauss_legendre_1d(n_gauss);
+    let mut a_sum = Complex64::ZERO;
+    let mut phi_sum = Complex64::ZERO;
+
+    for region in 0usize..2 {
+        for (&x1, &w1) in gl.iter().zip(gw.iter()) {
+            for (&x2, &w2) in gl.iter().zip(gw.iter()) {
+                for (&x3, &w3) in gl.iter().zip(gw.iter()) {
+                    for (&x4, &w4) in gl.iter().zip(gw.iter()) {
+                        let (xi1, xi2, eta1, eta2, jac_extra) = match region {
+                            0 => (x1, x1*x2, x1*x3, x1*x3*x4, x1*x1*x1*x3),
+                            _ => (x1*x2, x1*x2*x3, x1, x1*x4, x1*x1*x2),
+                        };
+                        let bm = [1.0-xi1, xi1-xi2, xi2];
+                        let bn = [1.0-eta1, eta1-eta2, eta2];
+                        if bm[0] < 0.0 || bm[1] < 0.0 || bm[2] < 0.0 { continue; }
+                        if bn[0] < 0.0 || bn[1] < 0.0 || bn[2] < 0.0 { continue; }
+
+                        let rm = bary_to_cart(&bm, &vm);
+                        let rn = bary_to_cart(&bn, &vn);
+                        let g = green3d(&rm, &rn, k);
+                        let jac = jac_extra * 4.0 * area_m * 4.0 * area_n;
+                        let (dot_ff, div_prod) = fm_fn(&rm, &rn);
+                        let weight = w1 * w2 * w3 * w4 * jac;
+                        a_sum   += g * dot_ff   * weight;
+                        phi_sum += g * div_prod * weight;
+                    }
+                }
+            }
+        }
+    }
+
+    (a_sum, phi_sum)
+}
+
 /// Convenience wrapper used by the assembler for the diagonal self-term.
 /// Returns Z_self = -jωμ₀ * ∫∫ G dS' dS * (nothing — caller multiplies).
 pub fn zmn_self_duffy_pulse(

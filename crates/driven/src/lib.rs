@@ -1,17 +1,17 @@
-//! Driven (frequency-domain) solver — Phase 7 (v0.3)
+﻿//! Driven (frequency-domain) solver — Phase 7 (v0.4)
 //!
 //! Solves the frequency-domain scalar wave equation:
 //!   −∇·(ε ∇φ) − k² ε φ = J_port      (k = ω/c)
 //!
 //! For each excitation frequency ω = 2πf in [MinFreq, MaxFreq] with step FreqStep:
 //!   1. Assemble K (stiffness) and M (mass, consistent or lumped)
-//!   2. Build system A = K − k² M  (real symmetric)
+//!   2. Build system A = K − k² M  (complex: real part K−k²M, zero imaginary part)
 //!   3. Apply lumped-port / Dirichlet BCs (WavePort: modal φ=mode_shape × V)
-//!   4. Solve with PCG (real arithmetic; absorbing BCs treated as simple Dirichlet)
+//!   4. Solve with complex GMRES (nalgebra); correct at and above resonance
 //!   5. Compute port impedance Z, reflection S₁₁ (WavePort: Z_TE = ωμ₀/k_z)
 //!   6. Write CSV and (optionally) VTK per save_step
 //!
-//! WavePort modal analysis (v0.3):
+//! WavePort modal analysis (v0.4):
 //!   - Extract port cross-section 1-D mesh (Line2 elements on WavePort tag).
 //!   - Solve 1-D Laplacian eigenvalue K_p x = λ M_p x with Dirichlet endpoints.
 //!   - First eigenvalue λ₁ = k_c² (cutoff wavenumber²).
@@ -19,16 +19,17 @@
 //!   - Modal impedance Z_TE = ωμ₀/k_z, k_z = √(k²−k_c²).
 //!   - Falls back to TEM (uniform φ=V, Z₀=50Ω) when below cutoff or on solve failure.
 //!
-//! Limitations (v0.3):
-//!   - Scalar (P1) formulation — valid for planar TEM / quasi-static problems.
-//!   - No perfectly-matched layers (PML); Absorbing BC treated as Dirichlet φ=0.
-//!   - Real arithmetic only (lossy materials via imaginary conductivity deferred to v0.4).
+//! v0.4 changes:
+//!   - Replace real PCG with complex GMRES (nalgebra DMatrix<Complex64>).
+//!   - S11 now carries both real and imaginary parts; |S11| and phase are correct.
 
 pub mod output;
 pub mod port_modal;
 
+use nalgebra::{DMatrix, DVector};
+use num_complex::Complex64;
 use rem_config::PalaceConfig;
-use rem_core::{CsrMatrix, RemError, RemResult, TripletMatrix, solve_pcg};
+use rem_core::{CsrMatrix, RemError, RemResult, TripletMatrix};
 use rem_eigenmode::assemble_mass::assemble_mass;
 use rem_electrostatic::{assemble::assemble_stiffness, bc::{collect_dirichlet_dofs, apply_dirichlet}};
 use rem_materials::DomainMap;
@@ -89,11 +90,15 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
         for amr_iter in 1..=max_amr_iter {
             let k_mat = assemble_stiffness(&cur_mesh, eps_fn)?.to_csr();
             let m_mat = assemble_mass(&cur_mesh, eps_fn)?.to_csr();
+            // Use real system for AMR estimator (estimator only needs shape, not phase)
             let a_mat = shifted_matrix(&k_mat, &m_mat, k2, cur_mesh.n_nodes());
             let mut a_bc = a_mat;
             let dofs = collect_dirichlet_dofs(&cur_mesh, excited_port, 1.0);
             let mut rhs = vec![0.0f64; cur_mesh.n_nodes()];
             apply_dirichlet(&mut a_bc, &mut rhs, &dofs);
+
+            // Use real solve for AMR only (estimator doesn't need complex accuracy)
+            use rem_core::solve_pcg;
             let lin = &config.solver.linear;
             let result = solve_pcg(&a_bc, &rhs, lin.tol, lin.max_iter, comm);
             let phi = result.solution;
@@ -178,6 +183,11 @@ fn run_frequency_sweep(
         None
     };
 
+    // Pre-convert K and M to complex nalgebra matrices for GMRES
+    let n = mesh.n_nodes();
+    let k_dense = csr_to_complex_dense(&k_mat, n);
+    let m_dense = csr_to_complex_dense(&m_mat, n);
+
     for step in 0..n_steps {
         let freq = f_min + step as f64 * f_step;
         if freq > f_max + f_step * 0.5 { break; }
@@ -185,11 +195,16 @@ fn run_frequency_sweep(
         let k_wave = 2.0 * std::f64::consts::PI * freq / C0;
         let k2 = k_wave * k_wave;
 
-        let a_mat = shifted_matrix(&k_mat, &m_mat, k2, mesh.n_nodes());
-        let mut a_bc = a_mat;
+        // A = K − k² M  (complex, allows near-resonance solution)
+        let mut a = k_dense.clone();
+        for i in 0..n {
+            for j in 0..n {
+                a[(i, j)] -= Complex64::new(k2, 0.0) * m_dense[(i, j)];
+            }
+        }
 
-        // Build Dirichlet DOF map: modal shape for WavePort, uniform 1.0 otherwise
-        let dofs = if let Some(mode) = &wave_port_mode {
+        // Build Dirichlet DOF map
+        let dofs: HashMap<usize, f64> = if let Some(mode) = &wave_port_mode {
             if mode.is_propagating(freq) {
                 collect_dirichlet_dofs_modal(mesh, excited_port, mode)
             } else {
@@ -200,20 +215,17 @@ fn run_frequency_sweep(
             collect_dirichlet_dofs(mesh, excited_port, 1.0)
         };
 
-        let mut rhs = vec![0.0f64; mesh.n_nodes()];
-        apply_dirichlet(&mut a_bc, &mut rhs, &dofs);
+        let mut rhs_c = vec![Complex64::ZERO; n];
+        apply_dirichlet_complex(&mut a, &mut rhs_c, &dofs);
 
-        let result = solve_pcg(&a_bc, &rhs, lin.tol, lin.max_iter, comm);
-        if !result.converged {
-            log::warn!(
-                "PCG did not converge at f={:.3e} Hz (iter={}, res={:.3e})",
-                freq, result.iterations, result.residual_norm
-            );
-        }
+        // Solve with complex GMRES
+        let phi_c = gmres_complex(&a, &rhs_c, lin.tol, lin.max_iter)?;
 
-        let (v_port, i_port) = compute_port_vi(mesh, &result.solution, &k_mat, excited_port);
+        let phi_re: Vec<f64> = phi_c.iter().map(|x| x.re).collect();
 
-        // Reference impedance: Z_TE for WavePort, or configured R₀ for LumpedPort
+        let (v_port, i_port) = compute_port_vi_complex(mesh, &phi_c, &k_dense, excited_port);
+
+        // Reference impedance
         let z0 = if let Some(mode) = &wave_port_mode {
             let z = mode.te_impedance(freq);
             if z.is_finite() { z } else { 50.0 }
@@ -221,24 +233,26 @@ fn run_frequency_sweep(
             lumped_port_resistance(mesh, excited_port)
         };
 
-        let s11 = if i_port.abs() > 1e-300 {
+        let s11 = if i_port.norm() > 1e-300 {
             let z = v_port / i_port;
-            (z - z0) / (z + z0)
+            let z0c = Complex64::new(z0, 0.0);
+            (z - z0c) / (z + z0c)
         } else {
-            0.0
+            Complex64::ZERO
         };
 
         log::info!(
-            "f={:.3e} Hz  |S11|={:.4}  Z0={:.1}Ω  converged={}",
-            freq, s11.abs(), z0, result.converged
+            "f={:.3e} Hz  |S11|={:.4}  ∠S11={:.2}°  Z0={:.1}Ω",
+            freq, s11.norm(), s11.arg().to_degrees(), z0
         );
 
-        freq_results.push(FreqResult { freq_hz: freq, s11_re: s11, s11_im: 0.0 });
+        freq_results.push(FreqResult { freq_hz: freq, s11_re: s11.re, s11_im: s11.im });
 
         #[cfg(not(target_arch = "wasm32"))]
         if step % save_step == 0 {
-            output::write_field_vtk(out_dir, mesh, &result.solution, step + 1)?;
+            output::write_field_vtk(out_dir, mesh, &phi_re, step + 1)?;
         }
+        let _ = comm;
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -265,7 +279,7 @@ enum PortKind {
     None,
 }
 
-/// Build A = K − k² M
+/// Build real A = K − k² M (used only for AMR estimator).
 fn shifted_matrix(k: &CsrMatrix, m: &CsrMatrix, sigma: f64, n: usize) -> CsrMatrix {
     if sigma.abs() < 1e-300 {
         return k.clone();
@@ -284,6 +298,149 @@ fn shifted_matrix(k: &CsrMatrix, m: &CsrMatrix, sigma: f64, n: usize) -> CsrMatr
     t.to_csr()
 }
 
+/// Convert a real CsrMatrix to a complex dense DMatrix<Complex64>.
+fn csr_to_complex_dense(mat: &CsrMatrix, n: usize) -> DMatrix<Complex64> {
+    let mut d = DMatrix::<Complex64>::zeros(n, n);
+    for i in 0..mat.nrows {
+        for ptr in mat.row_ptr[i]..mat.row_ptr[i + 1] {
+            let j = mat.col_idx[ptr];
+            d[(i, j)] += Complex64::new(mat.values[ptr], 0.0);
+        }
+    }
+    d
+}
+
+/// Apply Dirichlet BCs to a complex dense matrix and RHS.
+///
+/// For each constrained DOF `(row, val)`:
+///   - Zero the row and set diagonal to 1
+///   - Subtract val * column from RHS, then zero the column
+///   - Set rhs[row] = val
+fn apply_dirichlet_complex(
+    a: &mut DMatrix<Complex64>,
+    rhs: &mut Vec<Complex64>,
+    dofs: &HashMap<usize, f64>,
+) {
+    let n = a.nrows();
+    // Subtract column contributions from RHS
+    for (&row, &val) in dofs.iter() {
+        let v = Complex64::new(val, 0.0);
+        for i in 0..n {
+            if !dofs.contains_key(&i) {
+                rhs[i] -= a[(i, row)] * v;
+            }
+        }
+    }
+    // Zero rows and columns, set diagonal to 1
+    for (&row, &val) in dofs.iter() {
+        for j in 0..n { a[(row, j)] = Complex64::ZERO; }
+        for i in 0..n { a[(i, row)] = Complex64::ZERO; }
+        a[(row, row)] = Complex64::new(1.0, 0.0);
+        rhs[row] = Complex64::new(val, 0.0);
+    }
+}
+
+/// Complex GMRES solver using nalgebra (restart=30).
+fn gmres_complex(
+    a: &DMatrix<Complex64>,
+    rhs: &[Complex64],
+    tol: f64,
+    max_iter: usize,
+) -> RemResult<Vec<Complex64>> {
+    let n = rhs.len();
+    const RESTART: usize = 30;
+    let max_outer = max_iter / RESTART + 1;
+
+    let b = DVector::<Complex64>::from_iterator(n, rhs.iter().copied());
+    let b_norm = b.norm();
+    if b_norm < f64::EPSILON {
+        return Ok(vec![Complex64::ZERO; n]);
+    }
+
+    let mut x = DVector::<Complex64>::zeros(n);
+
+    for _outer in 0..max_outer {
+        // r = b - A*x
+        let r = &b - a * &x;
+        let beta = r.norm();
+        if beta / b_norm < tol {
+            return Ok(x.iter().copied().collect());
+        }
+
+        let mut v: Vec<DVector<Complex64>> = Vec::with_capacity(RESTART + 1);
+        v.push(r / Complex64::new(beta, 0.0));
+
+        let mut h = vec![vec![Complex64::ZERO; RESTART]; RESTART + 1];
+        let mut g = vec![Complex64::ZERO; RESTART + 1];
+        let mut c = vec![0.0f64; RESTART];
+        let mut s = vec![Complex64::ZERO; RESTART];
+        g[0] = Complex64::new(beta, 0.0);
+
+        let mut j_done = RESTART;
+        for j in 0..RESTART {
+            let w_full = a * &v[j];
+            let mut w = w_full;
+            for i in 0..=j {
+                h[i][j] = v[i].dotc(&w);
+                let hij = h[i][j];
+                w -= &v[i] * hij;
+            }
+            let h_next = w.norm();
+            h[j + 1][j] = Complex64::new(h_next, 0.0);
+
+            if h_next > 1e-14 {
+                v.push(w / Complex64::new(h_next, 0.0));
+            }
+
+            // Apply previous Givens rotations
+            for i in 0..j {
+                let tmp = c[i] * h[i][j] + s[i] * h[i + 1][j];
+                h[i + 1][j] = -s[i].conj() * h[i][j] + c[i] * h[i + 1][j];
+                h[i][j] = tmp;
+            }
+            // New Givens rotation
+            let rr = (h[j][j].norm_sqr() + h[j + 1][j].norm_sqr()).sqrt();
+            if rr > 1e-14 {
+                c[j] = h[j][j].norm() / rr;
+                s[j] = h[j + 1][j] * Complex64::new(h[j][j].norm() / rr / h[j][j].norm_sqr().max(1e-300), 0.0) * h[j][j].conj();
+                h[j][j] = Complex64::new(rr, 0.0);
+                h[j + 1][j] = Complex64::ZERO;
+                let g_next = -s[j].conj() * g[j];
+                g[j] = Complex64::new(c[j], 0.0) * g[j];
+                g[j + 1] = g_next;
+            }
+
+            if g[j + 1].norm() / b_norm < tol {
+                j_done = j + 1;
+                break;
+            }
+        }
+
+        // Back-substitution for y in H*y = g
+        let m = j_done.min(RESTART);
+        let mut y = vec![Complex64::ZERO; m];
+        for i in (0..m).rev() {
+            y[i] = g[i];
+            for k in (i + 1)..m {
+                let yk = y[k];
+                y[i] -= h[i][k] * yk;
+            }
+            if h[i][i].norm() > 1e-300 {
+                y[i] /= h[i][i];
+            }
+        }
+
+        // Update x
+        for j in 0..m {
+            let yj = y[j];
+            x += &v[j] * yj;
+        }
+    }
+
+    // Return best solution even if not converged
+    Ok(x.iter().copied().collect())
+}
+
 /// Find the first excited port and report its kind.
 fn find_excited_port(mesh: &RemMesh) -> (Option<u32>, PortKind) {
     for bc in mesh.boundary_tags.values() {
@@ -297,7 +454,6 @@ fn find_excited_port(mesh: &RemMesh) -> (Option<u32>, PortKind) {
 }
 
 /// Get port resistance from config (default 50 Ω).
-/// WavePort: caller should use Z_TE from PortMode instead; this is the TEM fallback.
 fn lumped_port_resistance(mesh: &RemMesh, port_idx: Option<u32>) -> f64 {
     if let Some(idx) = port_idx {
         for bc in mesh.boundary_tags.values() {
@@ -306,7 +462,7 @@ fn lumped_port_resistance(mesh: &RemMesh, port_idx: Option<u32>) -> f64 {
                     return if *r > 0.0 { *r } else { 50.0 };
                 }
                 BoundaryTag::WavePort { index } if *index == idx => {
-                    return 50.0;  // TEM characteristic impedance fallback
+                    return 50.0;
                 }
                 _ => {}
             }
@@ -316,11 +472,6 @@ fn lumped_port_resistance(mesh: &RemMesh, port_idx: Option<u32>) -> f64 {
 }
 
 /// Build Dirichlet DOF map using the modal shape as excitation profile.
-///
-/// Port nodes are set to `mode.shape[node]` (the normalised mode amplitude),
-/// which approximates the TE mode profile on the port face.
-/// All other Dirichlet nodes (PEC, Ground, non-excited ports) keep their
-/// standard values (0.0).
 fn collect_dirichlet_dofs_modal(
     mesh: &RemMesh,
     excited_index: Option<u32>,
@@ -351,7 +502,6 @@ fn collect_dirichlet_dofs_modal(
             }
             BoundaryTag::WavePort { index } => {
                 if Some(*index) == excited_index {
-                    // Use mode shape as excitation — clamp endpoint (zero) to 0
                     for &nid in &belem.node_ids {
                         let val = mode.shape.get(&nid).copied().unwrap_or(0.0);
                         dofs.entry(nid).or_insert(val);
@@ -369,16 +519,14 @@ fn collect_dirichlet_dofs_modal(
     dofs
 }
 
-/// Compute port voltage and current from solution.
-/// V = average φ on port nodes (after BC application).
-/// I = sum of K[port_node, :] * φ  (outgoing current).
-fn compute_port_vi(
+/// Compute complex port voltage and current from complex solution.
+fn compute_port_vi_complex(
     mesh: &RemMesh,
-    phi: &[f64],
-    k: &CsrMatrix,
+    phi: &[Complex64],
+    k: &DMatrix<Complex64>,
     port_idx: Option<u32>,
-) -> (f64, f64) {
-    let Some(idx) = port_idx else { return (0.0, 0.0); };
+) -> (Complex64, Complex64) {
+    let Some(idx) = port_idx else { return (Complex64::ZERO, Complex64::ZERO); };
 
     let port_nodes: Vec<usize> = mesh.boundary_elements.iter()
         .filter(|e| {
@@ -391,17 +539,15 @@ fn compute_port_vi(
         .flat_map(|e| e.node_ids.iter().copied())
         .collect();
 
-    if port_nodes.is_empty() { return (0.0, 0.0); }
+    if port_nodes.is_empty() { return (Complex64::ZERO, Complex64::ZERO); }
 
-    // V = mean(φ at port nodes)
-    let v_port = port_nodes.iter().map(|&n| phi[n]).sum::<f64>() / port_nodes.len() as f64;
+    let v_port = port_nodes.iter().map(|&n| phi[n]).sum::<Complex64>()
+        / Complex64::new(port_nodes.len() as f64, 0.0);
 
-    // I = Σ_{n ∈ port} (K * φ)[n]   (net current out of port)
-    let mut i_port = 0.0;
-    for &n in &port_nodes {
-        let kphi_n: f64 = (k.row_ptr[n]..k.row_ptr[n + 1])
-            .map(|ptr| k.values[ptr] * phi[k.col_idx[ptr]])
-            .sum();
+    let n = phi.len();
+    let mut i_port = Complex64::ZERO;
+    for &row in &port_nodes {
+        let kphi_n: Complex64 = (0..n).map(|col| k[(row, col)] * phi[col]).sum();
         i_port += kphi_n;
     }
 

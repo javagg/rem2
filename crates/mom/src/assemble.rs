@@ -3,7 +3,7 @@
 use crate::surface_mesh::SurfaceMesh;
 use crate::quadrature::TriQuad;
 use crate::green::green3d;
-use crate::singular::{zmn_self_duffy_pulse, zmn_singular_pulse, classify_pair, TriPairType};
+use crate::singular::{zmn_self_duffy_pulse, zmn_singular_pulse, classify_pair, TriPairType, zmn_efie_rwg_singular};
 use crate::basis::rwg::RwgBasis;
 use nalgebra::{DMatrix, DVector};
 use num_complex::Complex64;
@@ -189,21 +189,37 @@ fn zmn_efie_rwg(
             let face_m = &surf.faces[m_face];
             let face_n = &surf.faces[n_face];
             let div_n  = bn.divergence(surf, n_plus);
+            let div_m  = bm.divergence(surf, m_plus);
 
-            for (bm_pt, &wm) in quad.bary.iter().zip(quad.weights.iter()) {
-                let rm = TriQuad::global_point(bm_pt, face_m, &surf.nodes);
-                let fm = bm.eval(&rm, surf, m_plus);
+            let pair = classify_pair(face_m, face_n);
+            if pair != TriPairType::Disjoint {
+                // Near-singular: use Sauter-Schwab / Duffy quadrature
+                // Build a closure capturing (bm, bn, m_plus, n_plus, div_m, div_n, surf)
+                let fm_fn = |rm: &[f64; 3], rn: &[f64; 3]| -> (f64, f64) {
+                    let fm  = bm.eval(rm, surf, m_plus);
+                    let fn_ = bn.eval(rn, surf, n_plus);
+                    let dot = fm[0]*fn_[0] + fm[1]*fn_[1] + fm[2]*fn_[2];
+                    (dot, div_m * div_n)
+                };
+                let (a_term, phi_term) =
+                    zmn_efie_rwg_singular(face_m, face_n, &fm_fn, &surf.nodes, k, 4);
+                val += a_term - inv_omega_eps0 / omega_mu0 * phi_term;
+            } else {
+                // Well-separated: standard Gauss quadrature
+                for (bm_pt, &wm) in quad.bary.iter().zip(quad.weights.iter()) {
+                    let rm = TriQuad::global_point(bm_pt, face_m, &surf.nodes);
+                    let fm = bm.eval(&rm, surf, m_plus);
 
-                for (bn_pt, &wn) in quad.bary.iter().zip(quad.weights.iter()) {
-                    let rn = TriQuad::global_point(bn_pt, face_n, &surf.nodes);
-                    let fn_ = bn.eval(&rn, surf, n_plus);
-                    let g  = green3d(&rm, &rn, k);
+                    for (bn_pt, &wn) in quad.bary.iter().zip(quad.weights.iter()) {
+                        let rn = TriQuad::global_point(bn_pt, face_n, &surf.nodes);
+                        let fn_ = bn.eval(&rn, surf, n_plus);
+                        let g  = green3d(&rm, &rn, k);
 
-                    let dot_ff = fm[0]*fn_[0] + fm[1]*fn_[1] + fm[2]*fn_[2];
-                    let div_m  = bm.divergence(surf, m_plus);
+                        let dot_ff = fm[0]*fn_[0] + fm[1]*fn_[1] + fm[2]*fn_[2];
 
-                    let integrand = g * (dot_ff - inv_omega_eps0 / omega_mu0 * div_m * div_n);
-                    val += integrand * (wm * wn * 4.0 * face_m.area * face_n.area);
+                        let integrand = g * (dot_ff - inv_omega_eps0 / omega_mu0 * div_m * div_n);
+                        val += integrand * (wm * wn * 4.0 * face_m.area * face_n.area);
+                    }
                 }
             }
         }
@@ -305,9 +321,12 @@ fn zmn_mfie_rwg(
                         Complex64::new(nm[2], 0.0),
                     ];
                     let n_x_curl = cross_c(&nm_c, &curl_gfn);
-                    let dot_val =   fm[0]*n_x_curl[0].re + fm[1]*n_x_curl[1].re + fm[2]*n_x_curl[2].re;
+                    let dot_val = Complex64::new(
+                        fm[0]*n_x_curl[0].re + fm[1]*n_x_curl[1].re + fm[2]*n_x_curl[2].re,
+                        fm[0]*n_x_curl[0].im + fm[1]*n_x_curl[1].im + fm[2]*n_x_curl[2].im,
+                    );
 
-                    curl_term += Complex64::new(dot_val, 0.0)
+                    curl_term += dot_val
                                * (wm * wn * 4.0 * face_m.area * face_n.area);
                 }
             }
