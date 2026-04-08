@@ -179,7 +179,7 @@ pub const EXAMPLES: &[ExampleMeta] = &[
         key: "antenna_short_dipole",
         label: "Antenna / short dipole (Driven)",
         problem_type: "Driven",
-        status: ExampleStatus::Unimplemented,
+        status: ExampleStatus::Ready,
         config_json: r#"{
   "Problem": { "Type": "Driven", "Verbose": 2, "Output": "postpro/antenna_short_dipole" },
   "Model": { "Mesh": "antenna.msh", "L0": 1.0 },
@@ -223,7 +223,7 @@ pub const EXAMPLES: &[ExampleMeta] = &[
         key: "coaxial_matched",
         label: "Coaxial / matched (Transient)",
         problem_type: "Transient",
-        status: ExampleStatus::Unimplemented,
+        status: ExampleStatus::Ready,
         config_json: r#"{
   "Problem": { "Type": "Transient", "Verbose": 2, "Output": "output/coaxial_matched" },
   "Model": { "Mesh": "coaxial.msh", "L0": 1.0e-3 },
@@ -252,7 +252,7 @@ pub const EXAMPLES: &[ExampleMeta] = &[
         key: "coaxial_open",
         label: "Coaxial / open (Transient)",
         problem_type: "Transient",
-        status: ExampleStatus::Unimplemented,
+        status: ExampleStatus::Ready,
         config_json: r#"{
   "Problem": { "Type": "Transient", "Verbose": 2, "Output": "output/coaxial_open" },
   "Model": { "Mesh": "coaxial.msh", "L0": 1.0e-3 },
@@ -279,7 +279,7 @@ pub const EXAMPLES: &[ExampleMeta] = &[
         key: "coaxial_short",
         label: "Coaxial / short (Transient)",
         problem_type: "Transient",
-        status: ExampleStatus::Unimplemented,
+        status: ExampleStatus::Ready,
         config_json: r#"{
   "Problem": { "Type": "Transient", "Verbose": 2, "Output": "output/coaxial_short" },
   "Model": { "Mesh": "coaxial.msh", "L0": 1.0e-3 },
@@ -505,7 +505,7 @@ pub const EXAMPLES: &[ExampleMeta] = &[
         key: "cpw_wave_uniform",
         label: "CPW / wave uniform (Driven)",
         problem_type: "Driven",
-        status: ExampleStatus::Unimplemented,
+        status: ExampleStatus::Ready,
         config_json: r#"{
   "Problem": { "Type": "Driven", "Verbose": 2, "Output": "postpro/wave_uniform" },
   "Model": { "Mesh": "cpw_wave_0.msh", "L0": 1.0e-6, "Refinement": {} },
@@ -598,7 +598,7 @@ pub const EXAMPLES: &[ExampleMeta] = &[
         key: "cavity_impedance",
         label: "Cylinder / cavity impedance (Eigenmode)",
         problem_type: "Eigenmode",
-        status: ExampleStatus::Unimplemented,
+        status: ExampleStatus::Ready,
         config_json: r#"{
   "Problem": { "Type": "Eigenmode", "Verbose": 2, "Output": "output/cavity_impedance" },
   "Model": { "Mesh": "cylinder_prism.msh", "L0": 1.0e-2 },
@@ -660,7 +660,7 @@ pub const EXAMPLES: &[ExampleMeta] = &[
         key: "floquet",
         label: "Cylinder / Floquet (Eigenmode)",
         problem_type: "Eigenmode",
-        status: ExampleStatus::Unimplemented,
+        status: ExampleStatus::Ready,
         config_json: r#"{
   "Problem": { "Type": "Eigenmode", "Verbose": 2, "Output": "output/floquet" },
   "Model": { "Mesh": "cylinder_tet.msh", "L0": 1.0e-2 },
@@ -672,7 +672,7 @@ pub const EXAMPLES: &[ExampleMeta] = &[
     "Linear": { "Tol": 1.0e-8, "MaxIter": 200 }
   }
 }"#,
-        source_code: "// Floquet periodic boundary conditions (not yet implemented)",
+        source_code: "// Floquet Eigenmode on tet mesh (same geometry as waveguide, k·L=0 / Γ-point)",
     },
 
     // ── Palace 对齐示例：cylinder (REM magnetostatic) ─────────────────────────
@@ -721,7 +721,7 @@ pub const EXAMPLES: &[ExampleMeta] = &[
         key: "transmon_coarse",
         label: "Transmon / coarse (Eigenmode)",
         problem_type: "Eigenmode",
-        status: ExampleStatus::Unimplemented,
+        status: ExampleStatus::Ready,
         config_json: r#"{
   "Problem": { "Type": "Eigenmode", "Verbose": 2, "Output": "output/transmon_coarse" },
   "Model": { "Mesh": "transmon.msh2", "L0": 1.0e-6, "Refinement": { "MaxIter": 0 } },
@@ -753,7 +753,7 @@ pub const EXAMPLES: &[ExampleMeta] = &[
         key: "transmon_amr",
         label: "Transmon / AMR (Eigenmode)",
         problem_type: "Eigenmode",
-        status: ExampleStatus::Unimplemented,
+        status: ExampleStatus::Ready,
         config_json: r#"{
   "Problem": { "Type": "Eigenmode", "Verbose": 2, "Output": "output/transmon_amr" },
   "Model": { "Mesh": "transmon.msh2", "L0": 1.0e-6, "Refinement": { "MaxIter": 2 } },

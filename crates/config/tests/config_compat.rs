@@ -156,3 +156,44 @@ fn mixed_attribute_specs() {
     // (Current fixture uses a single string; test that it parses without error)
     assert!(cfg.boundaries.pec.is_some());
 }
+
+// ── Anisotropic material (array Permittivity/Permeability) ───────────────────
+
+#[test]
+fn anisotropic_material_array_permittivity() {
+    let s = r#"{
+        "Problem": { "Type": "Driven" },
+        "Model": { "Mesh": "m.msh" },
+        "Domains": {
+            "Materials": [{
+                "Attributes": [1],
+                "Permittivity": [9.3, 9.3, 11.5],
+                "Permeability": [0.99999975, 0.99999975, 0.99999979],
+                "LossTan": [3.0e-5, 3.0e-5, 8.6e-5]
+            }]
+        }
+    }"#;
+    let cfg = load_config_from_str(s, ConfigFormat::Json)
+        .expect("anisotropic array material should parse (first element used)");
+    let mat = &cfg.domains.materials[0];
+    // Should take the first component of each array
+    assert!((mat.permittivity - 9.3).abs() < 1e-9, "permittivity={}", mat.permittivity);
+    assert!((mat.permeability - 0.99999975).abs() < 1e-9, "permeability={}", mat.permeability);
+    assert!((mat.loss_tangent - 3.0e-5).abs() < 1e-12, "loss_tangent={}", mat.loss_tangent);
+}
+
+#[test]
+fn scalar_material_still_works() {
+    let s = r#"{
+        "Problem": { "Type": "Eigenmode" },
+        "Model": { "Mesh": "m.msh" },
+        "Domains": {
+            "Materials": [{ "Attributes": [1], "Permittivity": 2.08, "LossTan": 4.0e-4 }]
+        }
+    }"#;
+    let cfg = load_config_from_str(s, ConfigFormat::Json)
+        .expect("scalar material should still parse");
+    let mat = &cfg.domains.materials[0];
+    assert!((mat.permittivity - 2.08).abs() < 1e-9);
+    assert!((mat.loss_tangent - 4.0e-4).abs() < 1e-12);
+}

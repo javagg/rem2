@@ -1,6 +1,45 @@
 use crate::preprocess::expand_ranges;
 use serde::{Deserialize, Deserializer};
 
+/// Deserialize a JSON value that may be either a scalar `f64` or an array `[f64, ...]`.
+/// When an array is given, the first element is used (anisotropic → isotropic fallback).
+fn deserialize_scalar_or_first<'de, D>(d: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::{self, Visitor};
+    use std::fmt;
+
+    struct ScalarOrFirstVisitor;
+
+    impl<'de> Visitor<'de> for ScalarOrFirstVisitor {
+        type Value = f64;
+
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            write!(f, "a float or an array of floats")
+        }
+
+        fn visit_f64<E: de::Error>(self, v: f64) -> Result<f64, E> { Ok(v) }
+        fn visit_i64<E: de::Error>(self, v: i64) -> Result<f64, E> { Ok(v as f64) }
+        fn visit_u64<E: de::Error>(self, v: u64) -> Result<f64, E> { Ok(v as f64) }
+
+        fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<f64, A::Error> {
+            match seq.next_element::<f64>()? {
+                Some(first) => {
+                    // Drain remaining elements
+                    while seq.next_element::<f64>()?.is_some() {}
+                    Ok(first)
+                }
+                None => Err(de::Error::custom("empty array for scalar field")),
+            }
+        }
+    }
+
+    d.deserialize_any(ScalarOrFirstVisitor)
+}
+
+fn default_scalar_or_first_one() -> f64 { 1.0 }
+
 // ---------------------------------------------------------------------------
 // Top-level
 // ---------------------------------------------------------------------------
@@ -177,23 +216,23 @@ pub struct MaterialSpec {
     #[serde(rename = "Attributes", deserialize_with = "deserialize_attributes")]
     pub attributes: Vec<u32>,
 
-    #[serde(rename = "Permittivity", default = "default_one")]
+    /// Accepts scalar `9.3` or anisotropic array `[9.3, 9.3, 11.5]`; array → first element used.
+    #[serde(rename = "Permittivity", default = "default_scalar_or_first_one",
+            deserialize_with = "deserialize_scalar_or_first")]
     pub permittivity: f64,
 
-    #[serde(rename = "Permeability", default = "default_one")]
+    /// Accepts scalar `1.0` or anisotropic array `[1.0, 1.0, 1.0]`; array → first element used.
+    #[serde(rename = "Permeability", default = "default_scalar_or_first_one",
+            deserialize_with = "deserialize_scalar_or_first")]
     pub permeability: f64,
 
-    /// Scalar LossTan. When Palace uses array form `[xx, yy, zz]`, only the
-    /// first element is parsed; use `loss_tan_vec` to check for array form.
-    #[serde(rename = "LossTan", default)]
+    /// Accepts scalar `3.0e-5` or anisotropic array `[3.0e-5, 3.0e-5, 8.6e-5]`; array → first element used.
+    #[serde(rename = "LossTan", default,
+            deserialize_with = "deserialize_scalar_or_first")]
     pub loss_tangent: f64,
 
-    /// Palace array form `LossTan: [xx, yy, zz]` — deserialized separately via
-    /// `#[serde(alias = "LossTan")]` workaround. REM uses the first element only.
-    #[serde(rename = "LossTanVec", default)]
-    pub loss_tan_vec: Vec<f64>,
-
-    #[serde(rename = "Conductivity", default)]
+    #[serde(rename = "Conductivity", default,
+            deserialize_with = "deserialize_scalar_or_first")]
     pub conductivity: f64,
 
     /// Palace `MaterialAxes` for anisotropic materials — accepted, not implemented.
@@ -201,8 +240,6 @@ pub struct MaterialSpec {
     #[serde(rename = "MaterialAxes", default)]
     pub material_axes: Vec<Vec<f64>>,
 }
-
-fn default_one() -> f64 { 1.0 }
 
 // ---------------------------------------------------------------------------
 // Boundaries
@@ -918,23 +955,12 @@ pub fn validate_palace_compat(cfg: &PalaceConfig) {
 
     // --- Solver.Transient ---
     if let Some(ref t) = cfg.solver.transient {
-        if !t.excitation.is_empty() && t.excitation != "none" {
+        let supported_excitations = ["", "none", "Step", "ModulatedGaussian", "Gaussian"];
+        if !t.excitation.is_empty() && !supported_excitations.contains(&t.excitation.as_str()) {
             warn_unsupported(
                 &format!("Solver.Transient.Excitation = \"{}\"", t.excitation),
-                "Custom transient excitation waveforms are not implemented; \
-                 using default excitation",
-            );
-        }
-        if t.excitation_freq > 0.0 {
-            warn_unsupported(
-                &format!("Solver.Transient.ExcitationFreq = {}", t.excitation_freq),
-                "Custom excitation frequency is not implemented; ignored",
-            );
-        }
-        if t.excitation_width > 0.0 {
-            warn_unsupported(
-                &format!("Solver.Transient.ExcitationWidth = {}", t.excitation_width),
-                "Custom excitation pulse width is not implemented; ignored",
+                "Unknown excitation waveform; supported: Step (default), ModulatedGaussian, Gaussian. \
+                 Falling back to Step.",
             );
         }
     }
@@ -944,15 +970,8 @@ pub fn validate_palace_compat(cfg: &PalaceConfig) {
         if !m.material_axes.is_empty() {
             warn_unsupported(
                 "Domains.Materials[].MaterialAxes",
-                "Anisotropic materials with material axes are not implemented; \
-                 using isotropic εᵣ/μᵣ from first component",
-            );
-        }
-        if !m.loss_tan_vec.is_empty() {
-            warn_unsupported(
-                "Domains.Materials[].LossTan (array form)",
-                "Vector LossTan for anisotropic loss is not implemented; \
-                 using scalar LossTan",
+                "Anisotropic material axes rotation is not implemented; \
+                 using isotropic εᵣ/μᵣ from first tensor component",
             );
         }
     }
@@ -973,6 +992,13 @@ pub fn validate_palace_compat(cfg: &PalaceConfig) {
     }
 
     // --- Boundaries ---
+    if !cfg.boundaries.impedance.is_empty() {
+        warn_unsupported(
+            "Boundaries.Impedance",
+            "Surface impedance (Rs/Ls/Cs) boundary conditions are not implemented; \
+             treated as PEC (lossless). Q-factor results will be approximate.",
+        );
+    }
     if !cfg.boundaries.periodic.is_empty() {
         warn_unsupported(
             "Boundaries.Periodic",
@@ -980,9 +1006,9 @@ pub fn validate_palace_compat(cfg: &PalaceConfig) {
         );
     }
     if !cfg.domains.current_dipole.is_empty() {
-        warn_unsupported(
-            "Domains.CurrentDipole",
-            "Hertzian current dipole sources are not implemented; ignored",
+        log::debug!(
+            "Domains.CurrentDipole: {} dipole source(s) will be applied as point sources in the driven solver",
+            cfg.domains.current_dipole.len()
         );
     }
     if !cfg.boundaries.postprocessing_flux.is_empty() {

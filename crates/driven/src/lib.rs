@@ -28,7 +28,7 @@ pub mod port_modal;
 
 use nalgebra::{DMatrix, DVector};
 use num_complex::Complex64;
-use rem_config::PalaceConfig;
+use rem_config::{PalaceConfig, CurrentDipoleSpec};
 use rem_core::{CsrMatrix, RemError, RemResult, TripletMatrix};
 use rem_eigenmode::assemble_mass::assemble_mass;
 use rem_electrostatic::{assemble::assemble_stiffness, bc::{collect_dirichlet_dofs, apply_dirichlet}};
@@ -217,6 +217,27 @@ fn run_frequency_sweep(
 
         let mut rhs_c = vec![Complex64::ZERO; n];
         apply_dirichlet_complex(&mut a, &mut rhs_c, &dofs);
+
+        // Add CurrentDipole source contributions to RHS
+        //
+        // For each Hertzian dipole at position r₀ with moment I·L [A·m] and direction d̂:
+        //   f_i += jω μ₀ · Moment · |d̂|  at the nearest mesh node to r₀.
+        //
+        // In the scalar wave equation −∇·ε∇φ − k²εφ = S, the current source
+        // maps to S_i = jω μ₀ J at DOF i.  We lump the point source onto the
+        // single nearest node (zeroth-order approximation; adequate for far-field).
+        if !config.domains.current_dipole.is_empty() {
+            let jw_mu0 = Complex64::new(0.0, 2.0 * std::f64::consts::PI * freq)
+                * Complex64::new(4.0 * std::f64::consts::PI * 1.0e-7, 0.0);
+            for dipole in &config.domains.current_dipole {
+                let node = nearest_node(mesh, dipole);
+                if !dofs.contains_key(&node) {
+                    let dir_mag = (dipole.direction.iter().map(|x| x * x).sum::<f64>()).sqrt();
+                    let mag = if dir_mag > 1e-300 { dir_mag } else { 1.0 };
+                    rhs_c[node] += jw_mu0 * Complex64::new(dipole.moment * mag, 0.0);
+                }
+            }
+        }
 
         // Solve with complex GMRES
         let phi_c = gmres_complex(&a, &rhs_c, lin.tol, lin.max_iter)?;
@@ -552,4 +573,21 @@ fn compute_port_vi_complex(
     }
 
     (v_port, i_port)
+}
+
+/// Find the mesh node index nearest to the dipole center position.
+fn nearest_node(mesh: &RemMesh, dipole: &CurrentDipoleSpec) -> usize {
+    let cx = dipole.center.first().copied().unwrap_or(0.0);
+    let cy = dipole.center.get(1).copied().unwrap_or(0.0);
+    let cz = dipole.center.get(2).copied().unwrap_or(0.0);
+
+    mesh.nodes.iter()
+        .enumerate()
+        .min_by(|(_, a), (_, b)| {
+            let da = (a.x - cx).powi(2) + (a.y - cy).powi(2) + (a.z - cz).powi(2);
+            let db = (b.x - cx).powi(2) + (b.y - cy).powi(2) + (b.z - cz).powi(2);
+            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|(i, _)| i)
+        .unwrap_or(0)
 }

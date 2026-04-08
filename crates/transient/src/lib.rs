@@ -13,7 +13,13 @@
 //! | `"ARKODE"` | IMEX-ARK3(2)4L[2]SA (Kennedy & Carpenter 2003) | Unconditional | 3 |
 //! | `"RungeKutta"` | Explicit RK4 (fixed step) | Conditional (CFL) | 4 |
 //!
-//! Excitation: step function f = rhs_bc for t ≥ 0 (port φ=1 Dirichlet driving term).
+//! Excitation waveforms (`Solver.Transient.Excitation`):
+//!   - `""` / `"none"` / `"Step"`: unit step at t=0 (default)
+//!   - `"ModulatedGaussian"`: Gaussian-modulated sinusoid
+//!       f(t) = exp(−(t−t0)²/(2σ²)) · cos(2π f0 t)
+//!       where f0 = ExcitationFreq [GHz], σ = ExcitationWidth/2 [ns], t0 = 5σ
+//!   - `"Gaussian"`: unmodulated Gaussian envelope
+//!       f(t) = exp(−(t−t0)²/(2σ²))
 //!
 //! Outputs:
 //!   - `postpro/port-t.csv`: time series of port voltage
@@ -33,6 +39,32 @@ use std::path::Path;
 
 fn spmv(mat: &CsrMatrix, x: &[f64], y: &mut [f64]) {
     mat.matvec(x, y, &NoComm);
+}
+
+// ─── Excitation waveforms ─────────────────────────────────────────────────────
+
+/// Evaluate the excitation amplitude at time `t` [s].
+///
+/// - `""` / `"none"` / `"Step"`: unit step (constant 1.0)
+/// - `"ModulatedGaussian"`: exp(−(t−t0)²/(2σ²)) · cos(2π f0 t)
+///   - `freq_hz`: f0 (ExcitationFreq in GHz → Hz)
+///   - `sigma_s`: σ  (ExcitationWidth/2 in ns → s)
+/// - `"Gaussian"`: exp(−(t−t0)²/(2σ²))
+fn excitation_amplitude(t: f64, kind: &str, freq_hz: f64, sigma_s: f64) -> f64 {
+    use std::f64::consts::PI;
+    match kind {
+        "" | "none" | "Step" => 1.0,
+        "ModulatedGaussian" | "Gaussian" => {
+            let t0 = 5.0 * sigma_s;
+            let envelope = (-(t - t0).powi(2) / (2.0 * sigma_s.powi(2))).exp();
+            if kind == "ModulatedGaussian" {
+                envelope * (2.0 * PI * freq_hz * t).cos()
+            } else {
+                envelope
+            }
+        }
+        _ => 1.0, // Unknown → step (warning already emitted by validate_palace_compat)
+    }
 }
 
 // ─── Entry points ────────────────────────────────────────────────────────────
@@ -92,6 +124,18 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
     let save_step = td_cfg.save_step.max(1);
     let lin = &config.solver.linear;
 
+    // Excitation parameters
+    let exc_kind = td_cfg.excitation.as_str();
+    // ExcitationFreq in GHz → Hz; ExcitationWidth in ns → s (σ = width/2)
+    let exc_freq_hz = td_cfg.excitation_freq * 1.0e9;
+    let exc_sigma_s = (td_cfg.excitation_width * 1.0e-9) / 2.0;
+
+    // Helper: scale the static rhs_bc by excitation amplitude at time t
+    let scaled_rhs = |base: &Vec<f64>, t: f64| -> Vec<f64> {
+        let amp = excitation_amplitude(t, exc_kind, exc_freq_hz, exc_sigma_s);
+        base.iter().map(|&x| x * amp).collect()
+    };
+
     let n_steps = (t_end / dt).ceil() as usize + 1;
     log::info!(
         "Transient: method={}, dt={:.3e}, T={:.3e}, n_steps={}",
@@ -119,7 +163,8 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
 
             // Initialize dvdt_0 = M^{-1} f(0)
             let mut dvdt = {
-                let r = solve_pcg(&m_bc, &rhs_bc, lin.tol, lin.max_iter, comm);
+                let f0 = scaled_rhs(&rhs_bc, 0.0);
+                let r = solve_pcg(&m_bc, &f0, lin.tol, lin.max_iter, comm);
                 r.solution
             };
 
@@ -130,8 +175,11 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
                 if h < dt * 1e-14 { break; }
                 let lhs_h = build_scaled_sum(&m_bc, alpha_m, &k_bc, alpha_f * gamma * h);
 
+                // f at interpolated time t_f = t + α_f * h
+                let t_f = t + alpha_f * h;
+                let f_f = scaled_rhs(&rhs_bc, t_f);
+
                 // rhs = f_f − (1−α_m) M dvdt − K v − α_f(1−γ) h K dvdt
-                // where f_f = rhs_bc (step excitation)
                 let mut k_dvdt = vec![0.0f64; n];
                 spmv(&k_bc, &dvdt, &mut k_dvdt);
                 let mut m_dvdt = vec![0.0f64; n];
@@ -140,7 +188,7 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
                 spmv(&k_bc, &v, &mut kv);
 
                 let rhs: Vec<f64> = (0..n).map(|i| {
-                    rhs_bc[i]
+                    f_f[i]
                     - (1.0 - alpha_m) * m_dvdt[i]
                     - kv[i]
                     - alpha_f * (1.0 - gamma) * h * k_dvdt[i]
@@ -200,7 +248,7 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
                 9247589265047.0 / 10645013368117.0,
                 2193209047091.0 / 5459859503100.0,
             ];
-            let _c: [f64; 4] = [0.0, 1767732205903.0 / 2027836641118.0, 0.6, 1.0];
+            // Stage abscissae for time-evaluation of f_E (defined inline as c_ark below)
 
             let dt_min = dt * 1e-8;
             let dt_max = dt * 10.0;
@@ -215,14 +263,14 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
                 cur_dt = cur_dt.min(t_end - t).max(dt_min);
                 if cur_dt < dt_min { break; }
 
-                // Stage 0
-                // f_E(t, v) = rhs_bc (constant source)
-                ki_e[0] = rhs_bc.clone();
+                // Stage 0: f_E at current time t
+                ki_e[0] = scaled_rhs(&rhs_bc, t);
                 // f_I(t, v) = -K v
                 spmv(&k_bc, &v, &mut ki_i[0]);
                 for x in &mut ki_i[0] { *x = -*x; }
 
                 // Stages 1..3
+                let c_ark: [f64; 4] = [0.0, 1767732205903.0 / 2027836641118.0, 0.6, 1.0];
                 let mut u_stages = vec![v.clone(); 4];
                 for s in 1..4 {
                     let mut u_s = v.clone();
@@ -233,12 +281,14 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
                         }
                     }
 
-                    // Implicit solve: (M + cur_dt * a^I_{ss} * K) dvdt_s = rhs_bc - K u_s
+                    // Implicit solve: (M + cur_dt * a^I_{ss} * K) dvdt_s = f_s - K u_s
                     let aii = ai[s][s];
+                    let t_s = t + c_ark[s] * cur_dt;
                     let lhs_s = build_scaled_sum(&m_bc, 1.0, &k_bc, cur_dt * aii);
                     let mut ku_s = vec![0.0f64; n];
                     spmv(&k_bc, &u_s, &mut ku_s);
-                    let rhs_s: Vec<f64> = (0..n).map(|i| rhs_bc[i] - ku_s[i]).collect();
+                    let f_s = scaled_rhs(&rhs_bc, t_s);
+                    let rhs_s: Vec<f64> = (0..n).map(|i| f_s[i] - ku_s[i]).collect();
 
                     let result = solve_pcg(&lhs_s, &rhs_s, lin.tol, lin.max_iter, comm);
                     ki_i[s] = result.solution;
@@ -248,8 +298,8 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
                     for (&dof, &val) in &dofs { if dof < n { u_s[dof] = val; } }
                     u_stages[s] = u_s.clone();
 
-                    // Explicit stage
-                    ki_e[s] = rhs_bc.clone(); // f_E is constant source
+                    // Explicit stage f_E at stage time
+                    ki_e[s] = scaled_rhs(&rhs_bc, t_s);
                 }
 
                 // 3rd-order solution
@@ -292,29 +342,30 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
         }
 
         "RungeKutta" => {
-            // Explicit RK4: dv/dt = M^{-1}(f - K v)
+            // Explicit RK4: dv/dt = M^{-1}(f(t) - K v)
             let mut t = 0.0_f64;
             for step in 0..n_steps {
                 if t >= t_end + dt * 0.5 { break; }
                 let h = dt.min(t_end - t + dt * 1e-12);
                 if h < dt * 1e-14 { break; }
 
-                // RK4 stages
-                let compute_dvdt = |u: &[f64]| -> Vec<f64> {
+                // RK4 stages (time-dependent f)
+                let compute_dvdt = |u: &[f64], t_eval: f64| -> Vec<f64> {
+                    let ft = scaled_rhs(&rhs_bc, t_eval);
                     let mut kv = vec![0.0f64; n];
                     spmv(&k_bc, u, &mut kv);
-                    let rhs: Vec<f64> = (0..n).map(|i| rhs_bc[i] - kv[i]).collect();
+                    let rhs: Vec<f64> = (0..n).map(|i| ft[i] - kv[i]).collect();
                     let r = solve_pcg(&m_bc, &rhs, lin.tol, lin.max_iter, comm);
                     r.solution
                 };
 
-                let k1 = compute_dvdt(&v);
+                let k1 = compute_dvdt(&v, t);
                 let u2: Vec<f64> = (0..n).map(|i| v[i] + 0.5 * h * k1[i]).collect();
-                let k2 = compute_dvdt(&u2);
+                let k2 = compute_dvdt(&u2, t + 0.5 * h);
                 let u3: Vec<f64> = (0..n).map(|i| v[i] + 0.5 * h * k2[i]).collect();
-                let k3 = compute_dvdt(&u3);
+                let k3 = compute_dvdt(&u3, t + 0.5 * h);
                 let u4: Vec<f64> = (0..n).map(|i| v[i] + h * k3[i]).collect();
-                let k4 = compute_dvdt(&u4);
+                let k4 = compute_dvdt(&u4, t + h);
 
                 for i in 0..n {
                     v[i] += h / 6.0 * (k1[i] + 2.0 * k2[i] + 2.0 * k3[i] + k4[i]);

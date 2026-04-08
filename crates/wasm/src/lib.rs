@@ -136,6 +136,18 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
+        ProblemType::Transient => {
+            rem_transient::run_with_mesh(&cfg, &mesh, &comm)
+                .map_err(|e| JsError::new(&format!("Transient error: {}", e)))?;
+            let res = SimulationResult {
+                phi: vec![],
+                energy: 0.0,
+                e_field: None,
+                b_field: None,
+                frequencies_hz: None,
+            };
+            Ok(serde_wasm_bindgen::to_value(&res)?)
+        }
         _ => Err(JsError::new("Unsupported problem type")),
     }
 }
