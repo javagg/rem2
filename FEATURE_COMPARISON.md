@@ -75,7 +75,7 @@ REM（Rust Electromagnetic）是一款对标 [Palace](https://github.com/awslabs
 | LumpedPort（φ=V，R可选） | `Boundaries.LumpedPort` | 集总端口 |
 | 自然边界（∂φ/∂n=0） | 默认（未指定的边界） | Neumann 边界 |
 
-**��出**：
+**输出**：
 - `postpro/domain-E.csv`：各域电场能量 U = (1/2)∫ε|∇φ|² dΩ
 - `postpro/capacitance.csv`：电容矩阵（多端口时）
 - `paraview/solution.vtk`：φ 电位场 + E 电场矢量
