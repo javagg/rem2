@@ -109,6 +109,9 @@ pub struct EigenResult {
     pub frequencies_hz: Vec<f64>,
     /// Corresponding eigenvectors (one per mode, length = n_nodes).
     pub eigenvectors: Vec<Vec<f64>>,
+    /// Q-factors from dielectric loss perturbation (1/Q = tan_δ_eff).
+    /// None if all materials are lossless.
+    pub q_factors: Option<Vec<f64>>,
 }
 
 /// Solve the generalized eigenvalue problem for `config` + pre-loaded mesh.
@@ -188,9 +191,56 @@ pub fn solve(
     // Sort by frequency
     eigenpairs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
 
+    // ── Dielectric loss perturbation → Q-factor ───────────────────────────────
+    // For each mode φ:
+    //   1/Q_dielectric = Σ_k (tanδ_k · φᵀ M_k φ) / (φᵀ M φ)
+    // We assemble a loss-weighted mass matrix M_loss with ε·tanδ as the
+    // weight function, then Q = (φᵀ M φ) / (φᵀ M_loss φ) for each mode.
+    let any_lossy = mesh.domain_tags.keys()
+        .any(|&tag| domain_map.get(tag).is_lossy());
+    let q_factors: Option<Vec<f64>> = if any_lossy {
+        let loss_fn = |tag: u32| {
+            let mat = domain_map.get(tag);
+            mat.epsilon_abs() * mat.loss_tangent   // ε₀ εᵣ tanδ
+        };
+        let m_loss_triplet = assemble_mass::assemble_mass(mesh, loss_fn)?;
+        let m_loss = m_loss_triplet.to_csr();
+
+        let qs: Vec<f64> = eigenpairs.iter().map(|(_, phi)| {
+            // numerator: φᵀ M_loss φ
+            let mut m_loss_phi = vec![0.0f64; n];
+            for i in 0..m_loss.nrows {
+                for ptr in m_loss.row_ptr[i]..m_loss.row_ptr[i + 1] {
+                    m_loss_phi[i] += m_loss.values[ptr] * phi[m_loss.col_idx[ptr]];
+                }
+            }
+            let numerator: f64 = phi.iter().zip(m_loss_phi.iter()).map(|(a, b)| a * b).sum();
+
+            // denominator: φᵀ M φ
+            let mut m_phi = vec![0.0f64; n];
+            for i in 0..m_mat.nrows {
+                for ptr in m_mat.row_ptr[i]..m_mat.row_ptr[i + 1] {
+                    m_phi[i] += m_mat.values[ptr] * phi[m_mat.col_idx[ptr]];
+                }
+            }
+            let denominator: f64 = phi.iter().zip(m_phi.iter()).map(|(a, b)| a * b).sum();
+
+            if denominator.abs() > 1e-300 && numerator.abs() > 0.0 {
+                denominator / numerator  // Q = 1 / tan_δ_eff
+            } else {
+                f64::INFINITY
+            }
+        }).collect();
+
+        Some(qs)
+    } else {
+        None
+    };
+
     Ok(EigenResult {
         frequencies_hz: eigenpairs.iter().map(|(f, _)| *f).collect(),
         eigenvectors:   eigenpairs.into_iter().map(|(_, v)| v).collect(),
+        q_factors,
     })
 }
 

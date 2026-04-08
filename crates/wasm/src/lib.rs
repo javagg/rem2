@@ -40,6 +40,8 @@ pub struct SimulationResult {
     /// Transient: time points [s] and corresponding port voltages [V]
     pub time_points: Option<Vec<f64>>,
     pub port_voltages: Option<Vec<f64>>,
+    /// Eigenmode: Q-factors from dielectric loss perturbation (None if lossless)
+    pub q_factors: Option<Vec<f64>>,
 }
 
 #[wasm_bindgen]
@@ -71,7 +73,7 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
                 b_field: None,
                 frequencies_hz: None,
                 s_params: None,
-                time_points: None, port_voltages: None,
+                time_points: None, port_voltages: None, q_factors: None,
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
@@ -93,7 +95,7 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
                 b_field: Some(b_field),
                 frequencies_hz: None,
                 s_params: None,
-                time_points: None, port_voltages: None,
+                time_points: None, port_voltages: None, q_factors: None,
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
@@ -110,7 +112,7 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
             let res = SimulationResult {
                 phi: vec![], energy: 0.0, e_field: None, b_field: None,
                 frequencies_hz: None, s_params: Some(s_params),
-                time_points: None, port_voltages: None,
+                time_points: None, port_voltages: None, q_factors: None,
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
@@ -123,7 +125,7 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
             let res = SimulationResult {
                 phi: vec![], energy: 0.0, e_field: None, b_field: None,
                 frequencies_hz: None, s_params: None,
-                time_points: None, port_voltages: None,
+                time_points: None, port_voltages: None, q_factors: None,
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
@@ -136,7 +138,7 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
             let res = SimulationResult {
                 phi: vec![], energy: 0.0, e_field: None, b_field: None,
                 frequencies_hz: None, s_params: None,
-                time_points: None, port_voltages: None,
+                time_points: None, port_voltages: None, q_factors: None,
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
@@ -149,6 +151,7 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
                 phi, energy: 0.0, e_field: None, b_field: None,
                 frequencies_hz: Some(eigen.frequencies_hz), s_params: None,
                 time_points: None, port_voltages: None,
+                q_factors: eigen.q_factors,
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
@@ -159,6 +162,7 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
                 phi: vec![], energy: 0.0, e_field: None, b_field: None,
                 frequencies_hz: None, s_params: None,
                 time_points: Some(time_points), port_voltages: Some(port_voltages),
+                q_factors: None,
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }

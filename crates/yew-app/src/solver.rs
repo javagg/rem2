@@ -40,6 +40,8 @@ pub struct SimResult {
     /// Transient: port voltage vs time
     pub time_points: Option<Vec<f64>>,
     pub port_voltages: Option<Vec<f64>>,
+    /// Eigenmode: Q-factors per mode (dielectric loss perturbation)
+    pub q_factors: Option<Vec<f64>>,
 }
 
 #[derive(Clone, Debug)]
@@ -146,9 +148,12 @@ pub async fn run_example(key: &str) -> Result<SimRun, String> {
     }
 
     if let Some(freqs) = &result.frequencies_hz {
-        let mut csv = String::from("mode,frequency_hz,frequency_ghz\n");
+        let q_factors = result.q_factors.as_deref().unwrap_or(&[]);
+        let mut csv = String::from("mode,frequency_hz,frequency_ghz,q_factor\n");
         for (i, &f) in freqs.iter().enumerate() {
-            csv.push_str(&format!("{},{},{:.6}\n", i + 1, f, f / 1e9));
+            let q = q_factors.get(i).copied().unwrap_or(f64::INFINITY);
+            let q_str = if q.is_infinite() { "inf".to_string() } else { format!("{:.1}", q) };
+            csv.push_str(&format!("{},{},{:.6},{}\n", i + 1, f, f / 1e9, q_str));
         }
         artifacts.push(OutputArtifact {
             file_name: "eigenfrequencies.csv".to_string(),
@@ -194,6 +199,7 @@ pub async fn run_example(key: &str) -> Result<SimRun, String> {
             s_params,
             time_points: result.time_points,
             port_voltages: result.port_voltages,
+            q_factors: result.q_factors,
         },
         artifacts,
     })

@@ -645,11 +645,29 @@ fn app() -> Html {
                             if let Some(freqs) = &r.frequencies_hz {
                                 <div>
                                     <p><strong>{"Eigenfrequencies:"}</strong></p>
-                                    <ul>
-                                        { for freqs.iter().enumerate().map(|(i, &f)| html! {
-                                            <li>{format!("Mode {}: {:.4} GHz", i + 1, f / 1e9)}</li>
+                                    <table class="s-param-table">
+                                        <thead>
+                                            <tr>
+                                                <th>{"Mode"}</th>
+                                                <th>{"Frequency (GHz)"}</th>
+                                                { if r.q_factors.is_some() { html!{ <th>{"Q-factor"}</th> } } else { html!{} } }
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                        { for freqs.iter().enumerate().map(|(i, &f)| {
+                                            let q_str = r.q_factors.as_ref()
+                                                .and_then(|qs| qs.get(i).copied())
+                                                .map(|q| if q.is_infinite() { "∞".to_string() } else { format!("{:.0}", q) });
+                                            html! {
+                                                <tr>
+                                                    <td>{i + 1}</td>
+                                                    <td>{format!("{:.6}", f / 1e9)}</td>
+                                                    { if let Some(q) = q_str { html!{ <td>{q}</td> } } else { html!{} } }
+                                                </tr>
+                                            }
                                         }) }
-                                    </ul>
+                                        </tbody>
+                                    </table>
                                 </div>
                             }
                             if let Some(pts) = &r.s_params {
