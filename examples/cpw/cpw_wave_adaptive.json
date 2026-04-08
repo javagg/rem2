@@ -1,0 +1,85 @@
+{
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "output/cpw_wave_adaptive"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/cpw_wave_0.msh",
+    "L0": 1.0e-6,
+    "Refinement": {}
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 1.0,
+        "LossTan": 0.0
+      },
+      {
+        "Attributes": [2],
+        "Permeability": 0.99999975,
+        "Permittivity": 9.3,
+        "LossTan": 3.0e-5
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [8, 9, 11]
+    },
+    "Absorbing":
+    {
+      "Attributes": [10],
+      "Order": 1
+    },
+    "WavePort":
+    [
+      {
+        "Index": 1,
+        "Attributes": [4],
+        "Mode": 1,
+        "Excitation": true
+      },
+      {
+        "Index": 2,
+        "Attributes": [5],
+        "Mode": 1
+      },
+      {
+        "Index": 3,
+        "Attributes": [6],
+        "Mode": 1
+      },
+      {
+        "Index": 4,
+        "Attributes": [7],
+        "Mode": 1
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Driven":
+    {
+      "MinFreq": 2.0e9,
+      "MaxFreq": 32.0e9,
+      "FreqStep": 0.1e9,
+      "SaveStep": 1,
+      "AdaptiveTol": 1.0e-3
+    },
+    "Linear":
+    {
+      "Tol": 1.0e-8,
+      "MaxIter": 200
+    }
+  }
+}

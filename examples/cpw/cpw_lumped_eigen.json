@@ -1,0 +1,87 @@
+{
+  "Problem":
+  {
+    "Type": "Eigenmode",
+    "Verbose": 2,
+    "Output": "output/cpw_lumped_eigen"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/cpw_lumped_0.msh",
+    "L0": 1.0e-6,
+    "Refinement": {}
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 1.0,
+        "LossTan": 0.0
+      },
+      {
+        "Attributes": [2],
+        "Permeability": 0.99999975,
+        "Permittivity": 9.3,
+        "LossTan": 3.0e-5
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [13]
+    },
+    "Absorbing":
+    {
+      "Attributes": [4],
+      "Order": 2
+    },
+    "LumpedPort":
+    [
+      {
+        "Index": 1,
+        "Attributes": [5],
+        "Direction": "+Y",
+        "R": 56.02
+      },
+      {
+        "Index": 2,
+        "Attributes": [6],
+        "Direction": "+Y",
+        "R": 56.02
+      },
+      {
+        "Index": 3,
+        "Attributes": [7],
+        "Direction": "+Y",
+        "R": 56.02
+      },
+      {
+        "Index": 4,
+        "Attributes": [8],
+        "Direction": "+Y",
+        "R": 56.02
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Eigenmode":
+    {
+      "N": 1,
+      "Tol": 1.0e-6,
+      "Target": 16.0e9,
+      "Save": 1
+    },
+    "Linear":
+    {
+      "Tol": 1.0e-10,
+      "MaxIter": 1000
+    }
+  }
+}

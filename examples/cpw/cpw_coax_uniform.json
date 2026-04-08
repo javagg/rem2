@@ -1,0 +1,88 @@
+{
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "output/cpw_coax_uniform"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/cpw_coax_0.msh",
+    "L0": 1.0e-6,
+    "Refinement": {}
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 1.0,
+        "LossTan": 0.0
+      },
+      {
+        "Attributes": [2],
+        "Permeability": 0.99999975,
+        "Permittivity": 9.3,
+        "LossTan": 3.0e-5
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [8, 9, 11]
+    },
+    "Absorbing":
+    {
+      "Attributes": [10],
+      "Order": 1
+    },
+    "LumpedPort":
+    [
+      {
+        "Index": 1,
+        "Attributes": [4],
+        "Direction": "+R",
+        "R": 56.02,
+        "Excitation": true
+      },
+      {
+        "Index": 2,
+        "Attributes": [5],
+        "Direction": "+R",
+        "R": 56.02
+      },
+      {
+        "Index": 3,
+        "Attributes": [6],
+        "Direction": "-R",
+        "R": 56.02
+      },
+      {
+        "Index": 4,
+        "Attributes": [7],
+        "Direction": "-R",
+        "R": 56.02
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Driven":
+    {
+      "MinFreq": 2.0e9,
+      "MaxFreq": 30.0e9,
+      "FreqStep": 2.0e9,
+      "SaveStep": 2
+    },
+    "Linear":
+    {
+      "Tol": 1.0e-8,
+      "MaxIter": 200
+    }
+  }
+}

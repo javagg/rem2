@@ -1,0 +1,57 @@
+{
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "output/driven_wave"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/cylinder_hex.msh",
+    "L0": 1.0e-2
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 2.08,
+        "LossTan": 0.0004
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "WavePort":
+    [
+      {
+        "Index": 1,
+        "Attributes": [2],
+        "Mode": 1,
+        "Excitation": true
+      }
+    ],
+    "PEC":
+    {
+      "Attributes": [3, 4]
+    }
+  },
+  "Solver":
+  {
+    "Order": 4,
+    "Driven":
+    {
+      "MinFreq": 2.5e9,
+      "MaxFreq": 5.0e9,
+      "FreqStep": 0.5e9,
+      "SaveStep": 1
+    },
+    "Linear":
+    {
+      "Tol": 1.0e-9,
+      "MaxIter": 100
+    }
+  }
+}

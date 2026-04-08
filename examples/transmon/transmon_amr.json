@@ -1,0 +1,84 @@
+{
+  "Problem":
+  {
+    "Verbose": 2,
+    "Output": "output/transmon_amr",
+    "Type": "Eigenmode"
+  },
+  "Model":
+  {
+    "Refinement":
+    {
+      "MaxIter": 2
+    },
+    "Mesh": "mesh/transmon.msh2",
+    "L0": 1.0e-6
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [2],
+        "Permittivity": 1.0,
+        "Permeability": 1.0
+      },
+      {
+        "Attributes": [1],
+        "Permittivity": 9.3,
+        "Permeability": 0.99999975,
+        "LossTan": 3.0e-5
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [5]
+    },
+    "Absorbing":
+    {
+      "Attributes": [3],
+      "Order": 1
+    },
+    "LumpedPort":
+    [
+      {
+        "Index": 1,
+        "Attributes": [6],
+        "R": 50.0,
+        "Direction": "+X"
+      },
+      {
+        "Index": 2,
+        "Attributes": [7],
+        "R": 50.0,
+        "Direction": "+X"
+      },
+      {
+        "Index": 3,
+        "Attributes": [4],
+        "C": 5.5e-15,
+        "L": 1.486e-8,
+        "Direction": "+Y"
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 3,
+    "Eigenmode":
+    {
+      "N": 2,
+      "Save": 2,
+      "Tol": 1.0e-8,
+      "Target": 4.0e9
+    },
+    "Linear":
+    {
+      "Tol": 1.0e-12,
+      "MaxIter": 500
+    }
+  }
+}

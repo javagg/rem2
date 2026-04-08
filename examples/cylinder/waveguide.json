@@ -1,0 +1,48 @@
+{
+  "Problem":
+  {
+    "Type": "Eigenmode",
+    "Verbose": 2,
+    "Output": "output/waveguide"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/cylinder_tet.msh",
+    "L0": 1.0e-2
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 2.08,
+        "LossTan": 0.0004
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [4]
+    }
+  },
+  "Solver":
+  {
+    "Order": 4,
+    "Eigenmode":
+    {
+      "N": 15,
+      "Tol": 1.0e-9,
+      "Target": 2.0e9,
+      "Save": 15
+    },
+    "Linear":
+    {
+      "Tol": 1.0e-9,
+      "MaxIter": 100
+    }
+  }
+}

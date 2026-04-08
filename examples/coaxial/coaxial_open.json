@@ -1,0 +1,65 @@
+{
+  "Problem":
+  {
+    "Type": "Transient",
+    "Verbose": 2,
+    "Output": "output/coaxial_open"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/coaxial.msh",
+    "L0": 1.0e-3
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 2.08,
+        "Conductivity": 4.629e-2
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [2]
+    },
+    "PMC":
+    {
+      "Attributes": [4]
+    },
+    "LumpedPort":
+    [
+      {
+        "Index": 1,
+        "Attributes": [3],
+        "R": 50.0,
+        "Direction": "+R",
+        "Excitation": true
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 3,
+    "Transient":
+    {
+      "Type": "GeneralizedAlpha",
+      "Excitation": "ModulatedGaussian",
+      "ExcitationFreq": 10.0,
+      "ExcitationWidth": 0.05,
+      "MaxTime": 1.0,
+      "TimeStep": 0.005,
+      "SaveStep": 10
+    },
+    "Linear":
+    {
+      "Tol": 1.0e-8,
+      "MaxIter": 100
+    }
+  }
+}
