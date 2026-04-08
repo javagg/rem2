@@ -69,6 +69,19 @@ fn excitation_amplitude(t: f64, kind: &str, freq_hz: f64, sigma_s: f64) -> f64 {
 
 // ─── Entry points ────────────────────────────────────────────────────────────
 
+/// Result of a transient simulation.
+pub struct TransientResult {
+    /// Time sample points [s].
+    pub time_points: Vec<f64>,
+    /// Port voltage at each time point [V].
+    pub port_voltages: Vec<f64>,
+    /// Nodal potential at the time step of peak port voltage magnitude.
+    /// Empty if no time steps were recorded.
+    pub peak_phi: Vec<f64>,
+    /// Time [s] at which `peak_phi` was recorded.
+    pub peak_time_s: f64,
+}
+
 /// Entry point called from rem-cli.
 pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
     log::info!("=== Transient (time-domain) solver ===");
@@ -82,8 +95,8 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
 }
 
 /// Entry point for pre-loaded mesh (used by WASM path).
-/// Returns `(time_points_s, port_voltages)`.
-pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> RemResult<(Vec<f64>, Vec<f64>)> {
+/// Returns a `TransientResult` with time series, port voltages and peak E-field phi.
+pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> RemResult<TransientResult> {
     log::info!("=== Transient (time-domain) solver ===");
 
     let td_cfg = config.solver.transient.as_ref().ok_or_else(|| {
@@ -149,6 +162,9 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
 
     let mut time_points: Vec<f64> = Vec::with_capacity(n_steps);
     let mut port_v: Vec<f64> = Vec::with_capacity(n_steps);
+    let mut peak_phi: Vec<f64> = Vec::new();
+    let mut peak_time_s: f64 = 0.0;
+    let mut peak_vp_abs: f64 = -1.0;
 
     match td_cfg.solver_type.as_str() {
         "GeneralizedAlpha" | "" => {
@@ -211,6 +227,7 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
                 let vp = port_voltage(mesh, &v, excited_port);
                 time_points.push(t);
                 port_v.push(vp);
+                if vp.abs() > peak_vp_abs { peak_vp_abs = vp.abs(); peak_time_s = t; peak_phi = v.clone(); }
 
                 #[cfg(not(target_arch = "wasm32"))]
                 if step % save_step == 0 {
@@ -329,6 +346,7 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
                     let vp = port_voltage(mesh, &v, excited_port);
                     time_points.push(t);
                     port_v.push(vp);
+                    if vp.abs() > peak_vp_abs { peak_vp_abs = vp.abs(); peak_time_s = t; peak_phi = v.clone(); }
 
                     #[cfg(not(target_arch = "wasm32"))]
                     if step % save_step == 0 {
@@ -377,6 +395,7 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
                 let vp = port_voltage(mesh, &v, excited_port);
                 time_points.push(t);
                 port_v.push(vp);
+                if vp.abs() > peak_vp_abs { peak_vp_abs = vp.abs(); peak_time_s = t; peak_phi = v.clone(); }
 
                 #[cfg(not(target_arch = "wasm32"))]
                 if step % save_step == 0 {
@@ -396,8 +415,9 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
     #[cfg(not(target_arch = "wasm32"))]
     output::write_time_series(out_dir, &time_points, &port_v)?;
 
-    log::info!("Transient solve complete: {} time points", time_points.len());
-    Ok((time_points, port_v))
+    log::info!("Transient solve complete: {} time points, peak |V|={:.4e} at {:.3e} s",
+        time_points.len(), peak_vp_abs, peak_time_s);
+    Ok(TransientResult { time_points, port_voltages: port_v, peak_phi, peak_time_s })
 }
 
 // ─── Matrix helpers ───────────────────────────────────────────────────────────

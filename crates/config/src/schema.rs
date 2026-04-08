@@ -886,12 +886,11 @@ fn default_target_type()    -> String { "PEC".to_string() }
 // Validation helpers: warn on Palace fields not yet implemented in REM
 // ---------------------------------------------------------------------------
 
-/// Log a warning for a Palace field that is accepted but not yet implemented.
+/// Log an info notice for a Palace field that is accepted but not yet implemented.
 /// Call this from each solver's run() function for relevant config fields.
 pub fn warn_unsupported(name: &str, hint: &str) {
-    log::warn!(
-        "[REM] Palace field not fully supported yet: {name}. {hint}. \
-         (Field is accepted for Palace config compatibility; behaviour may differ.)"
+    log::info!(
+        "[REM] Palace field accepted (not fully implemented): {name}. {hint}."
     );
 }
 
@@ -952,10 +951,10 @@ pub fn validate_palace_compat(cfg: &PalaceConfig) {
     if let Some(ref t) = cfg.solver.transient {
         let supported_excitations = ["", "none", "Step", "ModulatedGaussian", "Gaussian"];
         if !t.excitation.is_empty() && !supported_excitations.contains(&t.excitation.as_str()) {
-            warn_unsupported(
-                &format!("Solver.Transient.Excitation = \"{}\"", t.excitation),
-                "Unknown excitation waveform; supported: Step (default), ModulatedGaussian, Gaussian. \
-                 Falling back to Step.",
+            log::warn!(
+                "[REM] Unsupported Solver.Transient.Excitation = \"{}\"; \
+                 supported: Step (default), ModulatedGaussian, Gaussian. Falling back to Step.",
+                t.excitation
             );
         }
     }
@@ -987,16 +986,15 @@ pub fn validate_palace_compat(cfg: &PalaceConfig) {
 
     // --- Boundaries ---
     if !cfg.boundaries.impedance.is_empty() {
-        warn_unsupported(
-            "Boundaries.Impedance",
-            "Surface impedance (Rs/Ls/Cs) boundary conditions are not implemented; \
-             treated as PEC (lossless). Q-factor results will be approximate.",
+        log::warn!(
+            "[REM] Boundaries.Impedance: surface impedance BCs are not implemented; \
+             treated as PEC (lossless). Q-factor results will be approximate."
         );
     }
     if !cfg.boundaries.periodic.is_empty() {
-        warn_unsupported(
-            "Boundaries.Periodic",
-            "Periodic/Floquet boundary conditions are not implemented; ignored",
+        log::warn!(
+            "[REM] Boundaries.Periodic: periodic/Floquet BCs are not implemented; ignored. \
+             Results may be incorrect for periodic structures."
         );
     }
     if !cfg.domains.current_dipole.is_empty() {

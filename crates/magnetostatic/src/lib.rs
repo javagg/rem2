@@ -28,7 +28,7 @@ use rem_parallel::Comm;
 use rem_materials::DomainMap;
 use rem_mesh::{RemMesh, BoundaryTag, amr};
 use rem_mesh::gmsh::read_msh_file;
-use rem_electrostatic::assemble;
+use rem_electrostatic::assemble::{self, assemble_stiffness_aniso};
 use rem_electrostatic::bc;
 use rem_electrostatic::postprocess;
 use std::path::Path;
@@ -190,8 +190,14 @@ pub fn solve_3d(
     excitation_tag: Option<u32>,
     comm: &dyn Comm,
 ) -> RemResult<(Vec<f64>, Vec<f64>, Vec<f64>)> {
-    let nu_fn = |tag: u32| domain_map.get(tag).reluctivity();
-    let triplet = assemble::assemble_stiffness(mesh, nu_fn)?;
+    let triplet = if domain_map.any_magnetically_anisotropic() {
+        log::info!("Anisotropic permeability detected — using tensor reluctivity assembly (3D).");
+        let tensor_fn = |tag: u32| domain_map.get(tag).nu_tensor;
+        assemble_stiffness_aniso(mesh, tensor_fn)?
+    } else {
+        let nu_fn = |tag: u32| domain_map.get(tag).reluctivity();
+        assemble::assemble_stiffness(mesh, nu_fn)?
+    };
     let n = mesh.n_nodes();
     let lin = &config.solver.linear;
 
@@ -237,9 +243,15 @@ pub fn solve_one(
 ) -> RemResult<Vec<f64>> {
     let n = mesh.n_nodes();
 
-    // Assemble stiffness with reluctivity coefficient
-    let nu_fn = |tag: u32| domain_map.get(tag).reluctivity();
-    let triplet = assemble::assemble_stiffness(mesh, nu_fn)?;
+    // Assemble stiffness with reluctivity — scalar or tensor path
+    let triplet = if domain_map.any_magnetically_anisotropic() {
+        log::info!("Anisotropic permeability detected — using tensor reluctivity assembly.");
+        let tensor_fn = |tag: u32| domain_map.get(tag).nu_tensor;
+        assemble_stiffness_aniso(mesh, tensor_fn)?
+    } else {
+        let nu_fn = |tag: u32| domain_map.get(tag).reluctivity();
+        assemble::assemble_stiffness(mesh, nu_fn)?
+    };
     let mut mat = triplet.to_csr();
     let mut rhs = vec![0.0f64; n];
 

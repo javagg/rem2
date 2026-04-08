@@ -43,5 +43,8 @@
       "\\tmp",
       "c:\\Users\\lilu\\.claude\\projects\\c--Users-lilu-works-rem2\\memory"
     ]
+  },
+  "enabledPlugins": {
+    "superpowers@claude-plugins-official": true
   }
 }

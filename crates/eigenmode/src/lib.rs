@@ -167,7 +167,12 @@ pub fn solve(
         assemble_stiffness(mesh, eps_fn)?
     };
     let eps_fn = |tag: u32| domain_map.get(tag).epsilon_abs();
-    let m_triplet = assemble_mass::assemble_mass(mesh, eps_fn)?;
+    let m_triplet = if domain_map.any_anisotropic() {
+        let tensor_fn = |tag: u32| domain_map.get(tag).epsilon_tensor;
+        assemble_mass::assemble_mass_aniso(mesh, tensor_fn)?
+    } else {
+        assemble_mass::assemble_mass(mesh, eps_fn)?
+    };
 
     let mut k_mat = k_triplet.to_csr();
     let m_mat = m_triplet.to_csr();

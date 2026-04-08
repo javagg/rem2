@@ -426,4 +426,60 @@ pub mod tests {
             }
         }
     }
+
+    /// Anisotropic stiffness with identity tensor must equal scalar stiffness.
+    #[test]
+    fn aniso_identity_tensor_matches_scalar() {
+        let mesh = unit_triangle_mesh();
+        let eps = 3.0_f64;
+        let tensor = [[eps, 0.0, 0.0], [0.0, eps, 0.0], [0.0, 0.0, eps]];
+        let aniso = assemble_stiffness_aniso(&mesh, |_| tensor).unwrap().to_csr();
+        let scalar = assemble_stiffness(&mesh, |_| eps).unwrap().to_csr();
+
+        assert_eq!(aniso.nrows, scalar.nrows);
+        assert_eq!(aniso.nnz(), scalar.nnz());
+        for (a, b) in aniso.values.iter().zip(scalar.values.iter()) {
+            assert!((a - b).abs() < 1e-12, "aniso={} scalar={}", a, b);
+        }
+    }
+
+    /// Anisotropic row sum must be zero (constant fields in null space).
+    #[test]
+    fn aniso_row_sum_zero() {
+        let mesh = unit_triangle_mesh();
+        // Off-diagonal tensor to test genuine anisotropy
+        let tensor = [[2.0, 0.5, 0.0], [0.5, 3.0, 0.0], [0.0, 0.0, 1.0]];
+        let triplet = assemble_stiffness_aniso(&mesh, |_| tensor).unwrap();
+        let csr = triplet.to_csr();
+        let n = mesh.n_nodes();
+        let x = vec![1.0; n];
+        let mut y = vec![0.0; n];
+        csr.matvec(&x, &mut y, &rem_parallel::NoComm);
+        for &yi in &y {
+            assert!(yi.abs() < 1e-12, "aniso row sum = {}", yi);
+        }
+    }
+
+    /// Anisotropic stiffness must be symmetric for symmetric tensor.
+    #[test]
+    fn aniso_symmetry() {
+        let mesh = unit_triangle_mesh();
+        let tensor = [[4.0, 1.0, 0.0], [1.0, 2.0, 0.0], [0.0, 0.0, 3.0]];
+        let csr = assemble_stiffness_aniso(&mesh, |_| tensor).unwrap().to_csr();
+        let n = csr.nrows;
+        for i in 0..n {
+            for k in csr.row_ptr[i]..csr.row_ptr[i + 1] {
+                let j = csr.col_idx[k];
+                let kij = csr.values[k];
+                let kji = {
+                    let mut v = None;
+                    for kk in csr.row_ptr[j]..csr.row_ptr[j + 1] {
+                        if csr.col_idx[kk] == i { v = Some(csr.values[kk]); break; }
+                    }
+                    v.unwrap_or(0.0)
+                };
+                assert!((kij - kji).abs() < 1e-12, "K_aniso[{},{}]={} != K_aniso[{},{}]={}", i, j, kij, j, i, kji);
+            }
+        }
+    }
 }

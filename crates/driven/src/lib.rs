@@ -31,7 +31,7 @@ use num_complex::Complex64;
 use rem_config::{PalaceConfig, CurrentDipoleSpec};
 use rem_core::{CsrMatrix, RemError, RemResult, TripletMatrix};
 use rem_eigenmode::assemble_mass::assemble_mass;
-use rem_electrostatic::{assemble::assemble_stiffness, bc::{collect_dirichlet_dofs, apply_dirichlet}};
+use rem_electrostatic::{assemble::{assemble_stiffness, assemble_stiffness_aniso}, bc::{collect_dirichlet_dofs, apply_dirichlet}};
 use rem_materials::DomainMap;
 use rem_mesh::{RemMesh, BoundaryTag, amr};
 use rem_mesh::gmsh::read_msh_file;
@@ -108,7 +108,12 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
         let eps_fn = |tag: u32| domain_map.get(tag).epsilon_abs();
         let mut cur_mesh = mesh.clone();
         for amr_iter in 1..=max_amr_iter {
-            let k_mat = assemble_stiffness(&cur_mesh, eps_fn)?.to_csr();
+            let k_mat = if domain_map.any_anisotropic() {
+                let tensor_fn = |tag: u32| domain_map.get(tag).epsilon_tensor;
+                assemble_stiffness_aniso(&cur_mesh, tensor_fn)?.to_csr()
+            } else {
+                assemble_stiffness(&cur_mesh, eps_fn)?.to_csr()
+            };
             let m_mat = assemble_mass(&cur_mesh, eps_fn)?.to_csr();
             // Use real system for AMR estimator (estimator only needs shape, not phase)
             let a_mat = shifted_matrix(&k_mat, &m_mat, k2, cur_mesh.n_nodes());
@@ -227,10 +232,20 @@ fn run_frequency_sweep(
 ) -> RemResult<DrivenResult> {
     let freqs = build_freq_list(drv_cfg)?;
     let save_step = drv_cfg.save_step.max(1);
+    // Adaptive: if adaptive_tol > 0, densify near rapid S11 changes
+    let adaptive_tol = drv_cfg.adaptive_tol;
+    const ADAPTIVE_MAX_PASSES: usize = 3;
+    const ADAPTIVE_MIN_STEP_RATIO: f64 = 0.1; // don't add points closer than 10% of original step
 
     // Assemble K and M once (frequency-independent, real part)
-    let eps_fn     = |tag: u32| domain_map.get(tag).epsilon_abs();
-    let k_mat = assemble_stiffness(mesh, eps_fn)?.to_csr();
+    let eps_fn = |tag: u32| domain_map.get(tag).epsilon_abs();
+    let k_mat = if domain_map.any_anisotropic() {
+        log::info!("Anisotropic material(s) detected — using tensor stiffness assembly.");
+        let tensor_fn = |tag: u32| domain_map.get(tag).epsilon_tensor;
+        assemble_stiffness_aniso(mesh, tensor_fn)?.to_csr()
+    } else {
+        assemble_stiffness(mesh, eps_fn)?.to_csr()
+    };
     let m_mat = assemble_mass(mesh, eps_fn)?.to_csr();
 
     // Pre-assemble loss matrices if any domain has dielectric loss or conductivity.
@@ -404,6 +419,114 @@ fn run_frequency_sweep(
             output::write_field_vtk(out_dir, mesh, &phi_re, step + 1)?;
         }
         let _ = comm;
+    }
+
+    // ── Adaptive frequency densification ──────────────────────────────────────
+    // If adaptive_tol > 0: find intervals where |ΔS11| > tol * max|ΔS11| and
+    // bisect them (up to ADAPTIVE_MAX_PASSES times, min spacing enforced).
+    if adaptive_tol > 0.0 && freq_results.len() >= 2 {
+        let orig_step = (freq_results.last().unwrap().freq_hz
+                       - freq_results.first().unwrap().freq_hz)
+                       / (freq_results.len() as f64 - 1.0).max(1.0);
+        let min_spacing = orig_step * ADAPTIVE_MIN_STEP_RATIO;
+
+        for pass in 0..ADAPTIVE_MAX_PASSES {
+            // Compute |S11| array
+            let mags: Vec<f64> = freq_results.iter()
+                .map(|r| (r.s11_re*r.s11_re + r.s11_im*r.s11_im).sqrt())
+                .collect();
+            let max_delta = mags.windows(2)
+                .map(|w| (w[1] - w[0]).abs())
+                .fold(0.0f64, f64::max);
+            if max_delta < 1e-15 { break; }
+            let threshold = adaptive_tol * max_delta;
+
+            let mut extra_freqs: Vec<f64> = Vec::new();
+            for i in 0..mags.len().saturating_sub(1) {
+                let delta = (mags[i+1] - mags[i]).abs();
+                if delta > threshold {
+                    let f_mid = 0.5 * (freq_results[i].freq_hz + freq_results[i+1].freq_hz);
+                    let gap = (freq_results[i+1].freq_hz - freq_results[i].freq_hz).abs();
+                    if gap > min_spacing * 2.0 { extra_freqs.push(f_mid); }
+                }
+            }
+            if extra_freqs.is_empty() { break; }
+            log::info!("Adaptive pass {}: inserting {} extra frequency points", pass + 1, extra_freqs.len());
+
+            for &freq in &extra_freqs {
+                let omega = 2.0 * std::f64::consts::PI * freq;
+                let k_wave = omega / C0;
+                let k2 = k_wave * k_wave;
+                let mut a = k_dense.clone();
+                for i in 0..n {
+                    for j in 0..n {
+                        a[(i, j)] -= Complex64::new(k2, 0.0) * m_dense[(i, j)];
+                    }
+                }
+                if let (Some(kl), Some(ml), Some(kc), Some(mc)) =
+                    (&k_loss_dense, &m_loss_dense, &k_cond_dense, &m_cond_dense)
+                {
+                    for i in 0..n {
+                        for j in 0..n {
+                            let tan_contrib = Complex64::new(0.0, 1.0)
+                                * (kl[(i,j)] - Complex64::new(k2, 0.0) * ml[(i,j)]);
+                            let cond_contrib = Complex64::new(0.0, -1.0 / omega)
+                                * (kc[(i,j)] - Complex64::new(k2, 0.0) * mc[(i,j)]);
+                            a[(i, j)] += tan_contrib + cond_contrib;
+                        }
+                    }
+                }
+                let dofs: HashMap<usize, f64> = if let Some(mode) = &wave_port_mode {
+                    if mode.is_propagating(freq) {
+                        collect_dirichlet_dofs_modal(mesh, excited_port, mode)
+                    } else {
+                        collect_dirichlet_dofs(mesh, excited_port, 0.0)
+                    }
+                } else {
+                    collect_dirichlet_dofs(mesh, excited_port, 1.0)
+                };
+                let mut rhs_c = vec![Complex64::ZERO; n];
+                apply_dirichlet_complex(&mut a, &mut rhs_c, &dofs);
+                if !config.domains.current_dipole.is_empty() {
+                    let jw_mu0 = Complex64::new(0.0, 2.0 * std::f64::consts::PI * freq)
+                        * Complex64::new(4.0 * std::f64::consts::PI * 1.0e-7, 0.0);
+                    for dipole in &config.domains.current_dipole {
+                        let node = nearest_node(mesh, dipole);
+                        if !dofs.contains_key(&node) {
+                            let dir_mag = (dipole.direction.iter().map(|x| x * x).sum::<f64>()).sqrt();
+                            let mag = if dir_mag > 1e-300 { dir_mag } else { 1.0 };
+                            rhs_c[node] += jw_mu0 * Complex64::new(dipole.moment * mag, 0.0);
+                        }
+                    }
+                }
+                let phi_c = gmres_complex(&a, &rhs_c, lin.tol, lin.max_iter)?;
+                let phi_re: Vec<f64> = phi_c.iter().map(|x| x.re).collect();
+                let (v_port, i_port) = compute_port_vi_complex(mesh, &phi_c, &k_dense, excited_port);
+                let z0 = if let Some(mode) = &wave_port_mode {
+                    let z = mode.te_impedance(freq);
+                    if z.is_finite() { z } else { 50.0 }
+                } else {
+                    lumped_port_resistance(mesh, excited_port)
+                };
+                let s11 = if i_port.norm() > 1e-300 {
+                    let z = v_port / i_port;
+                    let z0c = Complex64::new(z0, 0.0);
+                    (z - z0c) / (z + z0c)
+                } else {
+                    Complex64::ZERO
+                };
+                log::info!("Adaptive f={:.3e} Hz  |S11|={:.4}", freq, s11.norm());
+                freq_results.push(FreqResult { freq_hz: freq, s11_re: s11.re, s11_im: s11.im });
+                let s11_mag = s11.norm();
+                if s11_mag > peak_s11_mag {
+                    peak_s11_mag = s11_mag;
+                    peak_freq_hz = freq;
+                    peak_phi = phi_re;
+                }
+            }
+            // Re-sort by frequency after inserting adaptive points
+            freq_results.sort_by(|a, b| a.freq_hz.partial_cmp(&b.freq_hz).unwrap());
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]

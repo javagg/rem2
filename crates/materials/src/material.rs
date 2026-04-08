@@ -16,30 +16,37 @@ pub struct Material {
     /// Absolute permittivity tensor ε₀ εᵣ [F/m], 3×3 row-major.
     /// Defaults to ε₀ εᵣ · I. Non-identity when MaterialAxes rotation is present.
     pub epsilon_tensor: [[f64; 3]; 3],
+    /// Reluctivity tensor ν = 1/(μ₀ μᵣ) [m/H], 3×3 row-major.
+    /// Defaults to ν · I (scalar isotropic). Set by MaterialAxes when present.
+    pub nu_tensor: [[f64; 3]; 3],
 }
 
 impl Default for Material {
     fn default() -> Self {
+        let nu = 1.0 / MU0;
         Material {
             permittivity: 1.0,
             permeability: 1.0,
             conductivity: 0.0,
             loss_tangent: 0.0,
             epsilon_tensor: [[EPS0, 0.0, 0.0], [0.0, EPS0, 0.0], [0.0, 0.0, EPS0]],
+            nu_tensor: [[nu, 0.0, 0.0], [0.0, nu, 0.0], [0.0, 0.0, nu]],
         }
     }
 }
 
 impl Material {
-    /// Construct from scalar parameters, building an isotropic tensor.
+    /// Construct from scalar parameters, building isotropic tensors.
     pub fn from_scalars(permittivity: f64, permeability: f64, conductivity: f64, loss_tangent: f64) -> Self {
         let eps = EPS0 * permittivity;
+        let nu = 1.0 / (MU0 * permeability);
         Material {
             permittivity,
             permeability,
             conductivity,
             loss_tangent,
             epsilon_tensor: [[eps, 0.0, 0.0], [0.0, eps, 0.0], [0.0, 0.0, eps]],
+            nu_tensor: [[nu, 0.0, 0.0], [0.0, nu, 0.0], [0.0, 0.0, nu]],
         }
     }
 
@@ -47,6 +54,7 @@ impl Material {
     /// If `axes` has 3 rows, interprets them as rotation matrix R and builds
     /// ε_tensor = R^T · (ε·I) · R = ε·I  (rotation of isotropic is still isotropic,
     /// but establishes the tensor pathway for future per-axis εᵣ support).
+    /// Similarly builds nu_tensor = R^T · (ν·I) · R.
     pub fn from_scalars_with_axes(
         permittivity: f64,
         permeability: f64,
@@ -65,19 +73,19 @@ impl Material {
                 [axes[1][0], axes[1][1], axes[1][2]],
                 [axes[2][0], axes[2][1], axes[2][2]],
             ];
-            // ε_tensor = R^T · diag(ε,ε,ε) · R
-            // For isotropic ε this simplifies to ε·I, but the path is correct
-            // for future per-axis diagonal: diag(ε_x, ε_y, ε_z).
             let eps = EPS0 * permittivity;
-            let mut t = [[0.0f64; 3]; 3];
+            let nu = 1.0 / (MU0 * permeability);
+            let mut et = [[0.0f64; 3]; 3];
+            let mut nt = [[0.0f64; 3]; 3];
             for i in 0..3 {
                 for j in 0..3 {
-                    // (R^T * eps*I * R)[i][j] = eps * (R^T * R)[i][j]
-                    // = eps * sum_k R[k][i] * R[k][j]
-                    t[i][j] = eps * (r[0][i]*r[0][j] + r[1][i]*r[1][j] + r[2][i]*r[2][j]);
+                    let rtrt = r[0][i]*r[0][j] + r[1][i]*r[1][j] + r[2][i]*r[2][j];
+                    et[i][j] = eps * rtrt;
+                    nt[i][j] = nu * rtrt;
                 }
             }
-            mat.epsilon_tensor = t;
+            mat.epsilon_tensor = et;
+            mat.nu_tensor = nt;
         }
         mat
     }
@@ -114,6 +122,14 @@ impl Material {
         let eps = EPS0 * self.permittivity;
         let identity = [[eps, 0.0, 0.0], [0.0, eps, 0.0], [0.0, 0.0, eps]];
         self.epsilon_tensor != identity
+    }
+
+    /// Returns true if the nu_tensor is non-isotropic (off-diagonal non-zero
+    /// or diagonal differs from ν = 1/(μ₀ μᵣ)).
+    pub fn is_magnetically_anisotropic(&self) -> bool {
+        let nu = 1.0 / (MU0 * self.permeability);
+        let identity = [[nu, 0.0, 0.0], [0.0, nu, 0.0], [0.0, 0.0, nu]];
+        self.nu_tensor != identity
     }
 }
 

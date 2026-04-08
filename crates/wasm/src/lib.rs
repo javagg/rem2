@@ -196,12 +196,23 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
         ProblemType::Transient => {
-            let (time_points, port_voltages) = rem_transient::run_with_mesh(&cfg, &mesh, &comm)
+            let transient = rem_transient::run_with_mesh(&cfg, &mesh, &comm)
                 .map_err(|e| JsError::new(&format!("Transient error: {}", e)))?;
+
+            let (e_field, energy) = if !transient.peak_phi.is_empty() {
+                let e = post_es::gradient_recovery(&transient.peak_phi, &mesh);
+                let eps_fn = |tag: u32| dm.get(tag).epsilon_abs();
+                let u = post_es::electrostatic_energy(&transient.peak_phi, &mesh, eps_fn);
+                (Some(e), u)
+            } else {
+                (None, 0.0)
+            };
+
             let res = SimulationResult {
-                phi: vec![], energy: 0.0, e_field: None, b_field: None,
+                phi: transient.peak_phi, energy, e_field, b_field: None,
                 frequencies_hz: None, s_params: None,
-                time_points: Some(time_points), port_voltages: Some(port_voltages),
+                time_points: Some(transient.time_points),
+                port_voltages: Some(transient.port_voltages),
                 q_factors: None, rcs_data: None, eigenvectors: None,
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)

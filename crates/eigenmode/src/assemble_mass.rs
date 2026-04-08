@@ -8,7 +8,7 @@
 use rem_core::{TripletMatrix, RemError, RemResult};
 use rem_mesh::{RemMesh, ElementKind};
 
-/// Assemble the global mass matrix.
+/// Assemble the global mass matrix with a scalar coefficient per element.
 ///
 /// `coeff_fn` maps physical group tag → permittivity ε (or similar coefficient).
 pub fn assemble_mass(
@@ -35,6 +35,23 @@ pub fn assemble_mass(
     }
 
     Ok(triplet)
+}
+
+/// Assemble the global mass matrix with a full anisotropic tensor coefficient.
+///
+/// The mass integral `M_ij = ∫ ε̄ φ_i φ_j dΩ` uses a scalar effective permittivity
+/// derived from the tensor as `ε̄ = trace(A) / 3`.  For isotropic rotation this equals
+/// ε₀εᵣ exactly; for genuinely anisotropic media it gives the isotropic equivalent.
+///
+/// `tensor_fn` maps physical group tag → absolute permittivity tensor [F/m], 3×3 row-major.
+pub fn assemble_mass_aniso(
+    mesh: &RemMesh,
+    tensor_fn: impl Fn(u32) -> [[f64; 3]; 3],
+) -> RemResult<TripletMatrix> {
+    assemble_mass(mesh, |tag| {
+        let a = tensor_fn(tag);
+        (a[0][0] + a[1][1] + a[2][2]) / 3.0
+    })
 }
 
 fn mass_tri3(
