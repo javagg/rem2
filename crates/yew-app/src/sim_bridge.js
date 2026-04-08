@@ -2,17 +2,10 @@
 // Exposed as globalThis.remSim
 
 (function () {
-  // Detect the wasm-bindgen JS glue URL from already-loaded <script> tags.
-  // Trunk injects it as a module script whose src contains the package name.
-  function detectWasmJsUrl() {
-    // Look for a <script type="module"> whose src contains "rem-yew"
-    const scripts = Array.from(document.querySelectorAll("script[type=module]"));
-    for (const s of scripts) {
-      if (s.src && s.src.includes("rem-yew")) {
-        return s.src;
-      }
-    }
-    return null;
+  // The WASM glue module stores its own import.meta.url on globalThis.__remWasmJsUrl
+  // via store_wasm_js_url() called from init_logger(). Read it from there.
+  function getWasmJsUrl() {
+    return globalThis.__remWasmJsUrl ?? null;
   }
 
   globalThis.remSim = {
@@ -24,9 +17,9 @@
      */
     runInWorker(configJson, meshBytes) {
       return new Promise((resolve, reject) => {
-        const wasmJsUrl = detectWasmJsUrl();
+        const wasmJsUrl = getWasmJsUrl();
         if (!wasmJsUrl) {
-          reject(new Error("sim_bridge: could not detect WASM JS URL"));
+          reject(new Error("sim_bridge: WASM JS URL not set (init_logger not called yet?)"));
           return;
         }
 

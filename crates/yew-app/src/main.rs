@@ -908,8 +908,22 @@ fn app() -> Html {
     }
 }
 
+// Capture the URL of this WASM JS glue (import.meta.url) and store it on
+// globalThis so that sim_bridge.js can find it at runtime.
+#[wasm_bindgen::prelude::wasm_bindgen(inline_js = "
+export function store_wasm_js_url() {
+    if (typeof globalThis !== 'undefined') {
+        globalThis.__remWasmJsUrl = import.meta.url;
+    }
+}
+")]
+extern "C" {
+    fn store_wasm_js_url();
+}
+
 fn main() {
     console_error_panic_hook::set_once();
     console_log::init_with_level(log::Level::Info).ok();
+    store_wasm_js_url();
     yew::Renderer::<App>::new().render();
 }
