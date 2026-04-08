@@ -44,7 +44,7 @@ use rem_parallel::NoComm;
 use bvh::Bvh;
 use excitation::{PlaneWave, incident_fields, launch_aperture_rays};
 use fresnel::{Interface, reflect_field, po_current_pec};
-use po_integral::{zero_currents, CurrentMap, rcs_pattern, rcs_pattern_with_ptd};
+use po_integral::{zero_currents, CurrentMap, rcs_pattern_with_ptd};
 use ptd::{extract_boundary_edges};
 use output::{write_rcs_with_ptd, write_surface_vtk};
 

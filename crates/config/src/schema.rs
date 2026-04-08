@@ -235,8 +235,9 @@ pub struct MaterialSpec {
             deserialize_with = "deserialize_scalar_or_first")]
     pub conductivity: f64,
 
-    /// Palace `MaterialAxes` for anisotropic materials — accepted, not implemented.
-    /// REM uses isotropic εᵣ/μᵣ from the first component.
+    /// Palace `MaterialAxes` for anisotropic materials.
+    /// Each row is a basis vector for the material coordinate frame.
+    /// Triggers tensor epsilon assembly in electrostatic/eigenmode solvers.
     #[serde(rename = "MaterialAxes", default)]
     pub material_axes: Vec<Vec<f64>>,
 }
@@ -410,8 +411,8 @@ pub struct LumpedPortSpec {
     #[serde(rename = "Excitation", default)]
     pub excitation: bool,
 
-    /// Palace `Elements` for multi-element lumped ports — accepted, not implemented.
-    /// REM currently uses only the first element's Attributes/Direction.
+    /// Palace `Elements` for multi-element lumped ports.
+    /// Each element's attributes are mapped to the same port BC tag.
     #[serde(rename = "Elements", default)]
     pub elements: Vec<LumpedPortElement>,
 }
@@ -938,13 +939,7 @@ pub fn validate_palace_compat(cfg: &PalaceConfig) {
 
     // --- Solver.Driven ---
     if let Some(ref d) = cfg.solver.driven {
-        if !d.samples.is_empty() {
-            warn_unsupported(
-                "Solver.Driven.Samples",
-                "Custom frequency sampling schedules are not supported; \
-                 use MinFreq/MaxFreq/FreqStep instead",
-            );
-        }
+        // Samples is now supported: Linear/Log/Point types
         if !d.save.is_empty() {
             warn_unsupported(
                 "Solver.Driven.Save (array)",
@@ -968,10 +963,9 @@ pub fn validate_palace_compat(cfg: &PalaceConfig) {
     // --- Domains ---
     for m in &cfg.domains.materials {
         if !m.material_axes.is_empty() {
-            warn_unsupported(
-                "Domains.Materials[].MaterialAxes",
-                "Anisotropic material axes rotation is not implemented; \
-                 using isotropic εᵣ/μᵣ from first tensor component",
+            log::info!(
+                "Domains.Materials[].MaterialAxes: {} axes provided — tensor epsilon assembly enabled.",
+                m.material_axes.len()
             );
         }
     }
@@ -1021,10 +1015,9 @@ pub fn validate_palace_compat(cfg: &PalaceConfig) {
 
     for lp in &cfg.boundaries.lumped_port {
         if !lp.elements.is_empty() {
-            warn_unsupported(
-                "Boundaries.LumpedPort[].Elements",
-                "Multi-element lumped ports are not implemented; \
-                 using the first element's Attributes only",
+            log::info!(
+                "Boundaries.LumpedPort[{}]: {} elements — all element attributes mapped to port BC.",
+                lp.index, lp.elements.len()
             );
         }
     }

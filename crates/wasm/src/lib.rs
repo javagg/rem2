@@ -50,6 +50,8 @@ pub struct SimulationResult {
     pub port_voltages: Option<Vec<f64>>,
     /// Eigenmode: Q-factors from dielectric loss perturbation (None if lossless)
     pub q_factors: Option<Vec<f64>>,
+    /// Eigenmode: all eigenvectors (one per mode); phi holds mode 0 for backwards compat
+    pub eigenvectors: Option<Vec<Vec<f64>>>,
     /// MoM/SBR: RCS pattern data, one entry per frequency
     pub rcs_data: Option<Vec<(f64, Vec<RcsPoint>)>>,
 }
@@ -83,7 +85,7 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
                 b_field: None,
                 frequencies_hz: None,
                 s_params: None,
-                time_points: None, port_voltages: None, q_factors: None, rcs_data: None,
+                time_points: None, port_voltages: None, q_factors: None, rcs_data: None, eigenvectors: None,
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
@@ -105,24 +107,34 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
                 b_field: Some(b_field),
                 frequencies_hz: None,
                 s_params: None,
-                time_points: None, port_voltages: None, q_factors: None, rcs_data: None,
+                time_points: None, port_voltages: None, q_factors: None, rcs_data: None, eigenvectors: None,
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
         ProblemType::Driven => {
-            let freq_results = rem_driven::run_with_mesh(&cfg, &mesh, &comm)
+            let driven = rem_driven::run_with_mesh(&cfg, &mesh, &comm)
                 .map_err(|e| JsError::new(&format!("Driven error: {}", e)))?;
 
-            let s_params: Vec<SParam> = freq_results.iter().map(|r| {
+            let s_params: Vec<SParam> = driven.freq_results.iter().map(|r| {
                 let mag = (r.s11_re * r.s11_re + r.s11_im * r.s11_im).sqrt();
                 let s11_db = if mag > 1e-300 { 20.0 * mag.log10() } else { -300.0 };
                 SParam { freq_hz: r.freq_hz, s11_re: r.s11_re, s11_im: r.s11_im, s11_db }
             }).collect();
 
+            // E-field and energy at the peak-|S11| frequency
+            let (e_field, energy) = if !driven.peak_phi.is_empty() {
+                let e = post_es::gradient_recovery(&driven.peak_phi, &mesh);
+                let eps_fn = |tag: u32| dm.get(tag).epsilon_abs();
+                let u = post_es::electrostatic_energy(&driven.peak_phi, &mesh, eps_fn);
+                (Some(e), u)
+            } else {
+                (None, 0.0)
+            };
+
             let res = SimulationResult {
-                phi: vec![], energy: 0.0, e_field: None, b_field: None,
+                phi: vec![], energy, e_field, b_field: None,
                 frequencies_hz: None, s_params: Some(s_params),
-                time_points: None, port_voltages: None, q_factors: None, rcs_data: None,
+                time_points: None, port_voltages: None, q_factors: None, rcs_data: None, eigenvectors: None,
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
@@ -143,7 +155,7 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
                 phi: vec![], energy: 0.0, e_field: None, b_field: None,
                 frequencies_hz: None, s_params: None,
                 time_points: None, port_voltages: None, q_factors: None,
-                rcs_data: Some(rcs_data),
+                rcs_data: Some(rcs_data), eigenvectors: None,
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
@@ -164,7 +176,7 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
                 phi: vec![], energy: 0.0, e_field: None, b_field: None,
                 frequencies_hz: None, s_params: None,
                 time_points: None, port_voltages: None, q_factors: None,
-                rcs_data: Some(rcs_data),
+                rcs_data: Some(rcs_data), eigenvectors: None,
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
@@ -172,12 +184,14 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
             let eigen = solve_eigen(&cfg, &mesh, &dm, &comm)
                 .map_err(|e| JsError::new(&format!("Eigenmode error: {}", e)))?;
 
-            let phi = eigen.eigenvectors.into_iter().next().unwrap_or_default();
+            let phi = eigen.eigenvectors.first().cloned().unwrap_or_default();
+            let all_vecs = eigen.eigenvectors;
             let res = SimulationResult {
                 phi, energy: 0.0, e_field: None, b_field: None,
                 frequencies_hz: Some(eigen.frequencies_hz), s_params: None,
                 time_points: None, port_voltages: None,
                 q_factors: eigen.q_factors, rcs_data: None,
+                eigenvectors: Some(all_vecs),
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
@@ -188,7 +202,7 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
                 phi: vec![], energy: 0.0, e_field: None, b_field: None,
                 frequencies_hz: None, s_params: None,
                 time_points: Some(time_points), port_voltages: Some(port_voltages),
-                q_factors: None, rcs_data: None,
+                q_factors: None, rcs_data: None, eigenvectors: None,
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }

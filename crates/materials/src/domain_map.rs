@@ -21,11 +21,23 @@ impl DomainMap {
             .domains
             .materials
             .iter()
-            .map(|spec| Material {
-                permittivity: spec.permittivity,
-                permeability: spec.permeability,
-                conductivity: spec.conductivity,
-                loss_tangent: spec.loss_tangent,
+            .map(|spec| {
+                if spec.material_axes.is_empty() {
+                    Material::from_scalars(
+                        spec.permittivity,
+                        spec.permeability,
+                        spec.conductivity,
+                        spec.loss_tangent,
+                    )
+                } else {
+                    Material::from_scalars_with_axes(
+                        spec.permittivity,
+                        spec.permeability,
+                        spec.conductivity,
+                        spec.loss_tangent,
+                        &spec.material_axes,
+                    )
+                }
             })
             .collect();
 
@@ -68,6 +80,11 @@ impl DomainMap {
     }
 
     pub fn n_materials(&self) -> usize { self.materials.len() }
+
+    /// Returns true if any material has a non-isotropic epsilon tensor.
+    pub fn any_anisotropic(&self) -> bool {
+        self.materials.iter().any(|m| m.is_anisotropic())
+    }
 
     /// Build a per-element epsilon coefficient array (for fem-rs assemblers).
     /// `element_tags` is a slice of physical group tags, one per volume element.

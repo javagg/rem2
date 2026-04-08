@@ -195,6 +195,25 @@ h1 {
     background: #f0f6ff;
 }
 
+.mode-row {
+    cursor: pointer;
+}
+
+.mode-row:hover td {
+    background: #d8ecff !important;
+}
+
+.active-mode td {
+    background: #b0d4f8 !important;
+    font-weight: bold;
+}
+
+.mode-info {
+    font-size: 11px;
+    color: #555;
+    margin: 4px 0 0 0;
+}
+
 .log-panel h3 {
     margin: 0 0 8px 0;
     font-size: 14px;

@@ -216,6 +216,138 @@ fn dot3(a: &[f64; 3], b: &[f64; 3]) -> f64 {
     a[0]*b[0] + a[1]*b[1] + a[2]*b[2]
 }
 
+/// Assemble the global stiffness matrix with a full anisotropic (tensor) coefficient.
+///
+/// `tensor_fn` maps physical group tag → absolute permittivity tensor [F/m], 3×3 row-major.
+/// Element integral: K_ij^e = ∫_Ωe  ∇λ_i^T · A · ∇λ_j  dΩ
+///
+/// Falls back to the 2-D xy submatrix for Tri3 elements.
+pub fn assemble_stiffness_aniso(
+    mesh: &RemMesh,
+    tensor_fn: impl Fn(u32) -> [[f64; 3]; 3],
+) -> RemResult<TripletMatrix> {
+    let n = mesh.n_nodes();
+    let cap = mesh.n_volume_elements() * 16;
+    let mut triplet = TripletMatrix::with_capacity(n, n, cap);
+
+    for elem in &mesh.volume_elements {
+        if mesh.size > 1 && elem.rank != mesh.rank {
+            continue;
+        }
+        let a = tensor_fn(elem.tag);
+        match elem.kind {
+            ElementKind::Tri3 => {
+                assemble_tri3_aniso(mesh, elem, &a, &mut triplet)?;
+            }
+            ElementKind::Tet4 => {
+                assemble_tet4_aniso_by_nodes(mesh, &elem.node_ids, elem.id, &a, &mut triplet)?;
+            }
+            ElementKind::Tet10 => {
+                assemble_tet4_aniso_by_nodes(mesh, &elem.node_ids[..4], elem.id, &a, &mut triplet)?;
+            }
+            other => {
+                log::warn!(
+                    "Element kind {:?} not supported in anisotropic P1 assembly — skipping",
+                    other
+                );
+            }
+        }
+    }
+
+    Ok(triplet)
+}
+
+/// Anisotropic Tri3: uses the 2×2 upper-left submatrix of `a`.
+fn assemble_tri3_aniso(
+    mesh: &RemMesh,
+    elem: &rem_mesh::Element,
+    a: &[[f64; 3]; 3],
+    triplet: &mut TripletMatrix,
+) -> RemResult<()> {
+    debug_assert_eq!(elem.node_ids.len(), 3);
+    let [n0, n1, n2] = [elem.node_ids[0], elem.node_ids[1], elem.node_ids[2]];
+    let (x0, y0) = (mesh.nodes[n0].x, mesh.nodes[n0].y);
+    let (x1, y1) = (mesh.nodes[n1].x, mesh.nodes[n1].y);
+    let (x2, y2) = (mesh.nodes[n2].x, mesh.nodes[n2].y);
+
+    let det_j = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
+    let area = 0.5 * det_j.abs();
+    if area < 1e-300 {
+        return Err(RemError::Mesh(format!("Degenerate Tri3 element {} (area ≈ 0)", elem.id)));
+    }
+
+    let inv2a = 1.0 / (2.0 * area);
+    // Only x,y components for 2-D
+    let grads: [[f64; 2]; 3] = [
+        [(y1 - y2) * inv2a, (x2 - x1) * inv2a],
+        [(y2 - y0) * inv2a, (x0 - x2) * inv2a],
+        [(y0 - y1) * inv2a, (x1 - x0) * inv2a],
+    ];
+    let nodes = [n0, n1, n2];
+
+    // K_ij = area * g_i^T · A_2d · g_j
+    for i in 0..3 {
+        for j in 0..3 {
+            let k_ij = area * (
+                grads[i][0] * (a[0][0]*grads[j][0] + a[0][1]*grads[j][1])
+              + grads[i][1] * (a[1][0]*grads[j][0] + a[1][1]*grads[j][1])
+            );
+            triplet.add(nodes[i], nodes[j], k_ij);
+        }
+    }
+    Ok(())
+}
+
+/// Anisotropic Tet4 stiffness from explicit node slice.
+fn assemble_tet4_aniso_by_nodes(
+    mesh: &RemMesh,
+    node_ids: &[usize],
+    elem_id: usize,
+    a: &[[f64; 3]; 3],
+    triplet: &mut TripletMatrix,
+) -> RemResult<()> {
+    let [n0, n1, n2, n3] = [node_ids[0], node_ids[1], node_ids[2], node_ids[3]];
+    let nodes = [n0, n1, n2, n3];
+    let x = [mesh.nodes[n0].x, mesh.nodes[n1].x, mesh.nodes[n2].x, mesh.nodes[n3].x];
+    let y = [mesh.nodes[n0].y, mesh.nodes[n1].y, mesh.nodes[n2].y, mesh.nodes[n3].y];
+    let z = [mesh.nodes[n0].z, mesh.nodes[n1].z, mesh.nodes[n2].z, mesh.nodes[n3].z];
+
+    let jac = [
+        [x[1]-x[0], x[2]-x[0], x[3]-x[0]],
+        [y[1]-y[0], y[2]-y[0], y[3]-y[0]],
+        [z[1]-z[0], z[2]-z[0], z[3]-z[0]],
+    ];
+    let det = det3(&jac);
+    let vol = det.abs() / 6.0;
+    if vol < 1e-300 {
+        return Err(RemError::Mesh(format!("Degenerate Tet4 element {} (volume ≈ 0)", elem_id)));
+    }
+
+    let j_inv = inv3(&jac, det);
+    let ref_grads = [[-1.0f64,-1.0,-1.0],[1.0,0.0,0.0],[0.0,1.0,0.0],[0.0,0.0,1.0]];
+    let mut grads = [[0.0f64; 3]; 4];
+    for i in 0..4 {
+        for row in 0..3 {
+            for col in 0..3 {
+                grads[i][row] += j_inv[col][row] * ref_grads[i][col];
+            }
+        }
+    }
+
+    // K_ij = vol * g_i^T · A · g_j
+    for i in 0..4 {
+        for j in 0..4 {
+            let mut k_ij = 0.0;
+            for r in 0..3 {
+                let ag_j_r: f64 = a[r][0]*grads[j][0] + a[r][1]*grads[j][1] + a[r][2]*grads[j][2];
+                k_ij += grads[i][r] * ag_j_r;
+            }
+            triplet.add(nodes[i], nodes[j], vol * k_ij);
+        }
+    }
+    Ok(())
+}
+
 /// Build per-element epsilon from the domain map.
 pub fn element_epsilon(mesh: &RemMesh, domain_map: &DomainMap) -> Vec<f64> {
     mesh.volume_elements

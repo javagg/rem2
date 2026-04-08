@@ -1,19 +1,19 @@
 use crate::examples;
-use js_sys::Promise;
+use js_sys::{Function, Promise};
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
 // ---------------------------------------------------------------------------
-// JS bridge: remSim.runInWorker(configJson, meshBytes) → Promise
+// JS bridge: remSim.runInWorker(configJson, meshBytes, onLog) → Promise
 // ---------------------------------------------------------------------------
 
 #[wasm_bindgen]
 extern "C" {
-    /// Call `globalThis.remSim.runInWorker(configJson, meshBytes)`.
-    /// Returns a JS Promise that resolves to the simulation result JsValue.
+    /// Call `globalThis.remSim.runInWorker(configJson, meshBytes, onLog)`.
+    /// `on_log` is a JS Function(level: string, text: string) called for each log line.
     #[wasm_bindgen(js_namespace = remSim, js_name = runInWorker)]
-    fn run_in_worker_js(config_json: &str, mesh_bytes: &[u8]) -> Promise;
+    fn run_in_worker_js(config_json: &str, mesh_bytes: &[u8], on_log: &Function) -> Promise;
 }
 
 // ---------------------------------------------------------------------------
@@ -44,6 +44,8 @@ pub struct SimResult {
     pub q_factors: Option<Vec<f64>>,
     /// MoM/SBR: RCS pattern, (freq_hz, theta_deg, phi_deg, rcs_dbsm)
     pub rcs_data: Option<Vec<(f64, f64, f64, f64)>>,
+    /// Eigenmode: all eigenvectors (one per mode)
+    pub eigenvectors: Option<Vec<Vec<f64>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -102,17 +104,29 @@ fn rcs_csv(data: &[(f64, f64, f64, f64)]) -> String {
     out
 }
 
-pub async fn run_example(key: &str) -> Result<SimRun, String> {
+pub async fn run_example(key: &str, on_log: impl Fn(String) + 'static) -> Result<SimRun, String> {
     let example = examples::find_example(key)
         .ok_or_else(|| format!("Unknown example: {}", key))?;
 
     let mesh_bytes = examples::get_mesh_bytes(key);
 
+    // Build a JS Function that forwards log messages to the Rust callback.
+    let log_cb = wasm_bindgen::closure::Closure::wrap(Box::new(move |_level: String, text: String| {
+        on_log(text);
+    }) as Box<dyn Fn(String, String)>);
+
     // Run the simulation in a dedicated Web Worker so the main thread stays
     // responsive. `run_in_worker_js` returns a JS Promise; we await it here.
-    let js_value = JsFuture::from(run_in_worker_js(example.config_json, &mesh_bytes))
+    let js_value = JsFuture::from(run_in_worker_js(
+        example.config_json,
+        &mesh_bytes,
+        log_cb.as_ref().unchecked_ref(),
+    ))
         .await
         .map_err(|e| format!("{} solve failed: {:?}", example.problem_type, e))?;
+
+    // Keep the closure alive until the promise resolves.
+    drop(log_cb);
 
     let result: rem_wasm::SimulationResult = serde_wasm_bindgen::from_value(js_value)
         .map_err(|e| format!("Failed to decode simulation result: {}", e))?;
@@ -159,7 +173,16 @@ pub async fn run_example(key: &str) -> Result<SimRun, String> {
 
     let mut artifacts = vec![];
 
-    if !result.phi.is_empty() {
+    if let Some(vecs) = &result.eigenvectors {
+        for (i, phi) in vecs.iter().enumerate() {
+            if !phi.is_empty() {
+                artifacts.push(OutputArtifact {
+                    file_name: format!("phi_mode_{}.csv", i + 1),
+                    content: phi_csv(phi),
+                });
+            }
+        }
+    } else if !result.phi.is_empty() {
         artifacts.push(OutputArtifact {
             file_name: "phi.csv".to_string(),
             content: phi_csv(&result.phi),
@@ -227,6 +250,7 @@ pub async fn run_example(key: &str) -> Result<SimRun, String> {
             port_voltages: result.port_voltages,
             q_factors: result.q_factors,
             rcs_data,
+            eigenvectors: result.eigenvectors,
         },
         artifacts,
     })

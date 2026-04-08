@@ -33,6 +33,9 @@ use std::path::Path;
 // Physical constants
 const C0: f64 = 2.997_924_58e8;  // speed of light [m/s]
 
+// AMR eigenfrequency convergence tolerance: stop if max relative freq change < this
+const AMR_FREQ_TOL: f64 = 1e-4;
+
 /// Entry point called from rem-cli.
 pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
     log::info!("=== Eigenmode solver ===");
@@ -63,6 +66,7 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
         log::info!("AMR enabled: max_iter={}, θ={}", max_amr_iter, amr_theta);
         let mut cur_mesh = mesh;
         let mut result = solve(config, &cur_mesh, &domain_map, comm)?;
+        let mut prev_freqs = result.frequencies_hz.clone();
 
         for amr_iter in 1..=max_amr_iter {
             // Use first eigenvector as error indicator field
@@ -80,6 +84,20 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
                 let (fine_mesh, _midpoints) = amr::refine_marked(&cur_mesh, &marked);
                 result = solve(config, &fine_mesh, &domain_map, comm)?;
                 cur_mesh = fine_mesh;
+
+                // Check eigenfrequency convergence between AMR iterations
+                let max_rel_change = prev_freqs.iter()
+                    .zip(result.frequencies_hz.iter())
+                    .map(|(&f_old, &f_new)| {
+                        if f_old.abs() > 1e-30 { ((f_new - f_old) / f_old).abs() } else { 0.0 }
+                    })
+                    .fold(0.0f64, f64::max);
+                log::info!("AMR iter {amr_iter}: max freq rel-change = {max_rel_change:.3e}");
+                if max_rel_change < AMR_FREQ_TOL {
+                    log::info!("AMR freq-converged (rel-change {max_rel_change:.2e} < {AMR_FREQ_TOL:.0e}): stopping.");
+                    break;
+                }
+                prev_freqs = result.frequencies_hz.clone();
             } else {
                 break;
             }
@@ -138,9 +156,17 @@ pub fn solve(
         0.0
     };
 
-    // Assemble stiffness K and mass M
+    // Assemble stiffness K and mass M — scalar or tensor path
+    let k_triplet = if domain_map.any_anisotropic() {
+        log::info!("Anisotropic material(s) detected — using tensor stiffness assembly.");
+        use rem_electrostatic::assemble::assemble_stiffness_aniso;
+        let tensor_fn = |tag: u32| domain_map.get(tag).epsilon_tensor;
+        assemble_stiffness_aniso(mesh, tensor_fn)?
+    } else {
+        let eps_fn = |tag: u32| domain_map.get(tag).epsilon_abs();
+        assemble_stiffness(mesh, eps_fn)?
+    };
     let eps_fn = |tag: u32| domain_map.get(tag).epsilon_abs();
-    let k_triplet = assemble_stiffness(mesh, eps_fn)?;
     let m_triplet = assemble_mass::assemble_mass(mesh, eps_fn)?;
 
     let mut k_mat = k_triplet.to_csr();

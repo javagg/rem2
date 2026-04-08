@@ -25,9 +25,10 @@
      * Run a simulation in a dedicated Web Worker.
      * @param {string} configJson  - Palace JSON config
      * @param {Uint8Array} meshBytes - raw mesh bytes
+     * @param {Function|null} onLog - optional callback(level, text) for streamed log lines
      * @returns {Promise<any>}  - resolves with the JsValue from run_simulation
      */
-    runInWorker(configJson, meshBytes) {
+    runInWorker(configJson, meshBytes, onLog) {
       return new Promise((resolve, reject) => {
         const wasmJsUrl = getWasmJsUrl();
         if (!wasmJsUrl) {
@@ -40,13 +41,15 @@
         });
 
         worker.addEventListener("message", (event) => {
-          const { type, value, message } = event.data ?? {};
+          const { type, value, message, level, text } = event.data ?? {};
           if (type === "result") {
             worker.terminate();
             resolve(value);
           } else if (type === "error") {
             worker.terminate();
             reject(new Error(message ?? "unknown worker error"));
+          } else if (type === "log" && typeof onLog === "function") {
+            try { onLog(level ?? "log", text ?? ""); } catch (_) {}
           }
         });
 

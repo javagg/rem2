@@ -121,9 +121,15 @@ pub fn solve_one(
 ) -> RemResult<Vec<f64>> {
     let n = mesh.n_nodes();
 
-    // Assemble stiffness matrix
-    let eps_fn = |tag: u32| domain_map.get(tag).epsilon_abs();
-    let triplet = assemble::assemble_stiffness(mesh, eps_fn)?;
+    // Assemble stiffness matrix — scalar or tensor path
+    let triplet = if domain_map.any_anisotropic() {
+        log::info!("Anisotropic material(s) detected — using tensor stiffness assembly.");
+        let tensor_fn = |tag: u32| domain_map.get(tag).epsilon_tensor;
+        assemble::assemble_stiffness_aniso(mesh, tensor_fn)?
+    } else {
+        let eps_fn = |tag: u32| domain_map.get(tag).epsilon_abs();
+        assemble::assemble_stiffness(mesh, eps_fn)?
+    };
     let mut mat = triplet.to_csr();
     let mut rhs = vec![0.0f64; n];
 

@@ -5,6 +5,22 @@
 //   main → worker:  { type: "run", configJson, meshBytes, wasmJsUrl }
 //   worker → main:  { type: "result", value }  (JsValue from run_simulation)
 //   worker → main:  { type: "error",  message }
+//   worker → main:  { type: "log",    level, text }  (streamed log lines)
+
+// Intercept console output and forward to main thread as log messages.
+// This must happen before WASM is loaded so all log::info! calls are captured.
+(function patchConsole() {
+  const levels = ["log", "info", "warn", "error", "debug"];
+  for (const level of levels) {
+    const orig = console[level].bind(console);
+    console[level] = (...args) => {
+      orig(...args);
+      try {
+        self.postMessage({ type: "log", level, text: args.map(String).join(" ") });
+      } catch (_) { /* structured-clone error on exotic objects — ignore */ }
+    };
+  }
+})();
 
 self.addEventListener("message", async (event) => {
   const { type, configJson, meshBytes, wasmJsUrl } = event.data ?? {};

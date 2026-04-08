@@ -526,7 +526,12 @@ fn build_boundary_tags(b: &Boundaries) -> RemResult<HashMap<u32, BoundaryTag>> {
     }
     for port in &b.lumped_port {
         let bc = BoundaryTag::LumpedPort { index: port.index, r: port.r };
+        // Top-level attributes (legacy / single-element case)
         for &t in &port.attributes { insert_unique!(t, bc.clone()); }
+        // Multi-element case: each element may carry its own attribute tags
+        for elem in &port.elements {
+            for &t in &elem.attributes { insert_unique!(t, bc.clone()); }
+        }
     }
     for port in &b.wave_port {
         let bc = BoundaryTag::WavePort { index: port.index };

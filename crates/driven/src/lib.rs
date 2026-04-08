@@ -42,6 +42,25 @@ use std::path::Path;
 
 const C0: f64 = 2.997_924_58e8;
 
+/// Per-frequency S-parameter result.
+pub struct FreqResult {
+    pub freq_hz: f64,
+    pub s11_re:  f64,
+    pub s11_im:  f64,
+}
+
+/// Result of a driven frequency sweep.
+pub struct DrivenResult {
+    /// S-parameter results for each frequency point.
+    pub freq_results: Vec<FreqResult>,
+    /// Real part of the nodal potential at the frequency of peak |S11| response
+    /// (i.e., worst reflection, which often corresponds to near-resonance).
+    /// Empty if the sweep produced no frequencies.
+    pub peak_phi: Vec<f64>,
+    /// Frequency [Hz] at which `peak_phi` was recorded.
+    pub peak_freq_hz: f64,
+}
+
 /// Entry point called from rem-cli.
 pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
     log::info!("=== Driven (frequency-domain) solver ===");
@@ -55,8 +74,8 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
 }
 
 /// Entry point for pre-loaded mesh (used by WASM path).
-/// Returns the per-frequency S-parameter results.
-pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> RemResult<Vec<FreqResult>> {
+/// Returns the driven frequency sweep result including S-params and peak E-field.
+pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> RemResult<DrivenResult> {
     log::info!("=== Driven (frequency-domain) solver ===");
 
     let drv_cfg = config.solver.driven.as_ref().ok_or_else(|| {
@@ -130,25 +149,84 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
 // Frequency sweep (inner loop, used after optional AMR pre-refinement)
 // ---------------------------------------------------------------------------
 
+/// Build the list of frequencies to sweep from `DrivenSolver` config.
+///
+/// Precedence:
+///   1. If `Samples` is non-empty, expand each sample spec (Linear/Log/Explicit).
+///   2. Otherwise use MinFreq/MaxFreq/FreqStep.
+fn build_freq_list(drv_cfg: &rem_config::DrivenSolver) -> RemResult<Vec<f64>> {
+    if !drv_cfg.samples.is_empty() {
+        let mut freqs: Vec<f64> = Vec::new();
+        for spec in &drv_cfg.samples {
+            match spec.sample_type.as_str() {
+                "Linear" | "" => {
+                    if spec.freq_step <= 0.0 || spec.min_freq > spec.max_freq {
+                        return Err(RemError::Config(format!(
+                            "Driven.Samples Linear: invalid MinFreq={}, MaxFreq={}, FreqStep={}",
+                            spec.min_freq, spec.max_freq, spec.freq_step
+                        )));
+                    }
+                    let n = ((spec.max_freq - spec.min_freq) / spec.freq_step).ceil() as usize + 1;
+                    for i in 0..n {
+                        let f = spec.min_freq + i as f64 * spec.freq_step;
+                        if f <= spec.max_freq + spec.freq_step * 0.5 { freqs.push(f); }
+                    }
+                }
+                "Log" => {
+                    if spec.freq_step < 2.0 || spec.min_freq <= 0.0 || spec.max_freq <= 0.0 {
+                        return Err(RemError::Config(
+                            "Driven.Samples Log: FreqStep is points-per-decade; MinFreq/MaxFreq must be > 0".into()
+                        ));
+                    }
+                    let n_decades = (spec.max_freq / spec.min_freq).log10();
+                    let n_pts = (n_decades * spec.freq_step).ceil() as usize + 1;
+                    for i in 0..n_pts {
+                        let f = spec.min_freq * 10.0_f64.powf(i as f64 / spec.freq_step);
+                        if f <= spec.max_freq * 1.001 { freqs.push(f); }
+                    }
+                }
+                "Point" | "Explicit" => {
+                    freqs.extend_from_slice(&spec.freq);
+                }
+                other => {
+                    log::warn!("Driven.Samples: unknown Type={:?}; skipping this spec", other);
+                }
+            }
+        }
+        if freqs.is_empty() {
+            return Err(RemError::Config("Driven.Samples produced no frequency points".into()));
+        }
+        freqs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        freqs.dedup_by(|a, b| (*b - *a).abs() < 1.0); // remove duplicates closer than 1 Hz
+        log::info!("Driven: {} frequency points from Samples array", freqs.len());
+        Ok(freqs)
+    } else {
+        let f_min  = drv_cfg.min_freq;
+        let f_max  = drv_cfg.max_freq;
+        let f_step = drv_cfg.freq_step;
+        if f_step <= 0.0 || f_min > f_max {
+            return Err(RemError::Config(
+                "Driven: FreqStep must be > 0 and MinFreq ≤ MaxFreq".into()
+            ));
+        }
+        let n = ((f_max - f_min) / f_step).ceil() as usize + 1;
+        let freqs: Vec<f64> = (0..n)
+            .map(|i| f_min + i as f64 * f_step)
+            .take_while(|&f| f <= f_max + f_step * 0.5)
+            .collect();
+        Ok(freqs)
+    }
+}
+
 fn run_frequency_sweep(
     config: &PalaceConfig,
     drv_cfg: &rem_config::DrivenSolver,
     mesh: &RemMesh,
     domain_map: &DomainMap,
     comm: &dyn Comm,
-) -> RemResult<Vec<FreqResult>> {
-    let f_min  = drv_cfg.min_freq;
-    let f_max  = drv_cfg.max_freq;
-    let f_step = drv_cfg.freq_step;
+) -> RemResult<DrivenResult> {
+    let freqs = build_freq_list(drv_cfg)?;
     let save_step = drv_cfg.save_step.max(1);
-
-    if f_step <= 0.0 || f_min > f_max {
-        return Err(RemError::Config(
-            "Driven: FreqStep must be > 0 and MinFreq ≤ MaxFreq".into()
-        ));
-    }
-
-    let n_steps = ((f_max - f_min) / f_step).ceil() as usize + 1;
 
     // Assemble K and M once (frequency-independent, real part)
     let eps_fn     = |tag: u32| domain_map.get(tag).epsilon_abs();
@@ -184,7 +262,11 @@ fn run_frequency_sweep(
     std::fs::create_dir_all(out_dir).map_err(RemError::Io)?;
 
     let lin = &config.solver.linear;
-    let mut freq_results: Vec<FreqResult> = Vec::with_capacity(n_steps);
+    let mut freq_results: Vec<FreqResult> = Vec::with_capacity(freqs.len());
+    // Track the phi at the frequency with maximum |S11| (peak reflection / near-resonance)
+    let mut peak_phi: Vec<f64> = Vec::new();
+    let mut peak_freq_hz: f64 = 0.0;
+    let mut peak_s11_mag: f64 = -1.0;
     let (excited_port, port_kind) = find_excited_port(mesh);
 
     // Pre-compute wave-port mode shape (frequency-independent, geometry only)
@@ -213,10 +295,7 @@ fn run_frequency_sweep(
     let k_dense = csr_to_complex_dense(&k_mat, n);
     let m_dense = csr_to_complex_dense(&m_mat, n);
 
-    for step in 0..n_steps {
-        let freq = f_min + step as f64 * f_step;
-        if freq > f_max + f_step * 0.5 { break; }
-
+    for (step, &freq) in freqs.iter().enumerate() {
         let omega = 2.0 * std::f64::consts::PI * freq;
         let k_wave = omega / C0;
         let k2 = k_wave * k_wave;
@@ -312,6 +391,14 @@ fn run_frequency_sweep(
 
         freq_results.push(FreqResult { freq_hz: freq, s11_re: s11.re, s11_im: s11.im });
 
+        // Track phi at the frequency with maximum |S11| (peak reflection)
+        let s11_mag = s11.norm();
+        if s11_mag > peak_s11_mag {
+            peak_s11_mag = s11_mag;
+            peak_freq_hz = freq;
+            peak_phi = phi_re.clone();
+        }
+
         #[cfg(not(target_arch = "wasm32"))]
         if step % save_step == 0 {
             output::write_field_vtk(out_dir, mesh, &phi_re, step + 1)?;
@@ -321,19 +408,16 @@ fn run_frequency_sweep(
 
     #[cfg(not(target_arch = "wasm32"))]
     output::write_s_params(out_dir, &freq_results)?;
-    log::info!("Driven solve complete: {} frequency points", freq_results.len());
-    Ok(freq_results)
+    log::info!(
+        "Driven solve complete: {} frequency points, peak |S11|={:.4} at {:.3e} Hz",
+        freq_results.len(), peak_s11_mag, peak_freq_hz
+    );
+    Ok(DrivenResult { freq_results, peak_phi, peak_freq_hz })
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-pub struct FreqResult {
-    pub freq_hz: f64,
-    pub s11_re:  f64,
-    pub s11_im:  f64,
-}
 
 /// Whether the excited port is a LumpedPort or a WavePort.
 #[derive(Debug, Clone, Copy)]

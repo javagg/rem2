@@ -100,6 +100,7 @@ async fn refresh_output_files(
     }
 }
 
+#[cfg(target_arch = "wasm32")]
 fn generate_rank_summary_csv(rank_logs: &std::collections::BTreeMap<u32, RankLog>) -> String {
     let mut out = String::from("rank,line_count,phases,last_line_snippet\n");
     
@@ -139,6 +140,7 @@ fn generate_rank_summary_csv(rank_logs: &std::collections::BTreeMap<u32, RankLog
 #[function_component(App)]
 fn app() -> Html {
     let selected = use_state(|| "spheres".to_string());
+    let selected_mode = use_state(|| 0usize); // eigenmode index (0-based)
     let running = use_state(|| false);
     let mpi_enabled = use_state(|| false);
     let rank_count = use_state(|| 4u32);
@@ -170,12 +172,14 @@ fn app() -> Html {
     let on_select = {
         let selected = selected.clone();
         let result = result.clone();
+        let selected_mode = selected_mode.clone();
         let rank_logs = rank_logs.clone();
         let rank_logs_ref = rank_logs_ref.clone();
         Callback::from(move |e: Event| {
             let el: HtmlSelectElement = e.target_unchecked_into();
             selected.set(el.value());
             result.set(None);
+            selected_mode.set(0);
             *rank_logs_ref.borrow_mut() = BTreeMap::new();
             rank_logs.set(BTreeMap::new());
         })
@@ -453,7 +457,14 @@ fn app() -> Html {
                 let run_dir = format!("runs/{}", sanitize_example_key(&key));
                 let _ = opfs::delete_dir(&run_dir).await;
 
-                match solver::run_example(&key).await {
+                // Log callback: append each line from the worker to the log panel
+                let log_text_cb = log_text.clone();
+                let on_log = move |line: String| {
+                    let current = (*log_text_cb).clone();
+                    log_text_cb.set(format!("{}{}\n", current, line));
+                };
+
+                match solver::run_example(&key, on_log).await {
                     Ok(run) => {
                         let SimRun { summary, artifacts } = run;
                         let result_json = serde_json::to_string_pretty(&summary)
@@ -644,7 +655,9 @@ fn app() -> Html {
                             <h3>{"Summary Result:"}</h3>
                             if let Some(freqs) = &r.frequencies_hz {
                                 <div>
-                                    <p><strong>{"Eigenfrequencies:"}</strong></p>
+                                    <p><strong>{"Eigenfrequencies:"}</strong>
+                                       {" (click a row to inspect that mode's field)"}
+                                    </p>
                                     <table class="s-param-table">
                                         <thead>
                                             <tr>
@@ -658,8 +671,12 @@ fn app() -> Html {
                                             let q_str = r.q_factors.as_ref()
                                                 .and_then(|qs| qs.get(i).copied())
                                                 .map(|q| if q.is_infinite() { "∞".to_string() } else { format!("{:.0}", q) });
+                                            let is_active = *selected_mode == i;
+                                            let selected_mode = selected_mode.clone();
+                                            let onclick = Callback::from(move |_: MouseEvent| selected_mode.set(i));
                                             html! {
-                                                <tr>
+                                                <tr class={if is_active { "mode-row active-mode" } else { "mode-row" }}
+                                                    onclick={onclick}>
                                                     <td>{i + 1}</td>
                                                     <td>{format!("{:.6}", f / 1e9)}</td>
                                                     { if let Some(q) = q_str { html!{ <td>{q}</td> } } else { html!{} } }
@@ -668,6 +685,14 @@ fn app() -> Html {
                                         }) }
                                         </tbody>
                                     </table>
+                                    if let Some(vecs) = &r.eigenvectors {
+                                        <p class="mode-info">
+                                            {format!("Viewing mode {} / {} — {} DOFs",
+                                                *selected_mode + 1,
+                                                vecs.len(),
+                                                vecs.get(*selected_mode).map(|v| v.len()).unwrap_or(0))}
+                                        </p>
+                                    }
                                 </div>
                             }
                             if let Some(pts) = &r.s_params {
