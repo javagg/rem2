@@ -2,10 +2,22 @@
 // Exposed as globalThis.remSim
 
 (function () {
-  // The WASM glue module stores its own import.meta.url on globalThis.__remWasmJsUrl
-  // via store_wasm_js_url() called from init_logger(). Read it from there.
+  // Find the wasm-bindgen glue JS URL by scanning performance resource entries.
+  // By the time runInWorker is called, the glue has already been fetched and
+  // its entry is present. The glue filename matches "rem-yew-*.js".
   function getWasmJsUrl() {
-    return globalThis.__remWasmJsUrl ?? null;
+    // Prefer the value set by store_wasm_js_url() if it points to the glue.
+    const stored = globalThis.__remWasmJsUrl;
+    if (stored && !stored.includes("/snippets/")) return stored;
+
+    // Fall back to scanning performance resource entries.
+    const entries = performance.getEntriesByType("resource");
+    for (const e of entries) {
+      if (/rem-yew[^/]*\.js$/.test(e.name) && !e.name.includes("/snippets/")) {
+        return e.name;
+      }
+    }
+    return null;
   }
 
   globalThis.remSim = {
