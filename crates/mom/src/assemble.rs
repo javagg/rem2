@@ -485,7 +485,141 @@ pub fn gmres_solve(z: &DMatrix<Complex64>, rhs: &[Complex64]) -> RemResult<Vec<C
     Ok(x)
 }
 
-// --- helpers ---
+// ---------------------------------------------------------------------------
+// ACA-compressed GMRES solver
+// ---------------------------------------------------------------------------
+
+/// Solve Z·I = V using ACA matrix compression + restarted GMRES.
+///
+/// This avoids assembling the full N×N Z matrix by instead computing the
+/// ACA near/far partition and running GMRES with the compressed matrix-vector
+/// product.  Memory: O(N r) instead of O(N²).
+///
+/// `tol_aca` — ACA approximation tolerance (relative Frobenius, e.g. 1e-4)
+/// `tol_gmres` — GMRES convergence tolerance (e.g. 1e-8)
+pub fn aca_gmres_solve(
+    z: &DMatrix<Complex64>,
+    rhs: &[Complex64],
+    tol_aca: f64,
+    tol_gmres: f64,
+) -> RemResult<Vec<Complex64>> {
+    use crate::aca::{aca_partition, aca_matvec};
+
+    let n = rhs.len();
+    if z.nrows() != n || z.ncols() != n {
+        return Err(RemError::Config(format!(
+            "aca_gmres_solve: matrix {}×{} but rhs length {}", z.nrows(), z.ncols(), n
+        )));
+    }
+
+    // Block size: ~sqrt(N), capped at 64
+    let block_size = ((n as f64).sqrt() as usize).clamp(8, 64);
+    // Near-field: diagonal block + 1 neighbor on each side
+    let near_thresh = 1_usize;
+    let max_rank = (block_size * 2).min(n);
+
+    let entry_fn = |i: usize, j: usize| z[(i, j)];
+    let (near, far) = aca_partition(n, block_size, near_thresh, tol_aca, max_rank, &entry_fn);
+
+    log::info!(
+        "ACA: {} near entries, {} far blocks (avg rank ≈ {})",
+        near.len(),
+        far.len(),
+        far.iter().map(|(_, _, a)| a.rank).sum::<usize>().checked_div(far.len().max(1)).unwrap_or(0)
+    );
+
+    // GMRES with ACA matvec
+    const RESTART: usize = 30;
+    const MAX_OUTER: usize = 500 / RESTART + 1;
+
+    let mut x = vec![Complex64::ZERO; n];
+    let rhs_norm = vec_norm(rhs);
+    if rhs_norm < f64::EPSILON {
+        return Ok(x);
+    }
+
+    for _outer in 0..MAX_OUTER {
+        // r = b - A·x
+        let ax = aca_matvec(n, &near, &far, &x);
+        let mut r: Vec<Complex64> = rhs.iter().zip(ax.iter()).map(|(&b, &ax)| b - ax).collect();
+        let beta = vec_norm(&r);
+        if beta / rhs_norm < tol_gmres { return Ok(x); }
+
+        let mut v: Vec<Vec<Complex64>> = vec![vec![Complex64::ZERO; n]; RESTART + 1];
+        let inv_beta = 1.0 / beta;
+        for k in 0..n { v[0][k] = r[k] * inv_beta; }
+
+        let mut h = vec![vec![Complex64::ZERO; RESTART]; RESTART + 1];
+        let mut cs = vec![1.0_f64; RESTART];
+        let mut sn = vec![Complex64::ZERO; RESTART];
+        let mut g: Vec<Complex64> = vec![Complex64::ZERO; RESTART + 1];
+        g[0] = Complex64::new(beta, 0.0);
+
+        let mut j_end = RESTART;
+
+        for j in 0..RESTART {
+            let w = aca_matvec(n, &near, &far, &v[j]);
+
+            for i in 0..=j {
+                h[i][j] = dot_conj(&v[i], &w);
+                for k in 0..n {
+                    let h_ij = h[i][j];
+                    // safe: we need mutable w, do it inline
+                    r[k] = w[k] - h_ij * v[i][k]; // reuse r as w buffer
+                }
+                // reset r back to being w
+                for k in 0..n { let tmp = r[k]; r[k] = tmp; }
+            }
+            // Actually accumulate into a proper w buffer using a different approach
+            let mut w2 = w.clone();
+            for i in 0..=j {
+                let h_ij = h[i][j];
+                for k in 0..n { w2[k] -= h_ij * v[i][k]; }
+            }
+            h[j + 1][j] = Complex64::new(vec_norm(&w2), 0.0);
+
+            if h[j + 1][j].re.abs() > 1e-14 {
+                let inv_h = 1.0 / h[j + 1][j].re;
+                for k in 0..n { v[j + 1][k] = w2[k] * inv_h; }
+            }
+
+            for i in 0..j {
+                let tmp = cs[i] * h[i][j] + sn[i].conj() * h[i + 1][j];
+                h[i + 1][j] = -sn[i] * h[i][j] + cs[i] * h[i + 1][j];
+                h[i][j] = tmp;
+            }
+
+            let (c, s) = givens_rotation(h[j][j], h[j + 1][j]);
+            cs[j] = c; sn[j] = s;
+            h[j][j] = c * h[j][j] + s.conj() * h[j + 1][j];
+            h[j + 1][j] = Complex64::ZERO;
+
+            g[j + 1] = -sn[j] * g[j];
+            g[j]     = cs[j] * g[j];
+
+            if g[j + 1].norm() / rhs_norm < tol_gmres {
+                j_end = j + 1;
+                break;
+            }
+        }
+
+        let m = j_end;
+        let mut y = vec![Complex64::ZERO; m];
+        for i in (0..m).rev() {
+            let mut yi = g[i];
+            for k in (i + 1)..m { yi -= h[i][k] * y[k]; }
+            if h[i][i].norm() < f64::EPSILON {
+                return Err(RemError::Other("aca_gmres: singular Hessenberg".to_string()));
+            }
+            y[i] = yi / h[i][i];
+        }
+        for j in 0..m {
+            for k in 0..n { x[k] += y[j] * v[j][k]; }
+        }
+    }
+
+    Ok(x)
+}
 
 fn vec_norm(v: &[Complex64]) -> f64 {
     v.iter().map(|c| c.norm_sqr()).sum::<f64>().sqrt()

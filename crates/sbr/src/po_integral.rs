@@ -2,11 +2,16 @@
 //!
 //! Accumulates PO surface currents from all ray hits and integrates them
 //! to obtain the scattered far-field and RCS pattern.
+//!
+//! PTD edge correction is applied when `ptd_edges` is provided:
+//! the fringe-current line integrals are added to the PO radiation vector N.
 
 use num_complex::Complex64;
 use rem_core::ETA0;
 use rem_mom::surface_mesh::SurfaceMesh;
 use std::f64::consts::PI;
+use crate::ptd::{BoundaryEdge, ptd_far_field_contribution};
+use crate::excitation::PlaneWave;
 
 // ---------------------------------------------------------------------------
 // Face current storage
@@ -35,8 +40,12 @@ pub fn zero_currents(surf: &SurfaceMesh) -> CurrentMap {
 
 /// Compute the bistatic RCS [m²] at observation direction r̂(θ_s, φ_s).
 ///
+/// If `ptd_edges` is `Some`, the PTD fringe-current contribution is added
+/// to the PO radiation vector before computing RCS.
+///
 /// ```text
-/// N(r̂) = Σ_m J_m * A_m * exp(+jk r̂·r_m)
+/// N(r̂) = Σ_m J_m * A_m * exp(+jk r̂·r_m)  [PO]
+///       + Σ_e ΔN_e                           [PTD correction]
 /// L(r̂) = Σ_m M_m * A_m * exp(+jk r̂·r_m)
 ///
 /// E_scat = -jkη₀/(4π) [ r̂×(r̂×N) + r̂×L/η₀ ]
@@ -45,12 +54,15 @@ pub fn zero_currents(surf: &SurfaceMesh) -> CurrentMap {
 /// ```
 ///
 /// For PEC targets M=0, and |E_inc| = 1 (unit amplitude plane wave).
-pub fn rcs_at(
+pub fn rcs_at_with_ptd(
     currents: &CurrentMap,
     surf: &SurfaceMesh,
     k: f64,
     theta_s: f64,
     phi_s: f64,
+    wave: Option<&PlaneWave>,
+    ptd_edges: Option<&[BoundaryEdge]>,
+    e_inc_at: Option<&dyn Fn(&[f64; 3]) -> [Complex64; 3]>,
 ) -> f64 {
     let (st, ct) = (theta_s.sin(), theta_s.cos());
     let (sp, cp) = (phi_s.sin(), phi_s.cos());
@@ -76,6 +88,14 @@ pub fn rcs_at(
         lx += fc.m[0] * phasor * a;
         ly += fc.m[1] * phasor * a;
         lz += fc.m[2] * phasor * a;
+    }
+
+    // PTD edge correction
+    if let (Some(wave), Some(edges), Some(e_fn)) = (wave, ptd_edges, e_inc_at) {
+        let dn = ptd_far_field_contribution(edges, wave, k, &r_hat, e_fn);
+        nx += dn[0];
+        ny += dn[1];
+        nz += dn[2];
     }
 
     // r̂ × (r̂ × N)  =  N − (r̂·N) r̂
@@ -104,6 +124,18 @@ pub fn rcs_at(
     4.0 * PI * e_sq
 }
 
+/// Compute the bistatic RCS [m²] at observation direction r̂(θ_s, φ_s).
+/// (Legacy PO-only version for backward compatibility.)
+pub fn rcs_at(
+    currents: &CurrentMap,
+    surf: &SurfaceMesh,
+    k: f64,
+    theta_s: f64,
+    phi_s: f64,
+) -> f64 {
+    rcs_at_with_ptd(currents, surf, k, theta_s, phi_s, None, None, None)
+}
+
 /// Compute RCS pattern over all (θ, φ) observation angles.
 /// Returns 2-D array `result[i_theta][i_phi]` in [m²].
 pub fn rcs_pattern(
@@ -116,6 +148,28 @@ pub fn rcs_pattern(
     theta_deg.iter().map(|&th| {
         phi_deg.iter().map(|&ph| {
             rcs_at(currents, surf, k, th.to_radians(), ph.to_radians())
+        }).collect()
+    }).collect()
+}
+
+/// Compute RCS pattern with optional PTD correction.
+pub fn rcs_pattern_with_ptd(
+    currents: &CurrentMap,
+    surf: &SurfaceMesh,
+    k: f64,
+    theta_deg: &[f64],
+    phi_deg: &[f64],
+    wave: &PlaneWave,
+    ptd_edges: &[BoundaryEdge],
+    e_inc_at: &dyn Fn(&[f64; 3]) -> [Complex64; 3],
+) -> Vec<Vec<f64>> {
+    theta_deg.iter().map(|&th| {
+        phi_deg.iter().map(|&ph| {
+            rcs_at_with_ptd(
+                currents, surf, k,
+                th.to_radians(), ph.to_radians(),
+                Some(wave), Some(ptd_edges), Some(e_inc_at),
+            )
         }).collect()
     }).collect()
 }
@@ -163,5 +217,21 @@ mod tests {
         let pat = rcs_pattern(&cur, &surf, 10.0, &[0.0, 90.0], &[0.0, 90.0]);
         assert_eq!(pat.len(), 2);
         assert_eq!(pat[0].len(), 2);
+    }
+
+    #[test]
+    fn rcs_with_ptd_no_edges_equals_po() {
+        // With an empty edge list, PTD adds nothing → same as PO-only
+        let surf = flat_surf();
+        let mut cur = zero_currents(&surf);
+        cur[0].j[0] = Complex64::new(1.0, 0.0);
+        let wave = PlaneWave { theta_inc: 0.0, phi_inc: 0.0, pol: "theta".to_string() };
+        let sigma_po  = rcs_at(&cur, &surf, 10.0, 0.5, 0.5);
+        let sigma_ptd = rcs_at_with_ptd(
+            &cur, &surf, 10.0, 0.5, 0.5,
+            Some(&wave), Some(&[]), Some(&|_| [Complex64::ZERO; 3]),
+        );
+        assert!((sigma_po - sigma_ptd).abs() < 1e-20,
+            "Expected equal RCS, got PO={sigma_po} PTD={sigma_ptd}");
     }
 }

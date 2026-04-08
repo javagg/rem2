@@ -1,18 +1,26 @@
 //! Magnetostatic solver — Phase 4.
 //!
-//! Solves the 2-D vector potential formulation:
+//! Supports two modes selected by `mesh.dim`:
 //!
+//! ## 2-D (mesh.dim == 2)
 //!   −∇·(ν ∇A_z) = J_z      (in Ω)
 //!   A_z = 0                  (on Dirichlet boundaries — Ground)
 //!
-//! where ν = 1/(μ₀ μᵣ) is the magnetic reluctivity.
+//!   Post-processing:
+//!   B_x =  ∂A_z/∂y ,   B_y = −∂A_z/∂x
 //!
-//! Post-processing:
-//!   B_x =  ∂A_z/∂y ,   B_y = −∂A_z/∂x   (from gradient of A_z)
-//!   Inductance = 2 U_mag / I²  where U_mag = (1/2) ∫ ν |∇A_z|² dΩ
+//! ## 3-D (mesh.dim == 3)
+//!   Three decoupled vector-potential Poisson problems:
+//!   −∇·(ν ∇Aᵢ) = Jᵢ   for i ∈ {x, y, z}
 //!
-//! The assembly is identical to the electrostatic solver — only the
-//! coefficient (ν vs ε) and the interpretation of the solution differ.
+//!   Post-processing (curl):
+//!   B_x = ∂Az/∂y − ∂Ay/∂z
+//!   B_y = ∂Ax/∂z − ∂Az/∂x
+//!   B_z = ∂Ay/∂x − ∂Ax/∂y
+//!
+//! The assembly reuses `rem_electrostatic::assemble_stiffness` which already
+//! handles both Tri3 (2-D) and Tet4 (3-D).  Gradient recovery likewise works
+//! for both element types.
 
 use rem_config::PalaceConfig;
 use rem_core::{RemResult, solve_pcg};
@@ -27,8 +35,6 @@ use std::path::Path;
 
 /// Entry point called from rem-cli.
 pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
-    log::info!("=== Magnetostatic solver (2-D A_z) ===");
-
     if config.solver.order > 1 {
         log::warn!(
             "Solver.Order={} requested but only P1 (order=1) is implemented; \
@@ -47,6 +53,19 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
         mesh.n_nodes(), mesh.n_volume_elements(), mesh.dim
     );
 
+    if mesh.dim == 3 {
+        log::info!("=== Magnetostatic solver (3-D vector potential) ===");
+        return run_3d(config, mesh, comm);
+    }
+    log::info!("=== Magnetostatic solver (2-D A_z) ===");
+    run_2d(config, mesh, comm)
+}
+
+// ---------------------------------------------------------------------------
+// 2-D path (A_z scalar)
+// ---------------------------------------------------------------------------
+
+fn run_2d(config: &PalaceConfig, mesh: RemMesh, comm: &dyn Comm) -> RemResult<()> {
     let domain_map = DomainMap::from_config(config)?;
     let output_dir = Path::new(config.problem.output_dir());
 
@@ -105,6 +124,107 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
     write_outputs(output_dir, &final_mesh, &az, &b_field, energy)?;
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 3-D path (Ax, Ay, Az vector potential — three decoupled scalar solves)
+// ---------------------------------------------------------------------------
+
+/// Run the 3-D magnetostatic solver.
+///
+/// Solves three independent scalar Poisson problems:
+///   −∇·(ν ∇Aᵢ) = 0   for i ∈ {x, y, z}
+///
+/// Boundary conditions:
+///   Ground / PEC → Aᵢ = 0 on the boundary
+///   SurfaceCurrent (excited) → Az = 1, Ax = Ay = 0 (z-directed excitation default)
+///
+/// Post-processing (curl, from gradient_recovery which returns −∇Aᵢ):
+///   B_x = ∂Az/∂y − ∂Ay/∂z  = −gz[1] − (−gy[2]) = gy[2] − gz[1]
+///   B_y = ∂Ax/∂z − ∂Az/∂x  = −gx[2] − (−gz[0]) = gz[0] − gx[2]
+///   B_z = ∂Ay/∂x − ∂Ax/∂y  = −gy[0] − (−gx[1]) = gx[1] − gy[0]
+fn run_3d(config: &PalaceConfig, mesh: RemMesh, comm: &dyn Comm) -> RemResult<()> {
+    let domain_map = DomainMap::from_config(config)?;
+    let output_dir = Path::new(config.problem.output_dir());
+    let excited_tag = find_surface_current_tag(&mesh);
+
+    // Three decoupled solves: excite Az=1, Ax=Ay=0 (z-directed current port)
+    let (ax, ay, az) = solve_3d(config, &mesh, &domain_map, excited_tag, comm)?;
+
+    // gradient_recovery returns g = −∇Aᵢ per node  (sign: g[j] = −∂Aᵢ/∂xⱼ)
+    let gx = postprocess::gradient_recovery(&ax, &mesh);
+    let gy = postprocess::gradient_recovery(&ay, &mesh);
+    let gz = postprocess::gradient_recovery(&az, &mesh);
+
+    let n = mesh.n_nodes();
+    let b_field: Vec<[f64; 3]> = (0..n).map(|i| [
+        gy[i][2] - gz[i][1],   // Bx = ∂Az/∂y − ∂Ay/∂z
+        gz[i][0] - gx[i][2],   // By = ∂Ax/∂z − ∂Az/∂x
+        gx[i][1] - gy[i][0],   // Bz = ∂Ay/∂x − ∂Ax/∂y
+    ]).collect();
+
+    // Magnetic energy: U = (1/2) ∫ ν (|∇Ax|² + |∇Ay|² + |∇Az|²) dΩ
+    let nu_fn = |tag: u32| domain_map.get(tag).reluctivity();
+    let energy = postprocess::electrostatic_energy(&ax, &mesh, nu_fn)
+               + postprocess::electrostatic_energy(&ay, &mesh, nu_fn)
+               + postprocess::electrostatic_energy(&az, &mesh, nu_fn);
+    log::info!("3-D magnetic energy: {:.6e} J", energy);
+
+    write_outputs(output_dir, &mesh, &az, &b_field, energy)
+}
+
+/// Solve the 3-D vector potential: three decoupled scalar Poisson systems.
+///
+/// Returns `(Ax, Ay, Az)` — nodal coefficient vectors of length `mesh.n_nodes()`.
+///
+/// The stiffness matrix K (built from the reluctivity ν) is assembled once and
+/// reused for all three component solves.  Boundary conditions:
+///   - Ground / PEC: Aᵢ = 0
+///   - SurfaceCurrent (excited): Az = 1 (z-directed), Ax = Ay = 0
+///
+/// Exposed as `pub` for tests and external callers.
+pub fn solve_3d(
+    config: &PalaceConfig,
+    mesh: &RemMesh,
+    domain_map: &DomainMap,
+    excitation_tag: Option<u32>,
+    comm: &dyn Comm,
+) -> RemResult<(Vec<f64>, Vec<f64>, Vec<f64>)> {
+    let nu_fn = |tag: u32| domain_map.get(tag).reluctivity();
+    let triplet = assemble::assemble_stiffness(mesh, nu_fn)?;
+    let n = mesh.n_nodes();
+    let lin = &config.solver.linear;
+
+    // Component excitation values: [Ax_val, Ay_val, Az_val]
+    let excitation_values = [0.0_f64, 0.0, 1.0];
+    let labels = ["x", "y", "z"];
+
+    let mut solutions: [Vec<f64>; 3] = [
+        vec![0.0; n],
+        vec![0.0; n],
+        vec![0.0; n],
+    ];
+
+    for comp in 0..3 {
+        let mut mat = triplet.clone().to_csr();
+        let mut rhs = vec![0.0f64; n];
+
+        let dofs = collect_magnetostatic_dofs(mesh, excitation_tag, excitation_values[comp]);
+        bc::apply_dirichlet(&mut mat, &mut rhs, &dofs);
+
+        let result = solve_pcg(&mat, &rhs, lin.tol, lin.max_iter, comm);
+        if result.converged {
+            log::info!("3-D A{}: PCG converged in {} iters (|r|={:.2e})",
+                labels[comp], result.iterations, result.residual_norm);
+        } else {
+            log::warn!("3-D A{}: PCG did NOT converge after {} iters",
+                labels[comp], result.iterations);
+        }
+        solutions[comp] = result.solution;
+    }
+
+    let [ax, ay, az] = solutions;
+    Ok((ax, ay, az))
 }
 
 /// Solve a single magnetostatic problem.
@@ -375,4 +495,151 @@ mod tests {
             "ν_iron={:.6e}, expected={:.6e}", nu_iron, expected
         );
     }
+
+    // -----------------------------------------------------------------------
+    // 3-D tests
+    // -----------------------------------------------------------------------
+
+    /// Build a unit-cube mesh split into 6 tetrahedra sharing the diagonal.
+    ///
+    /// Boundary conditions:
+    ///   tag 10 (face z=0): Ground → Aᵢ = 0
+    ///   tag 11 (face z=1): SurfaceCurrent { index: 1 } → Az = 1, Ax = Ay = 0
+    fn unit_cube_tet_mesh() -> RemMesh {
+        // 8 corner nodes of the unit cube
+        let nodes = vec![
+            Node { id: 0, x: 0.0, y: 0.0, z: 0.0 },
+            Node { id: 1, x: 1.0, y: 0.0, z: 0.0 },
+            Node { id: 2, x: 1.0, y: 1.0, z: 0.0 },
+            Node { id: 3, x: 0.0, y: 1.0, z: 0.0 },
+            Node { id: 4, x: 0.0, y: 0.0, z: 1.0 },
+            Node { id: 5, x: 1.0, y: 0.0, z: 1.0 },
+            Node { id: 6, x: 1.0, y: 1.0, z: 1.0 },
+            Node { id: 7, x: 0.0, y: 1.0, z: 1.0 },
+        ];
+        // 6 tetrahedra (standard "Sommerville" decomposition of the unit cube)
+        let tets = [
+            [0usize, 1, 3, 4],
+            [1, 3, 4, 5],
+            [3, 4, 5, 7],
+            [1, 2, 3, 5],
+            [2, 3, 5, 6],
+            [3, 5, 6, 7],
+        ];
+        let volume_elements: Vec<Element> = tets.iter().enumerate()
+            .map(|(i, ns)| Element {
+                id: i + 1,
+                kind: ElementKind::Tet4,
+                tag: 1,
+                node_ids: ns.to_vec(),
+                rank: 0,
+            })
+            .collect();
+
+        // Boundary faces: triangles on z=0 (tag 10) and z=1 (tag 11)
+        // z=0 face: nodes 0,1,2,3  → two triangles
+        // z=1 face: nodes 4,5,6,7  → two triangles
+        let boundary_elements = vec![
+            Element { id: 100, kind: ElementKind::Tri3, tag: 10, node_ids: vec![0, 1, 2], rank: 0 },
+            Element { id: 101, kind: ElementKind::Tri3, tag: 10, node_ids: vec![0, 2, 3], rank: 0 },
+            Element { id: 102, kind: ElementKind::Tri3, tag: 11, node_ids: vec![4, 5, 6], rank: 0 },
+            Element { id: 103, kind: ElementKind::Tri3, tag: 11, node_ids: vec![4, 6, 7], rank: 0 },
+        ];
+        let mut boundary_tags: HashMap<u32, BoundaryTag> = HashMap::new();
+        boundary_tags.insert(10, BoundaryTag::Ground);
+        boundary_tags.insert(11, BoundaryTag::SurfaceCurrent { index: 1 });
+
+        RemMesh {
+            nodes, volume_elements, boundary_elements,
+            domain_tags: Default::default(),
+            boundary_tags,
+            dim: 3,
+            rank: 0,
+            size: 1,
+        }
+    }
+
+    #[test]
+    fn magnetostatic_3d_linear_az() {
+        // Az = 0 at z=0 and Az = 1 at z=1, no sources → Az = z (linear) exactly.
+        // Ax = Ay = 0 everywhere (no x/y excitation).
+        let mesh = unit_cube_tet_mesh();
+        let config = default_config();
+        let domain_map = DomainMap::from_config(&config).unwrap();
+
+        let (ax, ay, az) = solve_3d(&config, &mesh, &domain_map, Some(1), &NoComm).unwrap();
+
+        for (i, node) in mesh.nodes.iter().enumerate() {
+            let exact_az = node.z;
+            let err_az = (az[i] - exact_az).abs();
+            assert!(
+                err_az < 1e-10,
+                "node {}: Az={:.6}, exact={:.6}, err={:.2e}",
+                i, az[i], exact_az, err_az
+            );
+            // Ax and Ay should be zero (all-zero BCs)
+            assert!(
+                ax[i].abs() < 1e-12,
+                "node {}: Ax={:.2e} (should be 0)", i, ax[i]
+            );
+            assert!(
+                ay[i].abs() < 1e-12,
+                "node {}: Ay={:.2e} (should be 0)", i, ay[i]
+            );
+        }
+    }
+
+    #[test]
+    fn magnetostatic_3d_b_field_from_linear_az() {
+        // A = (0, 0, z) → B = ∇×A = (∂Az/∂y − 0, 0 − ∂Az/∂x, 0) = (0, 0, 0)
+        // Wait — that's trivial for A = z ẑ.  Check gradient_recovery gives correct
+        // ∂Az/∂z = 1 (→ gz[2] = −1 in E-field convention), ∂Az/∂x = ∂Az/∂y = 0.
+        let mesh = unit_cube_tet_mesh();
+        let az: Vec<f64> = mesh.nodes.iter().map(|n| n.z).collect();
+        let ax = vec![0.0f64; mesh.n_nodes()];
+        let ay = vec![0.0f64; mesh.n_nodes()];
+
+        let gx = postprocess::gradient_recovery(&ax, &mesh);
+        let gy = postprocess::gradient_recovery(&ay, &mesh);
+        let gz = postprocess::gradient_recovery(&az, &mesh);
+
+        // A=(0,0,z) → B = curl A = (∂Az/∂y − ∂Ay/∂z, ∂Ax/∂z − ∂Az/∂x, ∂Ay/∂x − ∂Ax/∂y)
+        //           = (0, 0, 0)  — uniform ẑ potential has zero curl
+        let n = mesh.n_nodes();
+        for i in 0..n {
+            let bx = gy[i][2] - gz[i][1];
+            let by = gz[i][0] - gx[i][2];
+            let bz = gx[i][1] - gy[i][0];
+            assert!(bx.abs() < 1e-10, "node {}: Bx={:.2e}", i, bx);
+            assert!(by.abs() < 1e-10, "node {}: By={:.2e}", i, by);
+            assert!(bz.abs() < 1e-10, "node {}: Bz={:.2e}", i, bz);
+        }
+    }
+
+    #[test]
+    fn magnetostatic_3d_curl_nonzero() {
+        // A = (0, x, 0) → B = ∇×A = (0, 0, ∂Ay/∂x − 0) = (0, 0, 1)  [uniform Bz]
+        // Set Ay = node.x for all nodes.
+        let mesh = unit_cube_tet_mesh();
+        let ax = vec![0.0f64; mesh.n_nodes()];
+        let ay: Vec<f64> = mesh.nodes.iter().map(|n| n.x).collect();
+        let az = vec![0.0f64; mesh.n_nodes()];
+
+        let gx = postprocess::gradient_recovery(&ax, &mesh);
+        let gy = postprocess::gradient_recovery(&ay, &mesh);
+        let _gz = postprocess::gradient_recovery(&az, &mesh);
+
+        // B = (gy[2]−gz[1], gz[0]−gx[2], gx[1]−gy[0])
+        // Ay = x → ∇Ay = (1, 0, 0) → gy = −∇Ay = (−1, 0, 0)
+        // So Bz = gx[1]−gy[0] = 0 − (−1) = 1
+        let n = mesh.n_nodes();
+        for i in 0..n {
+            let bz = gx[i][1] - gy[i][0];
+            assert!(
+                (bz - 1.0).abs() < 1e-10,
+                "node {}: Bz={:.6} (expected 1.0)", i, bz
+            );
+        }
+    }
 }
+

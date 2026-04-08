@@ -8,7 +8,10 @@ use rem_mom::surface_mesh::SurfaceMesh;
 use std::io::Write as IoWrite;
 use std::path::Path;
 
-use crate::po_integral::{CurrentMap, rcs_pattern};
+use crate::po_integral::{CurrentMap, rcs_pattern, rcs_pattern_with_ptd};
+use crate::ptd::BoundaryEdge;
+use crate::excitation::PlaneWave;
+use num_complex::Complex64;
 
 // ---------------------------------------------------------------------------
 // VTK surface current output
@@ -81,6 +84,7 @@ pub fn write_surface_vtk(
 /// Append RCS results to `<output_dir>/postpro/rcs_sbr.csv`.
 ///
 /// Header is written on first creation. Format matches `rem_mom::postprocess`.
+/// If `ptd_edges` and `wave` are provided, PTD fringe correction is applied.
 pub fn write_rcs(
     output_dir: &Path,
     freq: f64,
@@ -89,6 +93,38 @@ pub fn write_rcs(
     k: f64,
     theta_deg: &[f64],
     phi_deg: &[f64],
+) -> RemResult<()> {
+    write_rcs_inner(output_dir, freq, currents, surf, k, theta_deg, phi_deg, None, None, None)
+}
+
+/// Append RCS results with PTD correction.
+pub fn write_rcs_with_ptd(
+    output_dir: &Path,
+    freq: f64,
+    currents: &CurrentMap,
+    surf: &SurfaceMesh,
+    k: f64,
+    theta_deg: &[f64],
+    phi_deg: &[f64],
+    wave: &PlaneWave,
+    ptd_edges: &[BoundaryEdge],
+    e_inc_at: &dyn Fn(&[f64; 3]) -> [Complex64; 3],
+) -> RemResult<()> {
+    write_rcs_inner(output_dir, freq, currents, surf, k, theta_deg, phi_deg,
+                    Some(wave), Some(ptd_edges), Some(e_inc_at))
+}
+
+fn write_rcs_inner(
+    output_dir: &Path,
+    freq: f64,
+    currents: &CurrentMap,
+    surf: &SurfaceMesh,
+    k: f64,
+    theta_deg: &[f64],
+    phi_deg: &[f64],
+    wave: Option<&PlaneWave>,
+    ptd_edges: Option<&[BoundaryEdge]>,
+    e_inc_at: Option<&dyn Fn(&[f64; 3]) -> [Complex64; 3]>,
 ) -> RemResult<()> {
     let path = output_dir.join("postpro").join("rcs_sbr.csv");
     let write_header = !path.exists();
@@ -102,9 +138,16 @@ pub fn write_rcs(
 
     let freq_ghz = freq / 1.0e9;
 
+    let pattern = match (wave, ptd_edges, e_inc_at) {
+        (Some(w), Some(e), Some(f)) => {
+            rcs_pattern_with_ptd(currents, surf, k, theta_deg, phi_deg, w, e, f)
+        }
+        _ => rcs_pattern(currents, surf, k, theta_deg, phi_deg),
+    };
+
     for (i_th, &th) in theta_deg.iter().enumerate() {
         for (i_ph, &ph) in phi_deg.iter().enumerate() {
-            let sigma_m2 = rcs_pattern(currents, surf, k, &theta_deg[i_th..=i_th], &phi_deg[i_ph..=i_ph])[0][0];
+            let sigma_m2 = pattern[i_th][i_ph];
             let rcs_dbsm = if sigma_m2 > 1e-40 {
                 10.0 * sigma_m2.log10()
             } else {

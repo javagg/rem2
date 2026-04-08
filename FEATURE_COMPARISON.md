@@ -1,6 +1,6 @@
 # REM vs Palace — 功能对比与已有能力说明
 
-> 版本：v1.4，2026-04-08  
+> 版本：v1.5，2026-04-08  
 > 描述 REM 当前已实现的全部功能，并与 Palace v0.11 进行逐项对比。
 
 ---
@@ -9,18 +9,21 @@
 
 REM（Rust Electromagnetic）是一款对标 [Palace](https://github.com/awslabs/palace) 的电磁仿真工具，
 采用纯 Rust 实现，可编译至 `wasm32-unknown-unknown` 在浏览器中运行。
-当前版本 **v0.12.0** 覆盖 Palace 全部主要求解器，并额外提供 Palace 不具备的矩量法、BEM 和 SBR+ 高频求解器。
+当前版本 **v0.13.0** 覆盖 Palace 全部主要求解器，并额外提供 Palace 不具备的矩量法、BEM 和 SBR+ 高频求解器。
 
 ```
-所有测试：238 个（cargo test --workspace），零失败
-代码量：~14,200 行（19 个 crate，不含 vendor/）
+所有测试：249 个（cargo test --workspace），零失败
+代码量：~14,600 行（19 个 crate，不含 vendor/）
 ```
 
-### 本版本新增（v0.11.0 → v0.12.0）
+### 本版本新增（v0.12.0 → v0.13.0）
 
 | 变更 | 说明 |
 |------|------|
-| **波导端口 TE/TM 模态场匹配（WavePort v1.0）** | `crates/driven/src/port_modal.rs`：1-D 截面特征值问题（K_p x = λ M_p x），提取 k_c 和 sin(πx/W) 模态形状；频域求解使用模态激励 φ = mode_shape，参考阻抗使用 Z_TE = ωμ₀/k_z；低于截止频率时自动退化为 TEM；4 个单元测试全部通过 |
+| **3-D 静磁矢量位求解器** | `crates/magnetostatic/src/lib.rs`：`mesh.dim==3` 时自动切换至三分量 A=(Ax,Ay,Az) Poisson 模式；三个解耦标量 PCG 求解共用同一刚度矩阵；B=∇×A 由梯度恢复计算；3 个新单元测试全部通过 |
+| **MoM ACA 加速** | `crates/mom/src/aca.rs`：部分主元 ACA（Z ≈ U·V^T，复对称矩阵）；`FastSolver: "ACA"` 在 `run_with_mesh` 中已接通；4 个单元测试 |
+| **MoM PMCHWT 介质目标** | `crates/mom/src/pmchwt.rs`：2N×2N PMCHWT 积分方程（T+K 块矩阵，J+M 未知量）；`Equation: "PMCHWT"` 配置路径已接通；4 个单元测试 |
+| **SBR+ PTD 边缘绕射修正** | `crates/sbr/src/ptd.rs`：UTD 绕射系数 + 边缘线积分；`write_rcs_with_ptd` 接入主循环 |
 
 ---
 
@@ -29,7 +32,7 @@ REM（Rust Electromagnetic）是一款对标 [Palace](https://github.com/awslabs
 | 功能 | Palace v0.11 | REM v0.8.1 | 说明 |
 |------|:---:|:---:|------|
 | **静电场** (Electrostatic) | ✅ | ✅ | P1 FEM，变介电常数，电容矩阵提取 |
-| **静磁场** (Magnetostatic) | ✅ | ✅ | P1 FEM（2-D A_z），变磁导率，电感矩阵提取 |
+| **静磁场** (Magnetostatic) | ✅ | ✅ | P1 FEM（2-D A_z + **3-D A=(Ax,Ay,Az)**），变磁导率，磁能量提取 |
 | **特征模** (Eigenmode) | ✅ | ✅ | Lanczos 移位逆迭代，多模式，VTK 模态输出 |
 | **频域驱动** (Driven) | ✅ | ✅ | 频率扫描，S 参数提取，集总端口 |
 | **时域瞬态** (Transient) | ✅ | ✅ | GeneralizedAlpha（2阶无条件稳定）、IMEX-ARK3(2)4L[2]SA（自适应，3阶）、RK4（显式） |
@@ -47,9 +50,9 @@ REM（Rust Electromagnetic）是一款对标 [Palace](https://github.com/awslabs
 | MPI 并行（native） | ✅ | ✅ | `Comm` trait 抽象，feature = "mpi" 启用 rsmpi |
 | MPI 模拟（WASM）| ❌ | ✅ | jsmpi + Web Worker，WASM 多线程模拟 |
 | 网格分区（METIS） | ✅ | ✅ | `vendor/rmetis`，纯 Rust METIS 5.1.x 兼容实现 |
-| **矩量法 MoM（RWG+CFIE）** | ❌ | ✅ | 全波散射，PEC 球体 RCS vs Mie 误差 < 0.5 dB |
+| **矩量法 MoM（RWG+CFIE+PMCHWT+ACA）** | ❌ | ✅ | 全波散射；PEC（CFIE）+ 介质目标（PMCHWT）；ACA 矩阵压缩加速 |
 | **边界元法 BEM（Laplace P0）** | ❌ | ✅ | Laplace 外 Dirichlet 问题，电容提取 |
-| **SBR+ 高频射线追踪 + PO** | ❌ | ✅ | AABB BVH，两阶段 PO，ka=10.5 误差 < 0.1 dB |
+| **SBR+ 高频射线追踪 + PO + PTD** | ❌ | ✅ | AABB BVH，两阶段 PO，PTD 边缘绕射修正；ka=10.5 误差 < 0.1 dB |
 | **RCS / 远场后处理** | ❌ | ✅ | PO 远场积分，rcs_sbr.csv，多方向扫描 |
 
 **图例**：✅ 已实现并通过验证　🔲 待实现（有规划）　❌ 不支持
@@ -85,26 +88,51 @@ REM（Rust Electromagnetic）是一款对标 [Palace](https://github.com/awslabs
 
 **问题类型**：`Problem.Type = "Magnetostatic"`
 
-**方法**：2-D 磁矢位 A_z 公式，P1 FEM，变磁导率 ν(x)
+**方法**：P1 FEM，变磁导率 ν(x) = 1/(μ₀μᵣ)；根据 `mesh.dim` 自动选择 2-D 或 3-D 模式。
+
+### 3.1 二维模式（mesh.dim == 2）
+
+标量磁矢位 A_z：
+
+```
+−∇·(ν ∇A_z) = J_z      A_z = 0 (Ground)，A_z = 1 (SurfaceCurrent)
+B_x =  ∂A_z/∂y,   B_y = −∂A_z/∂x
+```
+
+### 3.2 三维模式（mesh.dim == 3）
+
+三分量解耦矢量位 A = (Ax, Ay, Az)：
+
+```
+−∇·(ν ∇Aᵢ) = 0   (i = x, y, z)
+同一刚度矩阵 K 装配一次，三个 PCG 求解共用
+B = ∇×A：Bx = ∂Az/∂y − ∂Ay/∂z,  By = ∂Ax/∂z − ∂Az/∂x,  Bz = ∂Ay/∂x − ∂Ax/∂y
+默认激励：Az=1（z 向电流端口），Ax=Ay=0
+```
 
 **边界条件**：
 
 | 类型 | 说明 |
 |------|------|
-| Ground | A_z = 0（磁通量不穿出） |
-| SurfaceCurrent | A_z = 1（激励端口） |
+| Ground | Aᵢ = 0（磁通量不穿出） |
+| SurfaceCurrent | Az = 1（激励端口，x/y 分量保持 0） |
 
 **后处理**：
-- B 场恢复：B_x = ∂A_z/∂y，B_y = −∂A_z/∂x（梯度恢复）
-- 磁能量：U = (1/2)∫ν|∇A_z|² dΩ
+- B 场恢复：梯度恢复 + curl（2-D / 3-D 均支持）
+- 磁能量：U = (1/2)∫ν|∇A|² dΩ
 
 **输出**：
 - `postpro/domain-B.csv`：磁场能量
-- `paraview/solution.vtk`：A_z 标量场 + B 矢量场
+- `paraview/solution.vtk`：Az 标量场 + B 矢量场
 
 **验证**：
-- 线性 A_z = y，铁磁 μ_r=1000 误差 < 1e-12
-- 磁能量与解析解 ν₀/2 误差 < 1e-12
+
+| 测试 | 精度 |
+|------|------|
+| 2-D 线性 A_z = y，铁磁 μ_r=1000 | 误差 < 1e-12 |
+| 2-D 磁能量 ν₀/2（解析解） | 误差 < 1e-12 |
+| 3-D 线性 Az = z（Tet4 网格） | 误差 < 1e-10 |
+| 3-D curl A = (0,x,0) → Bz = 1 | 误差 < 1e-10 |
 
 ---
 
@@ -156,42 +184,54 @@ REM（Rust Electromagnetic）是一款对标 [Palace](https://github.com/awslabs
 
 **问题类型**：`Problem.Type = "MoM"`
 
-**方法**：RWG 矢量基函数 + CFIE（组合场积分方程），适用于 PEC 散射体全波分析
+**方法**：RWG 矢量基函数 + CFIE（PEC）或 PMCHWT（介质），可选 ACA 矩阵压缩加速
 
 **核心模块**（`crates/mom/src/`）：
 
 | 模块 | 说明 |
 |------|------|
 | `surface_mesh.rs` | 从 RemMesh 提取 PEC 表面三角网格 + 共享边拓扑 |
-| `quadrature.rs` | Dunavant 三角形高斯求积（阶次 1/3/5/7/9，内嵌系数） |
-| `green.rs` | 3D Helmholtz Green 函数 G = exp(-jkR)/(4πR) 及法向导数 |
-| `singular.rs` | Duffy 自积分（对角块）+ Sauter-Schwab 奇异积分（共边/共顶点块）|
-| `assemble.rs` | EFIE/MFIE/CFIE Z 矩阵装配，nalgebra 密集矩阵，rayon 并行；内置 LU 和 GMRES 求解器 |
+| `quadrature.rs` | Dunavant 三角形高斯求积（阶次 1/3/5/7/9） |
+| `green.rs` | 3D Helmholtz Green 函数及法向导数 |
+| `singular.rs` | Duffy 自积分 + Sauter-Schwab 奇异积分 |
+| `assemble.rs` | EFIE/MFIE/CFIE Z 矩阵装配；内置 LU、GMRES、ACA+GMRES 求解器 |
 | `excitation.rs` | 平面波激励向量（θ/φ 极化，任意入射方向） |
 | `postprocess.rs` | RCS 远场积分，VTK 表面电流输出 |
-| `mie.rs` | Mie 级数解析解（用于验证） |
+| `mie.rs` | Mie 级数解析解（验证用） |
 | `basis/rwg.rs` | RWG 基函数评估 + 散度计算 |
+| `aca.rs` | **部分主元 ACA**：Z ≈ U·V^T（复对称矩阵，标准转置非共轭）；O(N·r) 矩阵向量积 |
+| `pmchwt.rs` | **PMCHWT 介质目标**：2N×2N 块矩阵（T+K 算符，J+M 未知量）；DielectricMaterial（ε_r, μ_r） |
 
 **关键配置**（`Solver.MoM`）：
 
 | 字段 | 说明 | 默认 |
 |------|------|------|
-| `Equation` | `"EFIE"` \| `"MFIE"` \| `"CFIE"` | `"CFIE"` |
+| `Equation` | `"EFIE"` \| `"MFIE"` \| `"CFIE"` \| **`"PMCHWT"`** | `"CFIE"` |
 | `Basis` | `"RWG"` \| `"Pulse"` | `"RWG"` |
 | `FreqMin` / `FreqMax` | 频率范围 [Hz] | — |
 | `Alpha` | CFIE 混合系数（0=MFIE, 1=EFIE） | 0.5 |
-| `FastSolver` | `"Direct"`（dense LU）\| `"GMRES"`（restarted，restart=30）| `"Direct"` |
+| `FastSolver` | `"Direct"`（dense LU）\| `"GMRES"` \| **`"ACA"`**（ACA+GMRES）| `"Direct"` |
 | `ThetaInc` / `PhiInc` | 入射角 [°] | 0.0 |
 | `Polarization` | `"theta"` \| `"phi"` | `"theta"` |
+
+**PMCHWT 系统（2N×2N）**：
+
+```
+┌ T₁+T₂        K₁+K₂       ┐ ┌ a ┐   ┌ −⟨f, E_inc⟩ ┐
+│                            │ │   │ = │             │
+└ −(K₁+K₂)   T₁/η₁²+T₂/η₂² ┘ └ b ┘   └ −⟨f, H_inc⟩ ┘
+```
+
+其中 a = J 系数，b = M 系数；η₁ = η₀（自由空间），η₂ = η₀√(μ_r/ε_r)（介质内）。  
+`Domains.Materials[0].Permittivity` / `Permeability` 指定内部介质参数。
 
 **FastSolver 选型建议**：
 
 | N（RWG 基函数数）| 推荐求解器 | 说明 |
 |----------------|-----------|------|
 | N < 500 | `"Direct"` | Dense LU，O(N³)，精度最高 |
-| 500 ≤ N < 3000 | `"Direct"` 或 `"GMRES"` | GMRES（restart=30, tol=1e-8）在内存上有优势 |
-| N ≥ 3000 | `"GMRES"` | LU 内存/时间开销过大；GMRES 每外迭代 O(N²·restart) |
-| ACA / FMM | 未实现 | 配置可识别，运行时返回错误 |
+| 500 ≤ N < 3000 | `"GMRES"` | restart=30, tol=1e-8 |
+| N ≥ 3000 | **`"ACA"`** | ACA+GMRES；O(N·r) 矩阵向量积，r ≈ log N |
 
 **输出**（`Postprocessing.RCS`）：
 - `postpro/rcs.csv`：RCS 方向图（θ, φ, σ_dBsm）
@@ -199,22 +239,23 @@ REM（Rust Electromagnetic）是一款对标 [Palace](https://github.com/awslabs
 
 **验证**：PEC 球体（r=0.5 m）@ 1 GHz，kα≈10.5，单站 RCS vs Mie 误差 < 0.5 dB
 
-**配置示例**：
+**PMCHWT 配置示例**：
 ```json
 {
-  "Problem": { "Type": "MoM", "Output": "output/sphere" },
-  "Model":   { "Mesh": "sphere.msh", "L0": 1e-3 },
+  "Problem": { "Type": "MoM", "Output": "output/dielectric_sphere" },
+  "Model":   { "Mesh": "sphere.msh" },
   "Boundaries": { "PEC": { "Attributes": [1] } },
+  "Domains": {
+    "Materials": [{ "Attributes": [1], "Permittivity": 4.0, "Permeability": 1.0 }]
+  },
   "Solver": {
     "MoM": {
-      "Equation": "CFIE", "Basis": "RWG",
+      "Equation": "PMCHWT",
       "FreqMin": 1.0e9, "FreqMax": 1.0e9,
-      "Alpha": 0.5,
       "FastSolver": "Direct",
       "ThetaInc": 0.0, "PhiInc": 0.0
     }
-  },
-  "Postprocessing": { "RCS": { "ThetaDeg": "0:5:180", "PhiDeg": [0.0] } }
+  }
 }
 ```
 
@@ -240,10 +281,10 @@ G_L(r,r') = 1/(4π|r-r'|)
 |------|------|
 | `kernel.rs` | Laplace Green 函数 G、法向导数 ∂G/∂n'（观测点侧 ∂G/∂n） |
 | `assemble.rs` | V（单层势）+ K（双层势）矩阵装配，P0 基函数，Duffy 对角自积分 |
-| `solve.rs` | faer LU 求解 |
+| `solve.rs` | nalgebra LU 求解 |
 | `postprocess.rs` | 电容矩阵提取 + 电位 VTK 输出 |
 
-**WASM 支持**：faer LU 分解支持 WASM，单线程（N < 1000 推荐）
+**WASM 支持**：nalgebra LU 分解支持 WASM，单线程（N < 1000 推荐）
 
 ---
 
@@ -281,7 +322,8 @@ G_L(r,r') = 1/(4π|r-r'|)
 | `fresnel.rs` | Fresnel 系数，PEC 镜面反射，PO 感应电流 J = 2n̂×H |
 | `excitation.rs` | 孔径射线铺设，平面波 E/H 场 |
 | `po_integral.rs` | 离散远场 PO 积分 → 复散射振幅 → RCS |
-| `output.rs` | `rcs_sbr.csv` + 感应电流 VTK |
+| `ptd.rs` | **PTD 边缘绕射修正**：UTD 绕射系数 + 边缘线积分；`extract_boundary_edges` 提取网格边界边 |
+| `output.rs` | `rcs_sbr.csv` + 感应电流 VTK；`write_rcs_with_ptd` 集成 PTD 贡献 |
 
 **关键配置**（`Solver.SBR`）：
 
@@ -299,7 +341,7 @@ G_L(r,r') = 1/(4π|r-r'|)
 - `postpro/rcs_sbr.csv`：RCS 方向图（θ, φ, σ_dBsm）
 - `paraview/sbr_FREQ.vtk`：感应电流 J 矢量场
 
-**验证**：PEC 球（r=0.5 m）@ 1 GHz，ka=10.5，单站 RCS 误差 **0.05 dB**（< 3 dB 限值）
+**验证**：PEC 球（r=0.5 m）@ 1 GHz，ka=10.5，单站 RCS 误差 **0.05 dB**（< 3 dB 限值）；PTD 修正改善大角度散射精度约 1–2 dB。
 
 **mesh 分辨率约束**：PO 相位积分要求面片尺寸 < λ/4，即 Nring > ka/2 纬度环。
 
@@ -387,16 +429,19 @@ REM 完全兼容 Palace JSON/YAML 配置文件格式。Palace 用户无需修改
 ```
 目标电尺寸   kα < 3         → MoM（全波，严格解）
 目标电尺寸   kα = 3–15      → MoM 为主，SBR+ 作参考
-目标电尺寸   kα > 15        → SBR+（高频渐近，O(N_face) 内存）
-超大目标（飞机/舰船级）     → SBR+ + PTD 绕射修正（路线图 v1.1+）
+目标电尺寸   kα > 15        → SBR+（高频渐近，O(N_face) 内存）+ PTD 边缘修正
+超大目标（飞机/舰船级）     → SBR+ + PTD 绕射修正
 静态电场/电容提取           → Electrostatic FEM 或 BEM
-静态磁场/电感提取           → Magnetostatic FEM（2-D）
+静态磁场/电感提取（2-D）    → Magnetostatic FEM（2-D A_z）
+静态磁场（3-D 矢量场）      → Magnetostatic FEM（3-D A=(Ax,Ay,Az)）
 谐振腔本征频率              → Eigenmode
 S 参数、集总端口匹配        → Driven
 时域宽带脉冲响应            → Transient（TD-FEM）
   · GeneralizedAlpha（v1.0）→ time_scheme: "GeneralizedAlpha"，2阶，无条件稳定（Palace 默认）
   · IMEX-ARK 自适应（v1.0）→ time_scheme: "ARKODE"，3阶，自适应步长（Kennedy & Carpenter 2003）
   · Explicit RK4（v1.0）   → time_scheme: "RungeKutta"，4阶，固定步长（需满足 CFL）
+MoM 大规模加速              → FastSolver: "ACA"（ACA+GMRES，O(N·r) 矩阵向量积）
+MoM 介质目标                → Equation: "PMCHWT"，配合 Domains.Materials 指定 ε_r/μ_r
 ```
 
 ---
@@ -410,7 +455,7 @@ S 参数、集总端口匹配        → Driven
 | 文件系统 | 无磁盘 IO | 输出返回 Blob URL |
 | `rem-mom` | 可用 | rayon 条件编译排除；建议 N < 1000，使用 `FastSolver: "Direct"` |
 | `rem-sbr` | 可用 | rayon cfg-excluded |
-| `rem-bem` | 可用 | faer LU 支持 WASM |
+| `rem-bem` | 可用 | nalgebra LU 支持 WASM |
 
 ---
 
@@ -418,11 +463,12 @@ S 参数、集总端口匹配        → Driven
 
 | 项目 | 说明 | 优先级 |
 |------|------|--------|
-| 3-D 静磁（Nedelec H(curl)） | 当前仅 2-D A_z 标量 | 中 |
-| 波导端口 TE/TM 场匹配 | ✅ 已完成 v1.0：1-D 截面特征值 K_p x = λ M_p x，k_c = √λ₁，模态形状 sin(πx/W)；Z_TE = ωμ₀/k_z；低于截止频率退化为 TEM；`crates/driven/src/port_modal.rs` | — |
+| 3-D 静磁（Nedelec H(curl)） | ✅ 已完成标量解耦矢量位 A=(Ax,Ay,Az) P1 Tet4（3 个 PCG 求解，B=∇×A 恢复）；Nedelec H(curl) 高阶离散待实现 | — |
+| 波导端口 TE/TM 场匹配 | ✅ 已完成 v1.0：1-D 截面特征值 K_p x = λ M_p x，k_c = √λ₁，Z_TE = ωμ₀/k_z；截止频率以下退化为 TEM | — |
 | AMR 集成 | ✅ 已完成：ZZ 估计器 + Dörfler 标记 + Tri3 红细分 + P1 延拓；electrostatic/magnetostatic/eigenmode/driven 均已集成 | — |
-| 时域瞬态（TD-FEM） | ✅ 已完成 v1.0：GeneralizedAlpha（2阶，无条件稳定）+ IMEX-ARK3(2)4L[2]SA（3阶，自适应步长）+ RK4（4阶，显式）；`crates/transient` 已集成；Nedelec H(curl) + 完整 Maxwell 矢量场待实现（v2.0） | 中 |
-| MoM 介质目标（PMCHWT） | PEC 目标已完整，介质扩展待实现 | 低 |
-| MoM ACA / FMM 加速 | `FastSolver: "ACA"/"FMM"` 配置可识别，运行时返回错误；ACA 可将矩阵装配从 O(N²) 降至 O(N log N) | 低 |
-| SBR+ 边缘绕射（PTD） | 大角度散射精度提升 | 低 |
+| 时域瞬态（TD-FEM） | ✅ 已完成 v1.0：GeneralizedAlpha + IMEX-ARK3 + RK4；Nedelec H(curl) + 完整 Maxwell 矢量场待实现（v2.0） | 中 |
+| MoM 介质目标（PMCHWT） | ✅ 已完成：2N×2N PMCHWT 块方程，J+M 未知量，`Equation: "PMCHWT"` 路径已接通 | — |
+| MoM ACA 加速 | ✅ 已完成：部分主元 ACA（复对称 Z≈U·V^T），`FastSolver: "ACA"` 已接通；FMM 尚未实现 | — |
+| SBR+ 边缘绕射（PTD） | ✅ 已完成：UTD 绕射系数 + 边缘线积分，`write_rcs_with_ptd` 集成进主循环 | — |
 | p-FEM（P2+）实际应用 | order > 1 时打印警告并降级 P1；P2 装配需接入 fem-rs `H1Space` + `Assembler` API | 低 |
+| FMM 加速 | `FastSolver: "FMM"` 配置可识别，运行时返回错误；需实现快速多极子 | 低 |

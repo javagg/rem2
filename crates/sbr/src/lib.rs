@@ -30,6 +30,7 @@ pub mod excitation;
 pub mod fresnel;
 pub mod po_integral;
 pub mod output;
+pub mod ptd;
 
 use std::f64::consts::PI;
 use std::sync::Arc;
@@ -44,7 +45,8 @@ use bvh::Bvh;
 use excitation::{PlaneWave, incident_fields, launch_aperture_rays};
 use fresnel::{Interface, reflect_field, po_current_pec};
 use po_integral::{zero_currents, CurrentMap};
-use output::{write_rcs, write_surface_vtk};
+use ptd::{extract_boundary_edges};
+use output::{write_rcs_with_ptd, write_surface_vtk};
 
 // ---------------------------------------------------------------------------
 // Public entry point
@@ -81,6 +83,10 @@ pub fn run_with_mesh(
 
     let surf = Arc::new(SurfaceMesh::extract(mesh, &pec_attrs)?);
     log::info!("SBR surface mesh: {} faces", surf.faces.len());
+
+    // Pre-compute boundary edges for PTD correction
+    let ptd_edges = extract_boundary_edges(&surf);
+    log::info!("PTD: {} boundary edges found", ptd_edges.len());
 
     let bvh = Bvh::build(Arc::clone(&surf));
     log::info!("BVH built with {} nodes", surf.faces.len());
@@ -139,7 +145,18 @@ pub fn run_with_mesh(
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            write_rcs(output_dir, freq, &currents, &surf, k, &theta_deg, &phi_deg)?;
+            // Build incident field closure for PTD (captures k, wave)
+            let wave_ptd = wave.clone();
+            let k_ptd = k;
+            let e_fn = move |r: &[f64; 3]| -> [Complex64; 3] {
+                let (e, _h) = incident_fields(&wave_ptd, k_ptd, r);
+                e
+            };
+
+            write_rcs_with_ptd(
+                output_dir, freq, &currents, &surf, k,
+                &theta_deg, &phi_deg, &wave, &ptd_edges, &e_fn,
+            )?;
 
             let vtk_path = output_dir
                 .join("postpro")

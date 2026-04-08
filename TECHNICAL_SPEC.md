@@ -29,9 +29,9 @@
 | WASM 目标 | ❌ | ✅ | ✅ | ✅ |
 | MPI 并行（native rsmpi） | ✅ | 🔲 | ✅ | ✅ |
 | MPI 模拟（jsmpi + Web Worker） | ❌ | ✅ | ✅ | ✅ |
-| **矩量法 MoM (EFIE/CFIE)** | ❌ | ❌ | ❌ | ✅ **已实现** |
+| **矩量法 MoM (EFIE/CFIE/PMCHWT+ACA)** | ❌ | ❌ | ❌ | ✅ **已实现** |
 | **边界元法 BEM (Laplace P0)** | ❌ | ❌ | ❌ | ✅ **已实现** |
-| **SBR+ 高频射线追踪 + PO** | ❌ | ❌ | ❌ | ✅ **已实现** |
+| **SBR+ 高频射线追踪 + PO + PTD** | ❌ | ❌ | ❌ | ✅ **已实现** |
 | RCS / 远场后处理 | ❌ | ❌ | ❌ | ✅ **已实现** |
 
 ### 1.2 核心差异化特性
@@ -39,8 +39,8 @@
 - **纯 Rust + WASM**: 无 C/C++ 依赖，可在浏览器运行
 - **Palace 配置兼容**: 直接读取 Palace JSON/YAML 配置文件（详见第 7 节）
 - **fem-rs 驱动**: 复用已验证的 FEM 基础设施
-- **MoM/BEM/SBR+ 扩展**: 矩量法（`crates/mom`）、Laplace P0 BEM（`crates/bem`）以及 SBR+ 高频射线追踪求解器（`crates/sbr`）均已实现，与 FEM 共享网格/配置层
-- **超集定位**: Palace 完全兼容 + MoM/BEM/SBR+/RCS 额外能力，不破坏 Palace 用户现有工作流
+- **MoM/BEM/SBR+ 扩展**: 矩量法（`crates/mom`，支持 CFIE/PMCHWT/ACA）、Laplace P0 BEM（`crates/bem`）以及 SBR+PTD 高频射线追踪求解器（`crates/sbr`）均已实现，与 FEM 共享网格/配置层
+- **超集定位**: Palace 完全兼容 + MoM/BEM/SBR+/PTD/RCS 额外能力，不破坏 Palace 用户现有工作流
 
 ---
 
@@ -385,7 +385,7 @@ rem2/
 │   │       ├── quadrature.rs    # Dunavant 三角形高斯求积规则（阶次 1/3/5/7/9）
 │   │       ├── green.rs         # 3D Helmholtz Green 函数
 │   │       ├── singular.rs      # Duffy 自积分 + Sauter-Schwab 奇异积分
-│   │       ├── assemble.rs      # EFIE/CFIE Z 矩阵装配（faer dense + rayon）
+│   │       ├── assemble.rs      # EFIE/CFIE Z 矩阵装配（nalgebra dense + rayon）
 │   │       ├── excitation.rs    # 平面波激励向量
 │   │       ├── postprocess.rs   # RCS CSV + VTK 输出
 │   │       ├── mie.rs           # Mie 级数解析解（验证用）
@@ -398,7 +398,7 @@ rem2/
 │   │       ├── lib.rs           # run() 入口
 │   │       ├── kernel.rs        # Laplace Green 函数及法向导数
 │   │       ├── assemble.rs      # V/K 矩阵装配（P0 基函数 + Duffy 对角）
-│   │       ├── solve.rs         # faer LU 求解
+│   │       ├── solve.rs         # nalgebra LU 求解
 │   │       └── postprocess.rs   # 电容矩阵 + 电位 VTK 输出
 │   │
 │   ├── sbr/                     # SBR+ 高频射线追踪 + PO ✅ 已实现
@@ -722,7 +722,7 @@ REM v1.0 在 `Problem.Type` 中新增以下值，Palace 工作流完全不受影
 
 | 值 | 说明 | Palace 兼容性 |
 |----|------|-------------|
-| `"MoM"` | 矩量法（RWG 基函数，EFIE/CFIE）✅ 已实现 | Palace 不识别，不影响其工作流 |
+| `"MoM"` | 矩量法（RWG 基函数，EFIE/CFIE/PMCHWT；ACA 加速）✅ 已实现 | Palace 不识别，不影响其工作流 |
 | `"BEM"` | 边界元法（Laplace P0 pulse）✅ 已实现 | 同上 |
 | `"SBR"` | SBR+ 高频射线追踪 + 物理光学（PO）✅ 已实现 | 同上 |
 

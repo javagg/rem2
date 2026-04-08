@@ -23,6 +23,8 @@ pub mod excitation;
 pub mod postprocess;
 pub mod basis;
 pub mod mie;
+pub mod aca;
+pub mod pmchwt;
 
 use rem_config::{PalaceConfig, MomSolverConfig};
 use rem_core::RemResult;
@@ -91,7 +93,47 @@ pub fn run_with_mesh(
 
         let k = 2.0 * PI * freq / rem_core::C0;
 
-        // Assemble impedance matrix Z
+        // Incident plane wave
+        let wave = excitation::PlaneWave {
+            theta_inc: mom_cfg.theta_inc_deg.to_radians(),
+            phi_inc:   mom_cfg.phi_inc_deg.to_radians(),
+            pol:       mom_cfg.polarization.clone(),
+        };
+
+        // PMCHWT path: dielectric target (J + M unknowns, 2N×2N system)
+        if mom_cfg.equation.to_uppercase() == "PMCHWT" {
+            // Get material parameters from Domains.Materials (first entry, or defaults)
+            let (eps_r, mu_r) = config.domains.materials.first()
+                .map(|m| (m.permittivity, m.permeability))
+                .unwrap_or((2.0, 1.0));
+            let mat = pmchwt::DielectricMaterial::new(eps_r, mu_r);
+
+            log::info!("MoM PMCHWT: ε_r={eps_r:.2}, μ_r={mu_r:.2}, f={freq:.3e} Hz");
+
+            let (j_coeffs, _m_coeffs) = pmchwt::solve_pmchwt(
+                &surf, mat, freq, &wave, &quad, &mom_cfg.fast_solver,
+            )?;
+
+            // Use J coefficients for RCS postprocessing (PO-equivalent)
+            // For PMCHWT the surface J produces the scattered E-field via PO integral
+            let currents = j_coeffs;
+
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                postprocess::write_rcs(
+                    output_dir, freq, &currents, &surf, k, &theta_deg, &phi_deg,
+                )?;
+                let vtk_path = output_dir
+                    .join("postpro")
+                    .join(format!("surface_current_{:.3e}Hz.vtk", freq));
+                postprocess::write_surface_vtk(&vtk_path, &currents, &surf)?;
+            }
+
+            freq += freq_step;
+            continue;
+        }
+
+        // Assemble impedance matrix Z  (PEC EFIE/MFIE/CFIE path)
         let z_mat = match mom_cfg.basis.as_str() {
             "Pulse" | "pulse" => {
                 assemble::assemble_efie_pulse(&surf, freq, &quad, mom_cfg.singular_tol)
@@ -103,22 +145,19 @@ pub fn run_with_mesh(
             }
         }?;
 
-        // Incident plane wave excitation
-        let wave = excitation::PlaneWave {
-            theta_inc: mom_cfg.theta_inc_deg.to_radians(),
-            phi_inc:   mom_cfg.phi_inc_deg.to_radians(),
-            pol:       mom_cfg.polarization.clone(),
-        };
         let rhs = excitation::plane_wave_rhs_general(&surf, k, &wave, &mom_cfg.basis);
 
         // Solve Z·I = V  (solver chosen by config.FastSolver)
         let currents = match mom_cfg.fast_solver.to_uppercase().as_str() {
             "GMRES" => assemble::gmres_solve(&z_mat, &rhs)?,
-            "ACA" | "FMM" => {
-                return Err(rem_core::RemError::Config(format!(
-                    "FastSolver \"{}\" is not yet implemented; use \"Direct\" or \"GMRES\"",
-                    mom_cfg.fast_solver
-                )));
+            "ACA" => {
+                log::info!("MoM: using ACA+GMRES (tol_aca=1e-4, tol_gmres=1e-8)");
+                assemble::aca_gmres_solve(&z_mat, &rhs, 1e-4, 1e-8)?
+            }
+            "FMM" => {
+                return Err(rem_core::RemError::Config(
+                    "FastSolver \"FMM\" is not yet implemented; use \"Direct\", \"GMRES\", or \"ACA\"".to_string()
+                ));
             }
             _ => assemble::lu_solve(&z_mat, &rhs)?,   // "Direct" (default)
         };
