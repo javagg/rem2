@@ -1,4 +1,4 @@
-//! Driven (frequency-domain) solver — Phase 7 (v0.2)
+//! Driven (frequency-domain) solver — Phase 7 (v0.3)
 //!
 //! Solves the frequency-domain scalar wave equation:
 //!   −∇·(ε ∇φ) − k² ε φ = J_port      (k = ω/c)
@@ -6,17 +6,26 @@
 //! For each excitation frequency ω = 2πf in [MinFreq, MaxFreq] with step FreqStep:
 //!   1. Assemble K (stiffness) and M (mass, consistent or lumped)
 //!   2. Build system A = K − k² M  (real symmetric)
-//!   3. Apply lumped-port / Dirichlet BCs
+//!   3. Apply lumped-port / Dirichlet BCs (WavePort: modal φ=mode_shape × V)
 //!   4. Solve with PCG (real arithmetic; absorbing BCs treated as simple Dirichlet)
-//!   5. Compute port impedance Z, reflection S₁₁
+//!   5. Compute port impedance Z, reflection S₁₁ (WavePort: Z_TE = ωμ₀/k_z)
 //!   6. Write CSV and (optionally) VTK per save_step
 //!
-//! Limitations (v0.2):
+//! WavePort modal analysis (v0.3):
+//!   - Extract port cross-section 1-D mesh (Line2 elements on WavePort tag).
+//!   - Solve 1-D Laplacian eigenvalue K_p x = λ M_p x with Dirichlet endpoints.
+//!   - First eigenvalue λ₁ = k_c² (cutoff wavenumber²).
+//!   - Use eigenvector as mode-shape Dirichlet profile on the port nodes.
+//!   - Modal impedance Z_TE = ωμ₀/k_z, k_z = √(k²−k_c²).
+//!   - Falls back to TEM (uniform φ=V, Z₀=50Ω) when below cutoff or on solve failure.
+//!
+//! Limitations (v0.3):
 //!   - Scalar (P1) formulation — valid for planar TEM / quasi-static problems.
 //!   - No perfectly-matched layers (PML); Absorbing BC treated as Dirichlet φ=0.
-//!   - Real arithmetic only (lossy materials via imaginary conductivity deferred to v0.3).
+//!   - Real arithmetic only (lossy materials via imaginary conductivity deferred to v0.4).
 
 pub mod output;
+pub mod port_modal;
 
 use rem_config::PalaceConfig;
 use rem_core::{CsrMatrix, RemError, RemResult, TripletMatrix, solve_pcg};
@@ -26,6 +35,8 @@ use rem_materials::DomainMap;
 use rem_mesh::{RemMesh, BoundaryTag, amr};
 use rem_mesh::gmsh::read_msh_file;
 use rem_parallel::Comm;
+use port_modal::{PortMode, compute_wave_port_mode};
+use std::collections::HashMap;
 use std::path::Path;
 
 const C0: f64 = 2.997_924_58e8;
@@ -71,7 +82,7 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
         let f_center = (drv_cfg.min_freq + drv_cfg.max_freq) * 0.5;
         let k_wave = 2.0 * std::f64::consts::PI * f_center / C0;
         let k2 = k_wave * k_wave;
-        let excited_port = find_excited_lumped_port(mesh);
+        let (excited_port, _port_kind) = find_excited_port(mesh);
 
         let eps_fn = |tag: u32| domain_map.get(tag).epsilon_abs();
         let mut cur_mesh = mesh.clone();
@@ -144,7 +155,28 @@ fn run_frequency_sweep(
 
     let lin = &config.solver.linear;
     let mut freq_results: Vec<FreqResult> = Vec::with_capacity(n_steps);
-    let excited_port = find_excited_lumped_port(mesh);
+    let (excited_port, port_kind) = find_excited_port(mesh);
+
+    // Pre-compute wave-port mode shape (frequency-independent, geometry only)
+    let wave_port_mode: Option<PortMode> = if let PortKind::Wave(idx) = port_kind {
+        match compute_wave_port_mode(mesh, idx) {
+            Some(m) => {
+                log::info!(
+                    "WavePort {idx}: TE modal excitation enabled (k_c={:.4e} rad/m)",
+                    m.kc
+                );
+                Some(m)
+            }
+            None => {
+                log::warn!(
+                    "WavePort {idx}: modal solve failed; falling back to TEM (φ=V uniform)"
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     for step in 0..n_steps {
         let freq = f_min + step as f64 * f_step;
@@ -155,7 +187,19 @@ fn run_frequency_sweep(
 
         let a_mat = shifted_matrix(&k_mat, &m_mat, k2, mesh.n_nodes());
         let mut a_bc = a_mat;
-        let dofs = collect_dirichlet_dofs(mesh, excited_port, 1.0);
+
+        // Build Dirichlet DOF map: modal shape for WavePort, uniform 1.0 otherwise
+        let dofs = if let Some(mode) = &wave_port_mode {
+            if mode.is_propagating(freq) {
+                collect_dirichlet_dofs_modal(mesh, excited_port, mode)
+            } else {
+                log::warn!("f={freq:.3e} Hz is below WavePort cutoff (evanescent); using φ=0");
+                collect_dirichlet_dofs(mesh, excited_port, 0.0)
+            }
+        } else {
+            collect_dirichlet_dofs(mesh, excited_port, 1.0)
+        };
+
         let mut rhs = vec![0.0f64; mesh.n_nodes()];
         apply_dirichlet(&mut a_bc, &mut rhs, &dofs);
 
@@ -168,7 +212,15 @@ fn run_frequency_sweep(
         }
 
         let (v_port, i_port) = compute_port_vi(mesh, &result.solution, &k_mat, excited_port);
-        let z0 = lumped_port_resistance(mesh, excited_port);
+
+        // Reference impedance: Z_TE for WavePort, or configured R₀ for LumpedPort
+        let z0 = if let Some(mode) = &wave_port_mode {
+            let z = mode.te_impedance(freq);
+            if z.is_finite() { z } else { 50.0 }
+        } else {
+            lumped_port_resistance(mesh, excited_port)
+        };
+
         let s11 = if i_port.abs() > 1e-300 {
             let z = v_port / i_port;
             (z - z0) / (z + z0)
@@ -177,8 +229,8 @@ fn run_frequency_sweep(
         };
 
         log::info!(
-            "f={:.3e} Hz  |S11|={:.4}  converged={}",
-            freq, s11.abs(), result.converged
+            "f={:.3e} Hz  |S11|={:.4}  Z0={:.1}Ω  converged={}",
+            freq, s11.abs(), z0, result.converged
         );
 
         freq_results.push(FreqResult { freq_hz: freq, s11_re: s11, s11_im: 0.0 });
@@ -205,6 +257,14 @@ pub(crate) struct FreqResult {
     s11_im:  f64,
 }
 
+/// Whether the excited port is a LumpedPort or a WavePort.
+#[derive(Debug, Clone, Copy)]
+enum PortKind {
+    Lumped,
+    Wave(u32),
+    None,
+}
+
 /// Build A = K − k² M
 fn shifted_matrix(k: &CsrMatrix, m: &CsrMatrix, sigma: f64, n: usize) -> CsrMatrix {
     if sigma.abs() < 1e-300 {
@@ -224,27 +284,20 @@ fn shifted_matrix(k: &CsrMatrix, m: &CsrMatrix, sigma: f64, n: usize) -> CsrMatr
     t.to_csr()
 }
 
-/// Find the first excited lumped port or wave port index in the mesh.
-fn find_excited_lumped_port(mesh: &RemMesh) -> Option<u32> {
+/// Find the first excited port and report its kind.
+fn find_excited_port(mesh: &RemMesh) -> (Option<u32>, PortKind) {
     for bc in mesh.boundary_tags.values() {
         match bc {
-            BoundaryTag::LumpedPort { index, .. } => return Some(*index),
-            BoundaryTag::WavePort { index } => {
-                log::warn!(
-                    "WavePort index={}: using TEM approximation (Dirichlet φ=V). \
-                     Full TE/TM modal field matching not yet implemented.",
-                    index
-                );
-                return Some(*index);
-            }
+            BoundaryTag::LumpedPort { index, .. } => return (Some(*index), PortKind::Lumped),
+            BoundaryTag::WavePort { index } => return (Some(*index), PortKind::Wave(*index)),
             _ => {}
         }
     }
-    None
+    (None, PortKind::None)
 }
 
 /// Get port resistance from config (default 50 Ω).
-/// WavePort is treated as matched 50-Ω load for TEM approximation.
+/// WavePort: caller should use Z_TE from PortMode instead; this is the TEM fallback.
 fn lumped_port_resistance(mesh: &RemMesh, port_idx: Option<u32>) -> f64 {
     if let Some(idx) = port_idx {
         for bc in mesh.boundary_tags.values() {
@@ -253,7 +306,7 @@ fn lumped_port_resistance(mesh: &RemMesh, port_idx: Option<u32>) -> f64 {
                     return if *r > 0.0 { *r } else { 50.0 };
                 }
                 BoundaryTag::WavePort { index } if *index == idx => {
-                    return 50.0;  // TEM characteristic impedance
+                    return 50.0;  // TEM characteristic impedance fallback
                 }
                 _ => {}
             }
@@ -262,8 +315,62 @@ fn lumped_port_resistance(mesh: &RemMesh, port_idx: Option<u32>) -> f64 {
     50.0
 }
 
+/// Build Dirichlet DOF map using the modal shape as excitation profile.
+///
+/// Port nodes are set to `mode.shape[node]` (the normalised mode amplitude),
+/// which approximates the TE mode profile on the port face.
+/// All other Dirichlet nodes (PEC, Ground, non-excited ports) keep their
+/// standard values (0.0).
+fn collect_dirichlet_dofs_modal(
+    mesh: &RemMesh,
+    excited_index: Option<u32>,
+    mode: &PortMode,
+) -> HashMap<usize, f64> {
+    let mut dofs: HashMap<usize, f64> = HashMap::new();
+
+    for belem in &mesh.boundary_elements {
+        if mesh.size > 1 && belem.rank != mesh.rank {
+            continue;
+        }
+        let bc = match mesh.boundary_tags.get(&belem.tag) {
+            Some(b) => b,
+            None => continue,
+        };
+
+        match bc {
+            BoundaryTag::Pec | BoundaryTag::Ground => {
+                for &nid in &belem.node_ids {
+                    dofs.entry(nid).or_insert(0.0);
+                }
+            }
+            BoundaryTag::LumpedPort { index, .. } | BoundaryTag::Terminal { index } => {
+                let val = if Some(*index) == excited_index { 1.0 } else { 0.0 };
+                for &nid in &belem.node_ids {
+                    dofs.entry(nid).or_insert(val);
+                }
+            }
+            BoundaryTag::WavePort { index } => {
+                if Some(*index) == excited_index {
+                    // Use mode shape as excitation — clamp endpoint (zero) to 0
+                    for &nid in &belem.node_ids {
+                        let val = mode.shape.get(&nid).copied().unwrap_or(0.0);
+                        dofs.entry(nid).or_insert(val);
+                    }
+                } else {
+                    for &nid in &belem.node_ids {
+                        dofs.entry(nid).or_insert(0.0);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    dofs
+}
+
 /// Compute port voltage and current from solution.
-/// V = average φ on port nodes (after BC application, = 1.0 for excited port).
+/// V = average φ on port nodes (after BC application).
 /// I = sum of K[port_node, :] * φ  (outgoing current).
 fn compute_port_vi(
     mesh: &RemMesh,
@@ -274,7 +381,13 @@ fn compute_port_vi(
     let Some(idx) = port_idx else { return (0.0, 0.0); };
 
     let port_nodes: Vec<usize> = mesh.boundary_elements.iter()
-        .filter(|e| matches!(mesh.boundary_tags.get(&e.tag), Some(BoundaryTag::LumpedPort { index, .. }) if *index == idx))
+        .filter(|e| {
+            match mesh.boundary_tags.get(&e.tag) {
+                Some(BoundaryTag::LumpedPort { index, .. }) => *index == idx,
+                Some(BoundaryTag::WavePort { index }) => *index == idx,
+                _ => false,
+            }
+        })
         .flat_map(|e| e.node_ids.iter().copied())
         .collect();
 

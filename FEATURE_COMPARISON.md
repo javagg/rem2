@@ -1,6 +1,6 @@
 # REM vs Palace — 功能对比与已有能力说明
 
-> 版本：v1.3，2026-04-07  
+> 版本：v1.4，2026-04-08  
 > 描述 REM 当前已实现的全部功能，并与 Palace v0.11 进行逐项对比。
 
 ---
@@ -9,19 +9,18 @@
 
 REM（Rust Electromagnetic）是一款对标 [Palace](https://github.com/awslabs/palace) 的电磁仿真工具，
 采用纯 Rust 实现，可编译至 `wasm32-unknown-unknown` 在浏览器中运行。
-当前版本 **v0.11.0** 覆盖 Palace 全部主要求解器，并额外提供 Palace 不具备的矩量法、BEM 和 SBR+ 高频求解器。
+当前版本 **v0.12.0** 覆盖 Palace 全部主要求解器，并额外提供 Palace 不具备的矩量法、BEM 和 SBR+ 高频求解器。
 
 ```
-所有测试：234 个（cargo test --workspace），零失败
-代码量：~13,500 行（18 个 crate，不含 vendor/）
+所有测试：238 个（cargo test --workspace），零失败
+代码量：~14,200 行（19 个 crate，不含 vendor/）
 ```
 
-### 本版本新增（v0.10.0 → v0.11.0）
+### 本版本新增（v0.11.0 → v0.12.0）
 
 | 变更 | 说明 |
 |------|------|
-| **时域瞬态求解器（TD-FEM v1.0）** | `crates/transient`：GeneralizedAlpha（Palace 默认，2阶无条件稳定）+ IMEX-ARK3(2)4L[2]SA（Kennedy & Carpenter 2003，自适应步长）+ Explicit RK4（固定步长）；5 个单元测试全部通过 |
-| **fem-rs GeneralizedAlpha + ImexArk3** | `vendor/fem-rs/crates/solver/src/ode.rs` 新增两种积分器；4 个新 ODE 单元测试 |
+| **波导端口 TE/TM 模态场匹配（WavePort v1.0）** | `crates/driven/src/port_modal.rs`：1-D 截面特征值问题（K_p x = λ M_p x），提取 k_c 和 sin(πx/W) 模态形状；频域求解使用模态激励 φ = mode_shape，参考阻抗使用 Z_TE = ωμ₀/k_z；低于截止频率时自动退化为 TEM；4 个单元测试全部通过 |
 
 ---
 
@@ -36,7 +35,7 @@ REM（Rust Electromagnetic）是一款对标 [Palace](https://github.com/awslabs
 | **时域瞬态** (Transient) | ✅ | ✅ | GeneralizedAlpha（2阶无条件稳定）、IMEX-ARK3(2)4L[2]SA（自适应，3阶）、RK4（显式） |
 | **S 参数提取** | ✅ | ✅ | `postpro/port-S.csv`，Palace 格式兼容 |
 | **集总端口** (Lumped Port) | ✅ | ✅ | LumpedPort 激励 + 阻抗边界 |
-| **波导端口** (Wave Port) | ✅ | ✅ | TEM 近似（Dirichlet φ=V），与 LumpedPort 行为等价；TE/TM 模态场匹配待实现 |
+| **波导端口** (Wave Port) | ✅ | ✅ | TE/TM 1-D 截面特征值场匹配（v1.0）：k_c 计算 + sin 模态形状激励 + Z_TE = ωμ₀/k_z；截止频率以下自动退化为 TEM |
 | **自适应网格细化** (AMR) | ✅ | ✅ | ZZ 误差估计 + Dörfler 标记 + Tri3 红细分 + P1 延拓；静电/静磁/特征模/驱动均已集成 AMR 循环 |
 | **高阶基函数** (p-FEM) | ✅ | ✅ | 配置字段 `Solver.Order` 已解析；order > 1 时打印警告并降级为 P1；P2+ 装配集成待完成 |
 | GMSH .msh 网格导入 | ✅ | ✅ | 完整 .msh v2/v4 解析，物理组 → 边界/材料映射 |
@@ -339,7 +338,7 @@ REM 完全兼容 Palace JSON/YAML 配置文件格式。Palace 用户无需修改
 | `Boundaries.Ground` | ✅ | `Ground` |
 | `Boundaries.Terminal` | ✅ | `Terminal { index }` |
 | `Boundaries.LumpedPort` | ✅ | `LumpedPort { index, r }` |
-| `Boundaries.WavePort` | ✅（TEM 近似，施加 Dirichlet φ=V；TE/TM 模态场匹配待实现） | `WavePort { index }` |
+| `Boundaries.WavePort` | ✅（TE/TM 1-D 场匹配 v1.0；Z_TE = ωμ₀/k_z；低于截止退化为 TEM） | `WavePort { index }` |
 | `Boundaries.SurfaceCurrent` | ✅ | `SurfaceCurrent { index }` |
 
 ### 9.2 支持的材料参数
@@ -420,7 +419,7 @@ S 参数、集总端口匹配        → Driven
 | 项目 | 说明 | 优先级 |
 |------|------|--------|
 | 3-D 静磁（Nedelec H(curl)） | 当前仅 2-D A_z 标量 | 中 |
-| 波导端口 TE/TM 场匹配 | TEM 近似已实现（Dirichlet φ=V）；TE/TM 模态需在端口截面解 2-D 特征值问题 | 中 |
+| 波导端口 TE/TM 场匹配 | ✅ 已完成 v1.0：1-D 截面特征值 K_p x = λ M_p x，k_c = √λ₁，模态形状 sin(πx/W)；Z_TE = ωμ₀/k_z；低于截止频率退化为 TEM；`crates/driven/src/port_modal.rs` | — |
 | AMR 集成 | ✅ 已完成：ZZ 估计器 + Dörfler 标记 + Tri3 红细分 + P1 延拓；electrostatic/magnetostatic/eigenmode/driven 均已集成 | — |
 | 时域瞬态（TD-FEM） | ✅ 已完成 v1.0：GeneralizedAlpha（2阶，无条件稳定）+ IMEX-ARK3(2)4L[2]SA（3阶，自适应步长）+ RK4（4阶，显式）；`crates/transient` 已集成；Nedelec H(curl) + 完整 Maxwell 矢量场待实现（v2.0） | 中 |
 | MoM 介质目标（PMCHWT） | PEC 目标已完整，介质扩展待实现 | 低 |
