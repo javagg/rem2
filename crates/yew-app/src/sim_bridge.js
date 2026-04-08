@@ -43,14 +43,12 @@
           reject(new Error(event.message ?? "worker uncaught error"));
         });
 
-        // Transfer meshBytes buffer to avoid copying (zero-copy transfer)
-        const transferable = meshBytes.buffer instanceof SharedArrayBuffer
-          ? []
-          : [meshBytes.buffer];
-
+        // meshBytes is a view into WASM linear memory (non-transferable).
+        // Copy it into a fresh ArrayBuffer so we can transfer it zero-copy.
+        const meshCopy = meshBytes.slice();   // new Uint8Array with own buffer
         worker.postMessage(
-          { type: "run", configJson, meshBytes, wasmJsUrl },
-          transferable,
+          { type: "run", configJson, meshBytes: meshCopy, wasmJsUrl },
+          [meshCopy.buffer],
         );
       });
     },
