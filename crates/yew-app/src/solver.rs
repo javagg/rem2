@@ -1,5 +1,24 @@
 use crate::examples;
+use js_sys::Promise;
 use serde::Serialize;
+use wasm_bindgen::prelude::*;
+use wasm_bindgen_futures::JsFuture;
+
+// ---------------------------------------------------------------------------
+// JS bridge: remSim.runInWorker(configJson, meshBytes) → Promise
+// ---------------------------------------------------------------------------
+
+#[wasm_bindgen]
+extern "C" {
+    /// Call `globalThis.remSim.runInWorker(configJson, meshBytes)`.
+    /// Returns a JS Promise that resolves to the simulation result JsValue.
+    #[wasm_bindgen(js_namespace = remSim, js_name = runInWorker)]
+    fn run_in_worker_js(config_json: &str, mesh_bytes: &[u8]) -> Promise;
+}
+
+// ---------------------------------------------------------------------------
+// Result types
+// ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug, Serialize)]
 pub struct SimResult {
@@ -39,15 +58,19 @@ fn vec3_csv(name: &str, field: &[[f64; 3]]) -> String {
     out
 }
 
-pub fn run_example(key: &str) -> Result<SimRun, String> {
+pub async fn run_example(key: &str) -> Result<SimRun, String> {
     let example = examples::find_example(key)
         .ok_or_else(|| format!("Unknown example: {}", key))?;
 
     let mesh_bytes = examples::get_mesh_bytes(key);
-    let value = rem_wasm::run_simulation(example.config_json, &mesh_bytes)
-        .map_err(|e| format!("{} solve failed in WASM runtime: {:?}", example.problem_type, e))?;
 
-    let result: rem_wasm::SimulationResult = serde_wasm_bindgen::from_value(value)
+    // Run the simulation in a dedicated Web Worker so the main thread stays
+    // responsive. `run_in_worker_js` returns a JS Promise; we await it here.
+    let js_value = JsFuture::from(run_in_worker_js(example.config_json, &mesh_bytes))
+        .await
+        .map_err(|e| format!("{} solve failed: {:?}", example.problem_type, e))?;
+
+    let result: rem_wasm::SimulationResult = serde_wasm_bindgen::from_value(js_value)
         .map_err(|e| format!("Failed to decode simulation result: {}", e))?;
 
     let max_e = result.e_field.as_ref()

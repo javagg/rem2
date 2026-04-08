@@ -453,10 +453,7 @@ fn app() -> Html {
                 let run_dir = format!("runs/{}", sanitize_example_key(&key));
                 let _ = opfs::delete_dir(&run_dir).await;
 
-                // Yield to let UI update before heavy computation
-                gloo::timers::future::sleep(std::time::Duration::from_millis(10)).await;
-
-                match solver::run_example(&key) {
+                match solver::run_example(&key).await {
                     Ok(run) => {
                         let SimRun { summary, artifacts } = run;
                         let result_json = serde_json::to_string_pretty(&summary)
