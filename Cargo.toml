@@ -10,6 +10,7 @@ members = [
     "crates/magnetostatic",
     "crates/eigenmode",
     "crates/driven",
+    "crates/transient",
     "crates/result",
     "crates/cli",
     "crates/parallel",
@@ -34,6 +35,7 @@ rem-magnetostatic = { path = "crates/magnetostatic" }
 rem-eigenmode     = { path = "crates/eigenmode" }
 rem-driven        = { path = "crates/driven" }
 rem-parallel      = { path = "crates/parallel" }
+rem-transient     = { path = "crates/transient" }
 rem-mom           = { path = "crates/mom" }
 rem-sbr           = { path = "crates/sbr" }
 rem-wasm          = { path = "crates/wasm" }

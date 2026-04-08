@@ -60,7 +60,7 @@ fn main() -> anyhow::Result<()> {
             rem_driven::run(&config, comm.as_ref() as &dyn Comm)?;
         }
         ProblemType::Transient => {
-            anyhow::bail!("Transient solver not yet implemented (v1.0)");
+            rem_transient::run(&config, comm.as_ref() as &dyn Comm)?;
         }
         ProblemType::MoM => {
             rem_mom::run(&config)?;
