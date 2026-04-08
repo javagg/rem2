@@ -12,8 +12,21 @@ self.addEventListener("message", async (event) => {
 
   try {
     // Dynamically import the wasm-bindgen JS glue and initialise the WASM module.
+    // Must pass the explicit WASM binary URL so the worker can fetch it
+    // (relative URLs resolve against the worker script, not the glue file).
+    const wasmBinaryUrl = wasmJsUrl.replace(/\.js$/, "_bg.wasm");
     const wasmModule = await import(wasmJsUrl);
-    await wasmModule.default();        // calls __wbg_init()
+
+    // wasm-bindgen --target web exports the async init as the default export.
+    // Fall back to named 'init' or 'initSync' for other targets.
+    const initFn = wasmModule.default ?? wasmModule.init ?? wasmModule.initSync;
+    if (typeof initFn !== "function") {
+      throw new Error(
+        `sim_worker: no init export found in ${wasmJsUrl} ` +
+        `(got: ${Object.keys(wasmModule).join(", ")})`
+      );
+    }
+    await initFn(wasmBinaryUrl);
     wasmModule.init_panic_hook();
     wasmModule.init_logger();
 
