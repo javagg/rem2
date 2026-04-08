@@ -28,7 +28,7 @@ pub fn load_config(path: &Path) -> RemResult<PalaceConfig> {
 
 /// Parse a Palace config from a string with the given format.
 pub fn load_config_from_str(content: &str, fmt: ConfigFormat) -> RemResult<PalaceConfig> {
-    match fmt {
+    let cfg = match fmt {
         ConfigFormat::Json => {
             let stripped = preprocess::strip_comments(content);
             serde_json::from_str(&stripped).map_err(json_err)
@@ -36,5 +36,8 @@ pub fn load_config_from_str(content: &str, fmt: ConfigFormat) -> RemResult<Palac
         ConfigFormat::Yaml => {
             serde_yaml::from_str(content).map_err(yaml_err)
         }
-    }
+    }?;
+    // Warn on Palace fields that are accepted but not fully implemented.
+    schema::validate_palace_compat(&cfg);
+    Ok(cfg)
 }

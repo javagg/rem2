@@ -41,7 +41,7 @@ When syncing a Palace JSON to REM, the following fields require adaptation:
 - `Model.Refinement.MaxIter` → `Model.Refinement.MaxIter` (REM uses `MaxIter`)
 - `Domains.Materials[*].Permittivity` — scalar only (REM; use first component if Palace uses array)
 - `Domains.Materials[*].Permeability` — scalar only (REM; use first component if Palace uses array)
-- `Domains.Materials[*].LossTan` — scalar only (REM)
+- `Domains.Materials[*].LossTan` — scalar; REM also accepts `LossTan: [x, y, z]` array form (uses first element)
 - `Domains.Materials[*].Conductivity` — scalar only
 - `Boundaries.PEC`, `Boundaries.PMC`, `Boundaries.Ground`
 - `Boundaries.LumpedPort` — fields: `Index`, `Attributes`, `Direction`, `R`, `L`, `C`, `Excitation`
@@ -51,19 +51,28 @@ When syncing a Palace JSON to REM, the following fields require adaptation:
 - `Solver.Order`, `Solver.Eigenmode`, `Solver.Driven`, `Solver.Transient`
 - `Solver.Linear.Tol`, `Solver.Linear.MaxIter`
 
-### Remove (not yet implemented in REM)
-- `Problem.Verbose`, `Problem.OutputFormats` — parsed but optional
-- `Device: "CPU"` — REM is CPU-only, no-op
-- `Linear.Type`, `Linear.KSPType`, `Linear.MGMaxLevels`, `Linear.ComplexCoarseSolve` — REM ignores
-- `MaterialAxes` — anisotropic materials not yet supported
-- `Boundaries.Periodic` — not implemented
-- `Domains.Postprocessing.Energy`, `Domains.Postprocessing.Probe` — not yet implemented
-- `Boundaries.Postprocessing.*` (SurfaceFlux, FarField, Dielectric) — not yet implemented
-- `WavePort.Offset`, `WavePort.MaxIts`, `WavePort.KSPTol`, `WavePort.EigenTol`, `WavePort.Verbose` — REM ignores
-- `Driven.Samples` → convert to `MinFreq/MaxFreq/FreqStep` or `MinFreq/MaxFreq/SaveStep`
-- `Driven.Save` array — not supported; use `SaveStep` integer
-- `Transient.Excitation`, `Transient.ExcitationFreq`, `Transient.ExcitationWidth` — not yet implemented
-- `LumpedPort.Elements` (multi-element lumped port) — not supported; use first element's attributes
+### Accepted with warnings (not yet implemented in REM)
+These fields are deserialized and logged as warnings; they do NOT need to be removed from Palace JSONs.
+- `Problem.Verbose` — accepted, value is ignored
+- `Problem.OutputFormats.GridFunction` — accepted, not implemented
+- `Solver.Device: "CPU"` — REM is CPU-only; ignored with warning
+- `Solver.Linear.KSPType` — only GMRES is supported; ignored with warning
+- `Solver.Linear.MGLevels` — algebraic multigrid not implemented; ignored
+- `Solver.Linear.ComplexCoarseSolve` — complex coarse-grid solve not implemented; ignored
+- `Domains.Materials[*].MaterialAxes` — anisotropic εᵣ/μᵣ not implemented; uses first component
+- `Domains.Materials[*].LossTan` (array form) — anisotropic loss not implemented; uses first element
+- `Domains.Postprocessing.Energy`, `Domains.Postprocessing.Probe` — not implemented
+- `Domains.CurrentDipole` — Hertzian dipole source not implemented
+- `Boundaries.Periodic` — periodic/Floquet BCs not implemented
+- `Boundaries.Postprocessing.{SurfaceFlux, FarField, Dielectric}` — not implemented
+- `Boundaries.WavePort.{Offset, MaxIts, EigenTol, Verbose}` — accepted, ignored
+- `Boundaries.LumpedPort.Elements` — multi-element lumped port; uses first element only
+- `Solver.Driven.Samples` — complex sampling schedules; ignored; use MinFreq/MaxFreq/FreqStep
+- `Solver.Driven.Save` (array) — ignored; use SaveStep integer
+- `Solver.Transient.{Excitation, ExcitationFreq, ExcitationWidth}` — custom waveforms not implemented
+
+### Remove (fields that would cause parse errors in REM)
+None — REM now accepts all known Palace fields.
 
 ### Mesh files
 Ensure corresponding `.msh` files exist in `examples/<category>/mesh/`. Check:

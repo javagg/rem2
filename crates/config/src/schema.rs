@@ -42,6 +42,18 @@ pub struct Problem {
 
     #[serde(rename = "Output")]
     pub output: Option<String>,
+
+    /// Palace `OutputFormats` section — accepted for compatibility; REM ignores it.
+    #[serde(rename = "OutputFormats", default)]
+    pub output_formats: Option<OutputFormats>,
+}
+
+/// Palace output format options (not yet implemented in REM).
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct OutputFormats {
+    /// Write full mesh grid function VTK output
+    #[serde(rename = "GridFunction", default)]
+    pub grid_function: bool,
 }
 
 impl Problem {
@@ -105,6 +117,58 @@ fn default_tol() -> f64 { 1.0e-2 }
 pub struct Domains {
     #[serde(rename = "Materials", default)]
     pub materials: Vec<MaterialSpec>,
+
+    /// Palace `Postprocessing` under Domains — accepted for compatibility.
+    #[serde(rename = "Postprocessing", default)]
+    pub postprocessing: Option<DomainsPostprocessing>,
+
+    /// Palace `CurrentDipole` — accepted for compatibility (not implemented).
+    #[serde(rename = "CurrentDipole", default)]
+    pub current_dipole: Vec<CurrentDipoleSpec>,
+}
+
+/// Palace `Domains.CurrentDipole` (Hertzian dipole source — not implemented).
+#[derive(Debug, Clone, Deserialize)]
+pub struct CurrentDipoleSpec {
+    #[serde(rename = "Index")]
+    pub index: u32,
+
+    #[serde(rename = "Moment", default)]
+    pub moment: f64,
+
+    #[serde(rename = "Center", default)]
+    pub center: Vec<f64>,
+
+    #[serde(rename = "Direction", default)]
+    pub direction: Vec<f64>,
+}
+
+/// Palace `Domains.Postprocessing` — accepted for Palace compatibility.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct DomainsPostprocessing {
+    #[serde(rename = "Energy", default)]
+    pub energy: Vec<EnergyPostSpec>,
+
+    #[serde(rename = "Probe", default)]
+    pub probe: Vec<ProbeSpec>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct EnergyPostSpec {
+    #[serde(rename = "Index", default)]
+    pub index: u32,
+
+    #[serde(rename = "Attributes", deserialize_with = "deserialize_attributes", default)]
+    pub attributes: Vec<u32>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProbeSpec {
+    #[serde(rename = "Index", default)]
+    pub index: u32,
+
+    #[serde(rename = "Center")]
+    pub center: Vec<f64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -119,11 +183,23 @@ pub struct MaterialSpec {
     #[serde(rename = "Permeability", default = "default_one")]
     pub permeability: f64,
 
+    /// Scalar LossTan. When Palace uses array form `[xx, yy, zz]`, only the
+    /// first element is parsed; use `loss_tan_vec` to check for array form.
     #[serde(rename = "LossTan", default)]
     pub loss_tangent: f64,
 
+    /// Palace array form `LossTan: [xx, yy, zz]` — deserialized separately via
+    /// `#[serde(alias = "LossTan")]` workaround. REM uses the first element only.
+    #[serde(rename = "LossTanVec", default)]
+    pub loss_tan_vec: Vec<f64>,
+
     #[serde(rename = "Conductivity", default)]
     pub conductivity: f64,
+
+    /// Palace `MaterialAxes` for anisotropic materials — accepted, not implemented.
+    /// REM uses isotropic εᵣ/μᵣ from the first component.
+    #[serde(rename = "MaterialAxes", default)]
+    pub material_axes: Vec<Vec<f64>>,
 }
 
 fn default_one() -> f64 { 1.0 }
@@ -166,6 +242,73 @@ pub struct Boundaries {
     /// during capacitance-matrix extraction.  Maps to Palace's `"Terminal"` key.
     #[serde(rename = "Terminal", default)]
     pub terminal: Vec<TerminalSpec>,
+
+    /// Palace `Periodic` / `FloquetWaveVector` boundaries — not implemented.
+    #[serde(rename = "Periodic", default)]
+    pub periodic: Vec<PeriodicSpec>,
+
+    /// Palace boundary-level `Postprocessing` (SurfaceFlux, FarField, Dielectric).
+    /// Accepted for Palace compatibility; REM logs warnings.
+    #[serde(rename = "Postprocessing", default)]
+    pub postprocessing_flux: Vec<BoundaryPostprocessingSpec>,
+}
+
+/// Palace `Boundaries.Periodic` — not implemented.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PeriodicSpec {
+    /// Floquet wave vector [kx, ky, kz] for quasi-periodic BCs.
+    #[serde(rename = "FloquetWaveVector", default)]
+    pub floquet_wave_vector: Vec<f64>,
+
+    /// Pairs of donor/receiver boundaries.
+    #[serde(rename = "BoundaryPairs", default)]
+    pub boundary_pairs: Vec<PeriodicBoundaryPair>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PeriodicBoundaryPair {
+    #[serde(rename = "DonorAttributes", deserialize_with = "deserialize_attributes", default)]
+    pub donor_attributes: Vec<u32>,
+
+    #[serde(rename = "ReceiverAttributes", deserialize_with = "deserialize_attributes", default)]
+    pub receiver_attributes: Vec<u32>,
+
+    #[serde(rename = "Translation", default)]
+    pub translation: Vec<f64>,
+}
+
+/// Palace `Boundaries.Postprocessing` — not yet implemented.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BoundaryPostprocessingSpec {
+    #[serde(rename = "Index", default)]
+    pub index: u32,
+
+    #[serde(rename = "Attributes", deserialize_with = "deserialize_attributes", default)]
+    pub attributes: Vec<u32>,
+
+    #[serde(rename = "Type", default)]
+    pub flux_type: String,
+
+    #[serde(rename = "TwoSided", default)]
+    pub two_sided: bool,
+
+    #[serde(rename = "Center", default)]
+    pub center: Vec<f64>,
+
+    #[serde(rename = "Thickness", default)]
+    pub thickness: f64,
+
+    #[serde(rename = "Permittivity", default)]
+    pub permittivity: f64,
+
+    #[serde(rename = "LossTan", default)]
+    pub loss_tan: f64,
+
+    #[serde(rename = "NSample", default)]
+    pub n_sample: usize,
+
+    #[serde(rename = "ThetaPhis", default)]
+    pub theta_phis: Vec<Vec<f64>>,
 }
 
 /// Electrostatic terminal boundary (Palace `"Terminal"`).
@@ -229,6 +372,21 @@ pub struct LumpedPortSpec {
 
     #[serde(rename = "Excitation", default)]
     pub excitation: bool,
+
+    /// Palace `Elements` for multi-element lumped ports — accepted, not implemented.
+    /// REM currently uses only the first element's Attributes/Direction.
+    #[serde(rename = "Elements", default)]
+    pub elements: Vec<LumpedPortElement>,
+}
+
+/// Palace `LumpedPort.Elements` item.
+#[derive(Debug, Clone, Deserialize)]
+pub struct LumpedPortElement {
+    #[serde(rename = "Attributes", deserialize_with = "deserialize_attributes")]
+    pub attributes: Vec<u32>,
+
+    #[serde(rename = "Direction", default)]
+    pub direction: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -244,6 +402,22 @@ pub struct WavePortSpec {
 
     #[serde(rename = "Mode", default = "default_mode")]
     pub mode: u32,
+
+    /// Offset along the propagation direction [m].
+    #[serde(rename = "Offset", default)]
+    pub offset: f64,
+
+    /// Max iterations for WavePort internal iterative solver.
+    #[serde(rename = "MaxIts", default)]
+    pub max_its: usize,
+
+    /// Tolerance for WavePort internal iterative eigenvalue solve.
+    #[serde(rename = "EigenTol", default)]
+    pub eigen_tol: f64,
+
+    /// Verbosity of WavePort modal analysis.
+    #[serde(rename = "Verbose", default)]
+    pub verbose_port: u8,
 }
 
 fn default_mode() -> u32 { 1 }
@@ -281,6 +455,10 @@ pub struct SolverConfig {
     #[serde(rename = "Order", default = "default_order")]
     pub order: u8,
 
+    /// Palace `Device` — REM is CPU-only; value is accepted and ignored.
+    #[serde(rename = "Device", default = "default_device")]
+    pub device: String,
+
     #[serde(rename = "Eigenmode", default)]
     pub eigenmode: Option<EigenmodeSolver>,
 
@@ -314,6 +492,7 @@ impl Default for SolverConfig {
     fn default() -> Self {
         SolverConfig {
             order: 1,
+            device: "CPU".to_string(),
             eigenmode: None,
             driven: None,
             transient: None,
@@ -325,6 +504,8 @@ impl Default for SolverConfig {
         }
     }
 }
+
+fn default_device() -> String { "CPU".to_string() }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct EigenmodeSolver {
@@ -368,7 +549,39 @@ pub struct DrivenSolver {
 
     #[serde(rename = "AdaptiveTol", default)]
     pub adaptive_tol: f64,
+
+    /// Palace `Samples` — accepted, not implemented (use MinFreq/MaxFreq/FreqStep).
+    #[serde(rename = "Samples", default)]
+    pub samples: Vec<FreqSampleSpec>,
+
+    /// Palace `Save` array — accepted, not implemented (use SaveStep integer).
+    #[serde(rename = "Save", default)]
+    pub save: Vec<f64>,
 }
+
+/// Palace `Driven.Samples` item.
+#[derive(Debug, Clone, Deserialize)]
+pub struct FreqSampleSpec {
+    #[serde(rename = "Type", default = "default_sample_type")]
+    pub sample_type: String,
+
+    #[serde(rename = "MinFreq", default)]
+    pub min_freq: f64,
+
+    #[serde(rename = "MaxFreq", default)]
+    pub max_freq: f64,
+
+    #[serde(rename = "FreqStep", default)]
+    pub freq_step: f64,
+
+    #[serde(rename = "Freq", default)]
+    pub freq: Vec<f64>,
+
+    #[serde(rename = "SaveStep", default)]
+    pub save_step: usize,
+}
+
+fn default_sample_type() -> String { "Linear".to_string() }
 
 fn default_save_step() -> usize { 1 }
 
@@ -385,6 +598,18 @@ pub struct TransientSolver {
 
     #[serde(rename = "SaveStep", default = "default_save_step")]
     pub save_step: usize,
+
+    /// Palace `Excitation` waveform type — accepted, not fully implemented.
+    #[serde(rename = "Excitation", default)]
+    pub excitation: String,
+
+    /// Palace `ExcitationFreq` [GHz] — accepted, not fully implemented.
+    #[serde(rename = "ExcitationFreq", default)]
+    pub excitation_freq: f64,
+
+    /// Palace `ExcitationWidth` [ns] — accepted, not fully implemented.
+    #[serde(rename = "ExcitationWidth", default)]
+    pub excitation_width: f64,
 }
 
 fn default_transient_type() -> String { "GeneralizedAlpha".to_string() }
@@ -400,6 +625,10 @@ pub struct LinearSolver {
     #[serde(rename = "Type", default = "default_linear_type")]
     pub solver_type: String,
 
+    /// Palace `KSPType` — accepted, not implemented (GMRES only).
+    #[serde(rename = "KSPType", default)]
+    pub ksp_type: String,
+
     #[serde(rename = "Tol", default = "default_linear_tol")]
     pub tol: f64,
 
@@ -411,16 +640,22 @@ pub struct LinearSolver {
 
     #[serde(rename = "PCType", default = "default_pc_type")]
     pub pc_type: String,
+
+    /// Palace `ComplexCoarseSolve` — accepted, not implemented.
+    #[serde(rename = "ComplexCoarseSolve", default)]
+    pub complex_coarse_solve: bool,
 }
 
 impl Default for LinearSolver {
     fn default() -> Self {
         LinearSolver {
             solver_type: default_linear_type(),
+            ksp_type: String::new(),
             tol: default_linear_tol(),
             max_iter: default_linear_maxiter(),
             mg_levels: default_mg_levels(),
             pc_type: default_pc_type(),
+            complex_coarse_solve: false,
         }
     }
 }
@@ -604,6 +839,197 @@ fn default_ray_density()    -> f64    { 1.0e4 }
 fn default_max_bounces()    -> usize  { 5 }
 fn default_weight_thresh()  -> f64    { 1.0e-4 }
 fn default_target_type()    -> String { "PEC".to_string() }
+
+// ---------------------------------------------------------------------------
+// Postprocessing (REM extension — ignored by Palace)
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Validation helpers: warn on Palace fields not yet implemented in REM
+// ---------------------------------------------------------------------------
+
+/// Log a warning for a Palace field that is accepted but not yet implemented.
+/// Call this from each solver's run() function for relevant config fields.
+pub fn warn_unsupported(name: &str, hint: &str) {
+    log::warn!(
+        "[REM] Palace field not fully supported yet: {name}. {hint}. \
+         (Field is accepted for Palace config compatibility; behaviour may differ.)"
+    );
+}
+
+/// Validate a Palace config after full deserialization.
+/// Emits warnings for all unsupported-but-accepted fields.
+pub fn validate_palace_compat(cfg: &PalaceConfig) {
+    // --- Problem ---
+    if let Some(ref pf) = cfg.problem.output_formats {
+        if pf.grid_function {
+            warn_unsupported(
+                "Problem.OutputFormats.GridFunction",
+                "VTK GridFunction output is not yet implemented",
+            );
+        }
+    }
+
+    // --- Solver ---
+    if cfg.solver.device != "CPU" && !cfg.solver.device.is_empty() {
+        warn_unsupported(
+            &format!("Solver.Device = \"{}\"", cfg.solver.device),
+            "REM runs CPU-only; value is ignored",
+        );
+    }
+
+    // --- Solver.Linear ---
+    let l = &cfg.solver.linear;
+    if !l.ksp_type.is_empty() && l.ksp_type != "GMRES" && l.ksp_type != "default" {
+        warn_unsupported(
+            &format!("Solver.Linear.KSPType = \"{}\"", l.ksp_type),
+            "Only GMRES is supported; value is ignored",
+        );
+    }
+    if l.mg_levels != 10 && l.mg_levels != 0 {
+        warn_unsupported(
+            &format!("Solver.Linear.MGLevels = {}", l.mg_levels),
+            "Algebraic multigrid is not yet implemented; value is ignored",
+        );
+    }
+    if l.complex_coarse_solve {
+        warn_unsupported(
+            "Solver.Linear.ComplexCoarseSolve = true",
+            "Complex coarse-grid solver is not implemented; ignored",
+        );
+    }
+
+    // --- Solver.Driven ---
+    if let Some(ref d) = cfg.solver.driven {
+        if !d.samples.is_empty() {
+            warn_unsupported(
+                "Solver.Driven.Samples",
+                "Custom frequency sampling schedules are not supported; \
+                 use MinFreq/MaxFreq/FreqStep instead",
+            );
+        }
+        if !d.save.is_empty() {
+            warn_unsupported(
+                "Solver.Driven.Save (array)",
+                "Save array is not supported; use SaveStep integer instead",
+            );
+        }
+    }
+
+    // --- Solver.Transient ---
+    if let Some(ref t) = cfg.solver.transient {
+        if !t.excitation.is_empty() && t.excitation != "none" {
+            warn_unsupported(
+                &format!("Solver.Transient.Excitation = \"{}\"", t.excitation),
+                "Custom transient excitation waveforms are not implemented; \
+                 using default excitation",
+            );
+        }
+        if t.excitation_freq > 0.0 {
+            warn_unsupported(
+                &format!("Solver.Transient.ExcitationFreq = {}", t.excitation_freq),
+                "Custom excitation frequency is not implemented; ignored",
+            );
+        }
+        if t.excitation_width > 0.0 {
+            warn_unsupported(
+                &format!("Solver.Transient.ExcitationWidth = {}", t.excitation_width),
+                "Custom excitation pulse width is not implemented; ignored",
+            );
+        }
+    }
+
+    // --- Domains ---
+    for m in &cfg.domains.materials {
+        if !m.material_axes.is_empty() {
+            warn_unsupported(
+                "Domains.Materials[].MaterialAxes",
+                "Anisotropic materials with material axes are not implemented; \
+                 using isotropic εᵣ/μᵣ from first component",
+            );
+        }
+        if !m.loss_tan_vec.is_empty() {
+            warn_unsupported(
+                "Domains.Materials[].LossTan (array form)",
+                "Vector LossTan for anisotropic loss is not implemented; \
+                 using scalar LossTan",
+            );
+        }
+    }
+
+    if let Some(ref dp) = cfg.domains.postprocessing {
+        if !dp.energy.is_empty() {
+            warn_unsupported(
+                "Domains.Postprocessing.Energy",
+                "Per-domain energy postprocessing is not implemented; ignored",
+            );
+        }
+        if !dp.probe.is_empty() {
+            warn_unsupported(
+                "Domains.Postprocessing.Probe",
+                "Field probe sampling is not implemented; ignored",
+            );
+        }
+    }
+
+    // --- Boundaries ---
+    if !cfg.boundaries.periodic.is_empty() {
+        warn_unsupported(
+            "Boundaries.Periodic",
+            "Periodic/Floquet boundary conditions are not implemented; ignored",
+        );
+    }
+    if !cfg.domains.current_dipole.is_empty() {
+        warn_unsupported(
+            "Domains.CurrentDipole",
+            "Hertzian current dipole sources are not implemented; ignored",
+        );
+    }
+    if !cfg.boundaries.postprocessing_flux.is_empty() {
+        warn_unsupported(
+            "Boundaries.Postprocessing",
+            "Boundary postprocessing (surface flux, far-field, dielectric loss) \
+             is not implemented; ignored",
+        );
+    }
+
+    for lp in &cfg.boundaries.lumped_port {
+        if !lp.elements.is_empty() {
+            warn_unsupported(
+                "Boundaries.LumpedPort[].Elements",
+                "Multi-element lumped ports are not implemented; \
+                 using the first element's Attributes only",
+            );
+        }
+    }
+
+    for wp in &cfg.boundaries.wave_port {
+        if wp.offset != 0.0 {
+            warn_unsupported(
+                &format!("Boundaries.WavePort[].Offset = {}", wp.offset),
+                "WavePort offset is not implemented; ignored",
+            );
+        }
+        if wp.max_its > 0 && wp.max_its != 30 {
+            warn_unsupported(
+                &format!("Boundaries.WavePort[].MaxIts = {}", wp.max_its),
+                "Custom WavePort iterative solver max iterations are not implemented; ignored",
+            );
+        }
+        if wp.eigen_tol > 0.0 && wp.eigen_tol != 1e-6 {
+            warn_unsupported(
+                &format!("Boundaries.WavePort[].EigenTol = {}", wp.eigen_tol),
+                "Custom WavePort eigenvalue tolerance is not implemented; ignored",
+            );
+        }
+        if wp.verbose_port > 0 {
+            warn_unsupported(
+                &format!("Boundaries.WavePort[].Verbose = {}", wp.verbose_port),
+                "WavePort verbose output is not implemented; ignored",
+            );
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Postprocessing (REM extension — ignored by Palace)
