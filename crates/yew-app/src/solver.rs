@@ -21,12 +21,25 @@ extern "C" {
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug, Serialize)]
+pub struct SParamPoint {
+    pub freq_hz: f64,
+    pub s11_db:  f64,
+    pub s11_re:  f64,
+    pub s11_im:  f64,
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub struct SimResult {
     pub energy: f64,
     pub node_count: usize,
     pub max_e: Option<f64>,
     pub max_b: Option<f64>,
     pub frequencies_hz: Option<Vec<f64>>,
+    /// Driven: S11 vs frequency
+    pub s_params: Option<Vec<SParamPoint>>,
+    /// Transient: port voltage vs time
+    pub time_points: Option<Vec<f64>>,
+    pub port_voltages: Option<Vec<f64>>,
 }
 
 #[derive(Clone, Debug)]
@@ -58,6 +71,25 @@ fn vec3_csv(name: &str, field: &[[f64; 3]]) -> String {
     out
 }
 
+fn s_params_csv(pts: &[SParamPoint]) -> String {
+    let mut out = String::from("freq_hz,freq_ghz,s11_db,s11_re,s11_im\n");
+    for p in pts {
+        out.push_str(&format!(
+            "{},{:.6},{:.4},{:.6},{:.6}\n",
+            p.freq_hz, p.freq_hz / 1e9, p.s11_db, p.s11_re, p.s11_im
+        ));
+    }
+    out
+}
+
+fn time_series_csv(times: &[f64], voltages: &[f64]) -> String {
+    let mut out = String::from("time_s,time_ns,port_voltage\n");
+    for (t, v) in times.iter().zip(voltages.iter()) {
+        out.push_str(&format!("{},{:.4},{:.6}\n", t, t * 1e9, v));
+    }
+    out
+}
+
 pub async fn run_example(key: &str) -> Result<SimRun, String> {
     let example = examples::find_example(key)
         .ok_or_else(|| format!("Unknown example: {}", key))?;
@@ -85,6 +117,24 @@ pub async fn run_example(key: &str) -> Result<SimRun, String> {
                 .map(|v| (v[0]*v[0] + v[1]*v[1] + v[2]*v[2]).sqrt())
                 .fold(0.0f64, f64::max)
         });
+
+    // Convert s_params from wasm type to UI type
+    let s_params: Option<Vec<SParamPoint>> = result.s_params.as_ref().map(|pts| {
+        pts.iter().map(|p| SParamPoint {
+            freq_hz: p.freq_hz,
+            s11_db:  p.s11_db,
+            s11_re:  p.s11_re,
+            s11_im:  p.s11_im,
+        }).collect()
+    });
+
+    let node_count = if !result.phi.is_empty() {
+        result.phi.len()
+    } else if let Some(pts) = &s_params {
+        pts.len() // number of frequency points for driven
+    } else {
+        0
+    };
 
     let mut artifacts = vec![];
 
@@ -120,13 +170,30 @@ pub async fn run_example(key: &str) -> Result<SimRun, String> {
         });
     }
 
+    if let Some(pts) = &s_params {
+        artifacts.push(OutputArtifact {
+            file_name: "s_params.csv".to_string(),
+            content: s_params_csv(pts),
+        });
+    }
+
+    if let (Some(times), Some(voltages)) = (&result.time_points, &result.port_voltages) {
+        artifacts.push(OutputArtifact {
+            file_name: "port_voltage.csv".to_string(),
+            content: time_series_csv(times, voltages),
+        });
+    }
+
     Ok(SimRun {
         summary: SimResult {
             energy: result.energy,
-            node_count: result.phi.len(),
+            node_count,
             max_e,
             max_b,
             frequencies_hz: result.frequencies_hz,
+            s_params,
+            time_points: result.time_points,
+            port_voltages: result.port_voltages,
         },
         artifacts,
     })

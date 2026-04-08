@@ -20,12 +20,26 @@ pub fn init_logger() {
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct SParam {
+    pub freq_hz: f64,
+    pub s11_re:  f64,
+    pub s11_im:  f64,
+    /// |S11| in dB
+    pub s11_db:  f64,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct SimulationResult {
     pub phi: Vec<f64>,
     pub energy: f64,
     pub e_field: Option<Vec<[f64; 3]>>,
     pub b_field: Option<Vec<[f64; 3]>>,
     pub frequencies_hz: Option<Vec<f64>>,
+    /// Driven: per-frequency S-parameter results
+    pub s_params: Option<Vec<SParam>>,
+    /// Transient: time points [s] and corresponding port voltages [V]
+    pub time_points: Option<Vec<f64>>,
+    pub port_voltages: Option<Vec<f64>>,
 }
 
 #[wasm_bindgen]
@@ -56,6 +70,8 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
                 e_field,
                 b_field: None,
                 frequencies_hz: None,
+                s_params: None,
+                time_points: None, port_voltages: None,
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
@@ -76,19 +92,25 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
                 e_field: None,
                 b_field: Some(b_field),
                 frequencies_hz: None,
+                s_params: None,
+                time_points: None, port_voltages: None,
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
         ProblemType::Driven => {
-            rem_driven::run_with_mesh(&cfg, &mesh, &comm)
+            let freq_results = rem_driven::run_with_mesh(&cfg, &mesh, &comm)
                 .map_err(|e| JsError::new(&format!("Driven error: {}", e)))?;
 
+            let s_params: Vec<SParam> = freq_results.iter().map(|r| {
+                let mag = (r.s11_re * r.s11_re + r.s11_im * r.s11_im).sqrt();
+                let s11_db = if mag > 1e-300 { 20.0 * mag.log10() } else { -300.0 };
+                SParam { freq_hz: r.freq_hz, s11_re: r.s11_re, s11_im: r.s11_im, s11_db }
+            }).collect();
+
             let res = SimulationResult {
-                phi: vec![],
-                energy: 0.0,
-                e_field: None,
-                b_field: None,
-                frequencies_hz: None,
+                phi: vec![], energy: 0.0, e_field: None, b_field: None,
+                frequencies_hz: None, s_params: Some(s_params),
+                time_points: None, port_voltages: None,
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
@@ -99,11 +121,9 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
                 &mesh,
             ).map_err(|e| JsError::new(&format!("MoM error: {}", e)))?;
             let res = SimulationResult {
-                phi: vec![],
-                energy: 0.0,
-                e_field: None,
-                b_field: None,
-                frequencies_hz: None,
+                phi: vec![], energy: 0.0, e_field: None, b_field: None,
+                frequencies_hz: None, s_params: None,
+                time_points: None, port_voltages: None,
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
@@ -114,11 +134,9 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
                 &mesh,
             ).map_err(|e| JsError::new(&format!("SBR error: {}", e)))?;
             let res = SimulationResult {
-                phi: vec![],
-                energy: 0.0,
-                e_field: None,
-                b_field: None,
-                frequencies_hz: None,
+                phi: vec![], energy: 0.0, e_field: None, b_field: None,
+                frequencies_hz: None, s_params: None,
+                time_points: None, port_voltages: None,
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
@@ -128,23 +146,19 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
 
             let phi = eigen.eigenvectors.into_iter().next().unwrap_or_default();
             let res = SimulationResult {
-                phi,
-                energy: 0.0,
-                e_field: None,
-                b_field: None,
-                frequencies_hz: Some(eigen.frequencies_hz),
+                phi, energy: 0.0, e_field: None, b_field: None,
+                frequencies_hz: Some(eigen.frequencies_hz), s_params: None,
+                time_points: None, port_voltages: None,
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
         ProblemType::Transient => {
-            rem_transient::run_with_mesh(&cfg, &mesh, &comm)
+            let (time_points, port_voltages) = rem_transient::run_with_mesh(&cfg, &mesh, &comm)
                 .map_err(|e| JsError::new(&format!("Transient error: {}", e)))?;
             let res = SimulationResult {
-                phi: vec![],
-                energy: 0.0,
-                e_field: None,
-                b_field: None,
-                frequencies_hz: None,
+                phi: vec![], energy: 0.0, e_field: None, b_field: None,
+                frequencies_hz: None, s_params: None,
+                time_points: Some(time_points), port_voltages: Some(port_voltages),
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }

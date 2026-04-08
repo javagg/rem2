@@ -78,11 +78,12 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
     let mut mesh = RemMesh::from_raw(raw, config)?;
     mesh.set_comm(comm.rank(), comm.size());
 
-    run_with_mesh(config, &mesh, comm)
+    run_with_mesh(config, &mesh, comm).map(|_| ())
 }
 
 /// Entry point for pre-loaded mesh (used by WASM path).
-pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> RemResult<()> {
+/// Returns `(time_points_s, port_voltages)`.
+pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> RemResult<(Vec<f64>, Vec<f64>)> {
     log::info!("=== Transient (time-domain) solver ===");
 
     let td_cfg = config.solver.transient.as_ref().ok_or_else(|| {
@@ -396,7 +397,7 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
     output::write_time_series(out_dir, &time_points, &port_v)?;
 
     log::info!("Transient solve complete: {} time points", time_points.len());
-    Ok(())
+    Ok((time_points, port_v))
 }
 
 // ─── Matrix helpers ───────────────────────────────────────────────────────────

@@ -651,11 +651,60 @@ fn app() -> Html {
                                         }) }
                                     </ul>
                                 </div>
-                            } else {
+                            }
+                            if let Some(pts) = &r.s_params {
+                                <div>
+                                    <p><strong>{"S-Parameters (S11):"}</strong></p>
+                                    <table class="s-param-table">
+                                        <thead>
+                                            <tr>
+                                                <th>{"Freq (GHz)"}</th>
+                                                <th>{"S11 (dB)"}</th>
+                                                <th>{"Re(S11)"}</th>
+                                                <th>{"Im(S11)"}</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                        { for pts.iter().map(|p| html! {
+                                            <tr>
+                                                <td>{format!("{:.4}", p.freq_hz / 1e9)}</td>
+                                                <td>{format!("{:.2}", p.s11_db)}</td>
+                                                <td>{format!("{:.4}", p.s11_re)}</td>
+                                                <td>{format!("{:.4}", p.s11_im)}</td>
+                                            </tr>
+                                        }) }
+                                        </tbody>
+                                    </table>
+                                </div>
+                            }
+                            if let (Some(times), Some(voltages)) = (&r.time_points, &r.port_voltages) {
+                                <div>
+                                    <p><strong>{"Port Voltage (time domain):"}</strong>
+                                       {format!(" {} points, t_end = {:.3} ns",
+                                           times.len(),
+                                           times.last().copied().unwrap_or(0.0) * 1e9)}</p>
+                                    if times.len() <= 20 {
+                                        <table class="s-param-table">
+                                            <thead><tr><th>{"t (ns)"}</th><th>{"V (V)"}</th></tr></thead>
+                                            <tbody>
+                                            { for times.iter().zip(voltages.iter()).map(|(t, v)| html! {
+                                                <tr>
+                                                    <td>{format!("{:.4}", t * 1e9)}</td>
+                                                    <td>{format!("{:.6}", v)}</td>
+                                                </tr>
+                                            }) }
+                                            </tbody>
+                                        </table>
+                                    } else {
+                                        <p>{"(download port_voltage.csv for full time series)"}</p>
+                                    }
+                                </div>
+                            }
+                            if r.frequencies_hz.is_none() && r.s_params.is_none() && r.time_points.is_none() {
                                 <p><strong>{"Energy: "}</strong>{format!("{:.6} pJ", r.energy * 1e12)}</p>
                             }
                             if r.node_count > 0 {
-                                <p><strong>{"Nodes: "}</strong>{r.node_count}</p>
+                                <p><strong>{"Nodes/Points: "}</strong>{r.node_count}</p>
                             }
                             if let Some(max_e) = r.max_e {
                                 <p><strong>{"Max |E|: "}</strong>{format!("{:.4} V/m", max_e)}</p>

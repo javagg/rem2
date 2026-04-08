@@ -51,11 +51,12 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
     let mut mesh = RemMesh::from_raw(raw, config)?;
     mesh.set_comm(comm.rank(), comm.size());
 
-    run_with_mesh(config, &mesh, comm)
+    run_with_mesh(config, &mesh, comm).map(|_| ())
 }
 
 /// Entry point for pre-loaded mesh (used by WASM path).
-pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> RemResult<()> {
+/// Returns the per-frequency S-parameter results.
+pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> RemResult<Vec<FreqResult>> {
     log::info!("=== Driven (frequency-domain) solver ===");
 
     let drv_cfg = config.solver.driven.as_ref().ok_or_else(|| {
@@ -135,7 +136,7 @@ fn run_frequency_sweep(
     mesh: &RemMesh,
     domain_map: &DomainMap,
     comm: &dyn Comm,
-) -> RemResult<()> {
+) -> RemResult<Vec<FreqResult>> {
     let f_min  = drv_cfg.min_freq;
     let f_max  = drv_cfg.max_freq;
     let f_step = drv_cfg.freq_step;
@@ -279,17 +280,17 @@ fn run_frequency_sweep(
     #[cfg(not(target_arch = "wasm32"))]
     output::write_s_params(out_dir, &freq_results)?;
     log::info!("Driven solve complete: {} frequency points", freq_results.len());
-    Ok(())
+    Ok(freq_results)
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-pub(crate) struct FreqResult {
-    freq_hz: f64,
-    s11_re:  f64,
-    s11_im:  f64,
+pub struct FreqResult {
+    pub freq_hz: f64,
+    pub s11_re:  f64,
+    pub s11_im:  f64,
 }
 
 /// Whether the excited port is a LumpedPort or a WavePort.
