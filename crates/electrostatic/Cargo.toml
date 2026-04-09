@@ -11,4 +11,7 @@ rem-materials = { workspace = true }
 rem-parallel  = { workspace = true }
 rem-bc        = { workspace = true }
 rem-result    = { workspace = true }
+fem-assembly  = { workspace = true }
+fem-space     = { workspace = true }
+fem-linalg    = { workspace = true }
 log           = { workspace = true }

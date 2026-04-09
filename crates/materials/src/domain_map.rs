@@ -79,6 +79,21 @@ impl DomainMap {
         })
     }
 
+    /// Construct directly from a list of materials with explicit tag mapping.
+    ///
+    /// `tag_map` is an iterator of `(physical_tag, material_index)` pairs.
+    /// Primarily used in tests.
+    pub fn from_materials(
+        materials: Vec<Material>,
+        tag_map: impl IntoIterator<Item = (u32, usize)>,
+    ) -> Self {
+        DomainMap {
+            materials,
+            tag_to_mat: tag_map.into_iter().collect(),
+            default_material: Material::default(),
+        }
+    }
+
     /// Look up material by physical group tag.
     /// Falls back to vacuum if the tag is not mapped.
     pub fn get(&self, tag: u32) -> &Material {

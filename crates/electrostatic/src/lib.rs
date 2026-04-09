@@ -12,6 +12,7 @@
 //!   7. Output CSV + VTK
 
 pub mod assemble;
+pub mod assemble_fem;
 pub mod bc;
 pub mod postprocess;
 pub mod output;
@@ -125,22 +126,34 @@ pub fn solve_one(
     // Collect periodic node pairs (empty if no Periodic BCs configured)
     let periodic_pairs = bc::collect_periodic_node_pairs(mesh, config);
 
-    // Assemble stiffness matrix — scalar or tensor path
-    let mut triplet = if domain_map.any_anisotropic() {
-        log::info!("Anisotropic material(s) detected — using tensor stiffness assembly.");
-        let tensor_fn = |tag: u32| domain_map.get(tag).epsilon_tensor;
-        assemble::assemble_stiffness_aniso(mesh, tensor_fn)?
+    // Elect assembly backend:
+    //   - No periodic BCs → fem-assembly (Assembler + H1Space, future P2/P3 ready)
+    //   - Periodic BCs   → legacy COO path (requires node-index remapping in COO)
+    let order     = if config.solver.order >= 2 { 2u8 } else { 1u8 };
+    let quad_order = order * 2;
+
+    let mut mat = if periodic_pairs.is_empty() {
+        log::info!("Using fem-assembly backend (order=P{order}).");
+        if domain_map.any_anisotropic() {
+            log::info!("Anisotropic material(s) detected — tensor assembly.");
+            assemble_fem::assemble_stiffness_aniso_fem(mesh, domain_map, order, quad_order)
+        } else {
+            assemble_fem::assemble_stiffness_fem(mesh, domain_map, order, quad_order)
+        }
     } else {
-        let eps_fn = |tag: u32| domain_map.get(tag).epsilon_abs();
-        assemble::assemble_stiffness(mesh, eps_fn)?
-    };
-
-    // Apply periodic remapping before converting to CSR
-    if !periodic_pairs.is_empty() {
+        // Periodic path: assemble in COO, remap, then convert to CSR
+        log::info!("Periodic BCs present — using legacy COO assembly.");
+        let mut triplet = if domain_map.any_anisotropic() {
+            log::info!("Anisotropic material(s) detected — using tensor stiffness assembly.");
+            let tensor_fn = |tag: u32| domain_map.get(tag).epsilon_tensor;
+            assemble::assemble_stiffness_aniso(mesh, tensor_fn)?
+        } else {
+            let eps_fn = |tag: u32| domain_map.get(tag).epsilon_abs();
+            assemble::assemble_stiffness(mesh, eps_fn)?
+        };
         triplet.remap_periodic_nodes(&periodic_pairs);
-    }
-
-    let mut mat = triplet.to_csr();
+        triplet.to_csr()
+    };
     let mut rhs = vec![0.0f64; n];
 
     // Apply Dirichlet BCs
