@@ -1,13 +1,17 @@
-/// Minimal COO → CSR sparse matrix and PCG solver for FEM.
+/// COO → CSR sparse matrix and PCG solver for FEM.
 ///
 /// Design goals:
-/// - No external dependencies (WASM-compatible)
-/// - Simple enough to audit easily
+/// - WASM-compatible (no unsafe, no FFI)
 /// - Correct for symmetric positive-definite systems arising from FEM
+/// - Interoperable with `fem_linalg` via `to_fem_csr()` / `from_fem_csr()`
+///   so physics crates can pass assembled matrices to fem-rs solvers.
 
 // ---------------------------------------------------------------------------
-// Triplet (COO) format — used during assembly
+// fem-linalg interop
 // ---------------------------------------------------------------------------
+
+use fem_linalg::{CooMatrix as FemCoo, CsrMatrix as FemCsr};
+
 
 /// Sparse matrix in triplet (COO) format.
 /// Duplicate entries are allowed and will be summed during `to_csr()`.
@@ -45,6 +49,18 @@ impl TripletMatrix {
     }
 
     pub fn nnz(&self) -> usize { self.rows.len() }
+
+    /// Convert to a `fem_linalg::CooMatrix<f64>` for use with fem-rs assemblers.
+    ///
+    /// The returned matrix owns fresh storage; `self` is unchanged.
+    pub fn to_fem_coo(&self) -> FemCoo<f64> {
+        let mut out = FemCoo::new(self.nrows, self.ncols);
+        out.reserve(self.rows.len());
+        for i in 0..self.rows.len() {
+            out.add(self.rows[i], self.cols[i], self.vals[i]);
+        }
+        out
+    }
 
     /// Remap node indices for periodic boundary conditions.
     ///
@@ -238,6 +254,40 @@ impl CsrMatrix {
             }
         }
         0.0
+    }
+
+    // -----------------------------------------------------------------------
+    // fem-linalg interop
+    // -----------------------------------------------------------------------
+
+    /// Convert to `fem_linalg::CsrMatrix<f64>` for use with fem-rs solvers.
+    ///
+    /// `col_idx` is widened from `usize` to `u32`.  Panics in debug builds if
+    /// any column index overflows `u32` (> 4 billion columns is not realistic).
+    pub fn to_fem_csr(&self) -> FemCsr<f64> {
+        let col_idx_u32: Vec<u32> = self.col_idx.iter().map(|&c| {
+            debug_assert!(c <= u32::MAX as usize, "column index {} overflows u32", c);
+            c as u32
+        }).collect();
+        FemCsr {
+            nrows:   self.nrows,
+            ncols:   self.ncols,
+            row_ptr: self.row_ptr.clone(),
+            col_idx: col_idx_u32,
+            values:  self.values.clone(),
+        }
+    }
+
+    /// Construct from a `fem_linalg::CsrMatrix<f64>`, narrowing `u32` → `usize`.
+    pub fn from_fem_csr(src: FemCsr<f64>) -> Self {
+        let col_idx: Vec<usize> = src.col_idx.iter().map(|&c| c as usize).collect();
+        CsrMatrix {
+            nrows:   src.nrows,
+            ncols:   src.ncols,
+            row_ptr: src.row_ptr,
+            col_idx,
+            values:  src.values,
+        }
     }
 }
 
