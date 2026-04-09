@@ -32,6 +32,7 @@ pub struct SParamPoint {
 pub struct SimResult {
     pub energy: f64,
     pub node_count: usize,
+    pub element_count: usize,
     pub max_e: Option<f64>,
     pub max_b: Option<f64>,
     pub frequencies_hz: Option<Vec<f64>>,
@@ -161,15 +162,11 @@ pub async fn run_example(key: &str, on_log: impl Fn(String) + 'static) -> Result
         }).collect()
     });
 
-    let node_count = if !result.phi.is_empty() {
-        result.phi.len()
-    } else if let Some(pts) = &s_params {
-        pts.len()
-    } else if let Some(rd) = &rcs_data {
-        rd.len()
-    } else {
-        0
-    };
+    let node_count = result.solver_info.as_ref()
+        .map(|i| i.n_nodes)
+        .filter(|&n| n > 0)
+        .unwrap_or_else(|| if !result.phi.is_empty() { result.phi.len() } else { 0 });
+    let element_count = result.solver_info.as_ref().map(|i| i.n_elements).unwrap_or(0);
 
     let mut artifacts = vec![];
 
@@ -242,6 +239,7 @@ pub async fn run_example(key: &str, on_log: impl Fn(String) + 'static) -> Result
         summary: SimResult {
             energy: result.energy,
             node_count,
+            element_count,
             max_e,
             max_b,
             frequencies_hz: result.frequencies_hz,

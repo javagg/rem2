@@ -11,8 +11,10 @@ pub struct Material {
     pub permeability: f64,
     /// Electric conductivity σ [S/m]
     pub conductivity: f64,
-    /// Dielectric loss tangent tan δ (dimensionless)
+    /// Dielectric loss tangent tan δ_e (dimensionless)
     pub loss_tangent: f64,
+    /// Magnetic loss tangent tan δ_m = μᵢ/μᵣ (dimensionless, for ferrites/lossy magnetics)
+    pub loss_tangent_magnetic: f64,
     /// Absolute permittivity tensor ε₀ εᵣ [F/m], 3×3 row-major.
     /// Defaults to ε₀ εᵣ · I. Non-identity when MaterialAxes rotation is present.
     pub epsilon_tensor: [[f64; 3]; 3],
@@ -29,6 +31,7 @@ impl Default for Material {
             permeability: 1.0,
             conductivity: 0.0,
             loss_tangent: 0.0,
+            loss_tangent_magnetic: 0.0,
             epsilon_tensor: [[EPS0, 0.0, 0.0], [0.0, EPS0, 0.0], [0.0, 0.0, EPS0]],
             nu_tensor: [[nu, 0.0, 0.0], [0.0, nu, 0.0], [0.0, 0.0, nu]],
         }
@@ -45,6 +48,7 @@ impl Material {
             permeability,
             conductivity,
             loss_tangent,
+            loss_tangent_magnetic: 0.0,
             epsilon_tensor: [[eps, 0.0, 0.0], [0.0, eps, 0.0], [0.0, 0.0, eps]],
             nu_tensor: [[nu, 0.0, 0.0], [0.0, nu, 0.0], [0.0, 0.0, nu]],
         }
@@ -114,6 +118,11 @@ impl Material {
     /// Returns true if the material has any loss (tan δ > 0 or σ > 0).
     pub fn is_lossy(&self) -> bool {
         self.loss_tangent > 0.0 || self.conductivity > 0.0
+    }
+
+    /// Returns true if the material has magnetic loss (tan δ_m > 0).
+    pub fn is_magnetically_lossy(&self) -> bool {
+        self.loss_tangent_magnetic > 0.0
     }
 
     /// Returns true if the epsilon tensor is non-isotropic (off-diagonal entries non-zero

@@ -773,7 +773,11 @@ fn app() -> Html {
                                 <p><strong>{"Energy: "}</strong>{format!("{:.6} pJ", r.energy * 1e12)}</p>
                             }
                             if r.node_count > 0 {
-                                <p><strong>{"Nodes/Points: "}</strong>{r.node_count}</p>
+                                <p><strong>{"Nodes: "}</strong>{r.node_count}
+                                if r.element_count > 0 {
+                                    {format!("  |  Elements: {}", r.element_count)}
+                                }
+                                </p>
                             }
                             if let Some(max_e) = r.max_e {
                                 <p><strong>{"Max |E|: "}</strong>{format!("{:.4} V/m", max_e)}</p>

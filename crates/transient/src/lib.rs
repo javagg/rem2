@@ -458,6 +458,9 @@ fn port_voltage(mesh: &RemMesh, v: &[f64], port_idx: Option<u32>) -> f64 {
         .filter(|e| matches!(
             mesh.boundary_tags.get(&e.tag),
             Some(BoundaryTag::LumpedPort { index, .. }) if *index == idx
+        ) || matches!(
+            mesh.boundary_tags.get(&e.tag),
+            Some(BoundaryTag::WavePort { index }) if *index == idx
         ))
         .flat_map(|e| e.node_ids.iter().copied())
         .collect();

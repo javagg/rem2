@@ -12,6 +12,9 @@
 use rem_core::{TripletMatrix, RemError, RemResult};
 use rem_mesh::{RemMesh, ElementKind};
 use rem_materials::DomainMap;
+use std::sync::Once;
+
+static TET10_WARNED: Once = Once::new();
 
 /// Assemble the global stiffness (diffusion) matrix for Poisson's equation.
 ///
@@ -38,7 +41,14 @@ pub fn assemble_stiffness(
                 assemble_tet4(mesh, elem, eps, &mut triplet)?;
             }
             ElementKind::Tet10 => {
-                // P1 approximation using corner nodes only
+                // P1 approximation using corner nodes only (mid-edge nodes ignored).
+                // This degrades accuracy from O(h²) to O(h) — use a Tet4 mesh for best results.
+                TET10_WARNED.call_once(|| {
+                    log::warn!(
+                        "Tet10 elements detected: using P1 corner-node approximation (mid-edge nodes ignored). \
+                         Accuracy degrades from O(h²) to O(h). Re-mesh with Tet4 elements for full precision."
+                    );
+                });
                 assemble_tet4_by_nodes(mesh, &elem.node_ids[..4], elem.id, eps, &mut triplet)?;
             }
             other => {

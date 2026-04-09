@@ -22,7 +22,7 @@ impl DomainMap {
             .materials
             .iter()
             .map(|spec| {
-                if spec.material_axes.is_empty() {
+                let mut mat = if spec.material_axes.is_empty() {
                     Material::from_scalars(
                         spec.permittivity,
                         spec.permeability,
@@ -37,7 +37,9 @@ impl DomainMap {
                         spec.loss_tangent,
                         &spec.material_axes,
                     )
-                }
+                };
+                mat.loss_tangent_magnetic = spec.loss_tangent_magnetic;
+                mat
             })
             .collect();
 

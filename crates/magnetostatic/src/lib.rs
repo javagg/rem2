@@ -374,6 +374,18 @@ fn write_outputs(
         writeln!(vf, "{:.9e} {:.9e} {:.9e}", bv[0], bv[1], bv[2])
             .map_err(RemError::Io)?;
     }
+
+    // Element-center B-field: average nodal B over element corner nodes.
+    // Stored as CELL_DATA for better coarse-mesh visualization in ParaView.
+    writeln!(vf, "CELL_DATA {}", n_cells).map_err(RemError::Io)?;
+    writeln!(vf, "VECTORS B_field_cell double").map_err(RemError::Io)?;
+    for elem in &mesh.volume_elements {
+        let nn = elem.node_ids.len().max(1) as f64;
+        let bx: f64 = elem.node_ids.iter().map(|&i| b_field[i][0]).sum::<f64>() / nn;
+        let by: f64 = elem.node_ids.iter().map(|&i| b_field[i][1]).sum::<f64>() / nn;
+        let bz: f64 = elem.node_ids.iter().map(|&i| b_field[i][2]).sum::<f64>() / nn;
+        writeln!(vf, "{:.9e} {:.9e} {:.9e}", bx, by, bz).map_err(RemError::Io)?;
+    }
     log::info!("Written: {}", vtk_path.display());
 
     Ok(())

@@ -381,14 +381,24 @@ fn run_frequency_sweep(
 
         let phi_re: Vec<f64> = phi_c.iter().map(|x| x.re).collect();
 
-        let (v_port, i_port) = compute_port_vi_complex(mesh, &phi_c, &k_dense, excited_port);
+        let (v_port, i_kphi) = compute_port_vi_complex(mesh, &phi_c, &k_dense, excited_port);
 
-        // Reference impedance
-        let z0 = if let Some(mode) = &wave_port_mode {
+        // Reference impedance and port current
+        let (z0, i_port) = if let Some(mode) = &wave_port_mode {
             let z = mode.te_impedance(freq);
-            if z.is_finite() { z } else { 50.0 }
+            let z_use = if z.is_finite() { z } else { 50.0 };
+            // For WavePort: current from modal impedance I = V / Z_TE
+            // This correctly gives I proportional to the guided-wave power flow.
+            let i = if z_use.abs() > 1e-300 {
+                v_port / Complex64::new(z_use, 0.0)
+            } else {
+                Complex64::ZERO
+            };
+            (z_use, i)
         } else {
-            lumped_port_resistance(mesh, excited_port)
+            let r = lumped_port_resistance(mesh, excited_port);
+            // For LumpedPort: current from K·φ residual (net conduction current)
+            (r, i_kphi)
         };
 
         let s11 = if i_port.norm() > 1e-300 {
@@ -501,12 +511,14 @@ fn run_frequency_sweep(
                 }
                 let phi_c = gmres_complex(&a, &rhs_c, lin.tol, lin.max_iter)?;
                 let phi_re: Vec<f64> = phi_c.iter().map(|x| x.re).collect();
-                let (v_port, i_port) = compute_port_vi_complex(mesh, &phi_c, &k_dense, excited_port);
-                let z0 = if let Some(mode) = &wave_port_mode {
+                let (v_port, i_kphi) = compute_port_vi_complex(mesh, &phi_c, &k_dense, excited_port);
+                let (z0, i_port) = if let Some(mode) = &wave_port_mode {
                     let z = mode.te_impedance(freq);
-                    if z.is_finite() { z } else { 50.0 }
+                    let z_use = if z.is_finite() { z } else { 50.0 };
+                    let i = if z_use.abs() > 1e-300 { v_port / Complex64::new(z_use, 0.0) } else { Complex64::ZERO };
+                    (z_use, i)
                 } else {
-                    lumped_port_resistance(mesh, excited_port)
+                    (lumped_port_resistance(mesh, excited_port), i_kphi)
                 };
                 let s11 = if i_port.norm() > 1e-300 {
                     let z = v_port / i_port;
@@ -808,13 +820,20 @@ fn compute_port_vi_complex(
             }
         })
         .flat_map(|e| e.node_ids.iter().copied())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
         .collect();
 
     if port_nodes.is_empty() { return (Complex64::ZERO, Complex64::ZERO); }
 
+    // Port voltage: arithmetic mean of φ over port nodes (uniform TEM or lumped-port)
     let v_port = port_nodes.iter().map(|&n| phi[n]).sum::<Complex64>()
         / Complex64::new(port_nodes.len() as f64, 0.0);
 
+    // Port current: computed via K·φ residual over port rows.
+    // For a LumpedPort this gives the net conduction current into the port.
+    // For WavePort the caller overrides Z0 with Z_TE and computes I = V/Z0 instead
+    // (see S11 computation in the sweep loop).
     let n = phi.len();
     let mut i_port = Complex64::ZERO;
     for &row in &port_nodes {

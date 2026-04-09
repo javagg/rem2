@@ -196,10 +196,20 @@ pub fn solve(
     let (t_alpha, t_beta, v_basis) =
         lanczos(&a_bc, &m_mat, &dofs, n, m, lin.tol, lin.max_iter, comm);
 
+    let actual_m = t_alpha.len();
+    if actual_m < n_modes {
+        log::warn!(
+            "Lanczos terminated early: {} steps completed, {} modes requested. \
+             Invariant subspace found or PCG convergence issue.",
+            actual_m, n_modes
+        );
+    }
+
     // Solve the m×m tridiagonal eigenvalue problem with nalgebra
-    let ritz_vals = tridiag_eigenvalues(&t_alpha, &t_beta);
+    let (ritz_vals, ritz_vecs_small) = tridiag_eigen(&t_alpha, &t_beta);
 
     // Convert Ritz values μ back to λ = σ + 1/μ, then to Hz
+    // Recover Ritz vectors: x_k = V * y_k  (V = Lanczos basis, y_k = k-th column of ritz_vecs_small)
     let mut eigenpairs: Vec<(f64, Vec<f64>)> = Vec::new();
 
     for (k, &mu) in ritz_vals.iter().enumerate().take(n_modes) {
@@ -208,10 +218,31 @@ pub fn solve(
         if lambda <= 0.0 { continue; }
         let freq_hz = C0 * lambda.sqrt() / (2.0 * std::f64::consts::PI);
 
-        // Recover Ritz vector x = V * y_k  (V = Lanczos basis, y_k = k-th Ritz vec)
-        // For simplicity we use the raw Lanczos vector v_k as an approximation
-        let ritz_vec = if k < v_basis.len() {
-            v_basis[k].clone()
+        // Ritz vector: x_k = V * y_k  where y_k is the k-th column of ritz_vecs_small
+        let ritz_vec = if k < ritz_vecs_small.ncols() && !v_basis.is_empty() {
+            let basis_m = v_basis.len();  // number of Lanczos vectors actually computed
+            let coeff_m = ritz_vecs_small.nrows().min(basis_m);
+            let mut x = vec![0.0f64; n];
+            for j in 0..coeff_m {
+                let y_jk = ritz_vecs_small[(j, k)];
+                if y_jk.abs() < 1e-300 { continue; }
+                let vj = &v_basis[j];
+                for i in 0..n {
+                    x[i] += y_jk * vj[i];
+                }
+            }
+            // M-normalize the Ritz vector: ||x||_M = 1
+            let mx: Vec<f64> = {
+                let mut tmp = vec![0.0f64; n];
+                m_mat.matvec(&x, &mut tmp, comm);
+                tmp
+            };
+            let norm_sq: f64 = x.iter().zip(mx.iter()).map(|(a, b)| a * b).sum();
+            if norm_sq > 1e-300 {
+                let s = 1.0 / norm_sq.sqrt();
+                x.iter_mut().for_each(|v| *v *= s);
+            }
+            x
         } else {
             vec![0.0f64; n]
         };
@@ -371,9 +402,14 @@ fn lanczos(
 // Tridiagonal eigenvalue solve via nalgebra
 // ---------------------------------------------------------------------------
 
-fn tridiag_eigenvalues(alpha: &[f64], beta: &[f64]) -> Vec<f64> {
+/// Returns (eigenvalues, eigenvectors) of the m×m symmetric tridiagonal matrix.
+/// Eigenvalues sorted largest-first (closest to shift target).
+/// Eigenvectors are columns of the returned matrix (column-major, m×m).
+fn tridiag_eigen(alpha: &[f64], beta: &[f64]) -> (Vec<f64>, DMatrix<f64>) {
     let m = alpha.len();
-    if m == 0 { return vec![]; }
+    if m == 0 {
+        return (vec![], DMatrix::zeros(0, 0));
+    }
     let mut mat = DMatrix::<f64>::zeros(m, m);
     for i in 0..m {
         mat[(i, i)] = alpha[i];
@@ -383,10 +419,21 @@ fn tridiag_eigenvalues(alpha: &[f64], beta: &[f64]) -> Vec<f64> {
         mat[(i + 1, i)] = beta[i];
     }
     let sym = nalgebra::SymmetricEigen::new(mat);
-    let mut vals: Vec<f64> = sym.eigenvalues.iter().copied().collect();
-    // Return largest eigenvalues first (largest 1/μ = smallest λ nearest target)
-    vals.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
-    vals
+    // Sort by eigenvalue descending (largest μ → smallest λ nearest target)
+    let mut idx: Vec<usize> = (0..m).collect();
+    let evals: Vec<f64> = sym.eigenvalues.iter().copied().collect();
+    idx.sort_by(|&a, &b| evals[b].partial_cmp(&evals[a]).unwrap_or(std::cmp::Ordering::Equal));
+
+    let sorted_vals: Vec<f64> = idx.iter().map(|&i| evals[i]).collect();
+    // Build sorted eigenvector matrix: each column is the eigenvector for sorted_vals[k]
+    let evecs = &sym.eigenvectors;
+    let mut sorted_vecs = DMatrix::<f64>::zeros(m, m);
+    for (new_col, &old_col) in idx.iter().enumerate() {
+        for row in 0..m {
+            sorted_vecs[(row, new_col)] = evecs[(row, old_col)];
+        }
+    }
+    (sorted_vals, sorted_vecs)
 }
 
 // ---------------------------------------------------------------------------
@@ -450,10 +497,13 @@ mod tests {
         // [[2, -1], [-1, 2]] → eigenvalues 1 and 3
         let alpha = vec![2.0, 2.0];
         let beta  = vec![-1.0];
-        let vals = tridiag_eigenvalues(&alpha, &beta);
+        let (vals, vecs) = tridiag_eigen(&alpha, &beta);
         assert_eq!(vals.len(), 2);
         // Sorted largest first: [3.0, 1.0]
         assert!((vals[0] - 3.0).abs() < 1e-10, "val0={}", vals[0]);
         assert!((vals[1] - 1.0).abs() < 1e-10, "val1={}", vals[1]);
+        // Eigenvectors should be orthonormal: y_0^T y_1 ≈ 0
+        let dot = vecs[(0,0)]*vecs[(0,1)] + vecs[(1,0)]*vecs[(1,1)];
+        assert!(dot.abs() < 1e-10, "eigenvecs not orthogonal: dot={}", dot);
     }
 }

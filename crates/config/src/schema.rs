@@ -231,6 +231,10 @@ pub struct MaterialSpec {
             deserialize_with = "deserialize_scalar_or_first")]
     pub loss_tangent: f64,
 
+    /// Magnetic loss tangent tan δ_m = μᵢ/μᵣ for lossy magnetic materials (ferrites, etc.).
+    #[serde(rename = "LossTanMag", default)]
+    pub loss_tangent_magnetic: f64,
+
     #[serde(rename = "Conductivity", default,
             deserialize_with = "deserialize_scalar_or_first")]
     pub conductivity: f64,
