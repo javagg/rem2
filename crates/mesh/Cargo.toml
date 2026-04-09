@@ -13,6 +13,7 @@ metis-wasm = ["dep:rmetis", "rmetis/std", "rmetis/wasm"]
 rem-core    = { workspace = true }
 rem-config  = { workspace = true }
 rem-parallel = { workspace = true }
+fem-mesh    = { workspace = true }
 log         = { workspace = true }
 rmetis      = { workspace = true, optional = true }
 rmsh-io     = { path = "../../vendor/rmsh/crates/io", default-features = false }

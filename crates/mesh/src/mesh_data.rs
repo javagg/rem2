@@ -411,6 +411,132 @@ impl RemMesh {
             .filter_map(|(tag, bc)| if predicate(bc) { Some(*tag) } else { None })
             .collect()
     }
+
+    // -----------------------------------------------------------------------
+    // fem-rs interop
+    // -----------------------------------------------------------------------
+
+    /// Convert this mesh to a `fem_mesh::SimplexMesh<3>` for use with fem-rs
+    /// assemblers and solvers.
+    ///
+    /// The conversion handles the most common 3-D element types used in rem2
+    /// (Tet4, Tet10, Hex8, Tri3, Quad4).  Mixed-element meshes produce a
+    /// `SimplexMesh` with `elem_types` / `elem_offsets` populated.
+    ///
+    /// `elem_tags` carries the physical-group (material) tag from GMSH.
+    /// `face_tags` carries the physical-group tag as a plain `i32`
+    /// (compatible with `fem_mesh::BoundaryTag = i32`).
+    pub fn to_simplex_mesh(&self) -> fem_mesh::SimplexMesh<3> {
+        use fem_mesh::ElementType as FET;
+
+        // --- map ElementKind → fem ElementType ---
+        fn to_fem_elem_type(k: ElementKind) -> Option<FET> {
+            match k {
+                ElementKind::Tet4  => Some(FET::Tet4),
+                ElementKind::Tet10 => Some(FET::Tet10),
+                ElementKind::Hex8  => Some(FET::Hex8),
+                ElementKind::Tri3  => Some(FET::Tri3),
+                ElementKind::Tri6  => Some(FET::Tri6),
+                ElementKind::Quad4 => Some(FET::Quad4),
+                ElementKind::Line2 => Some(FET::Line2),
+            }
+        }
+
+        // --- node coordinates (flat, x y z x y z …) ---
+        let mut coords = Vec::with_capacity(self.nodes.len() * 3);
+        for n in &self.nodes {
+            coords.push(n.x);
+            coords.push(n.y);
+            coords.push(n.z);
+        }
+
+        // --- volume element connectivity ---
+        // Detect whether the mesh is uniform (all same kind) or mixed.
+        let first_kind = self.volume_elements.first().map(|e| e.kind);
+        let is_uniform = first_kind.map_or(true, |k| {
+            self.volume_elements.iter().all(|e| e.kind == k)
+        });
+
+        let (conn, elem_tags, elem_type, elem_types, elem_offsets) = if is_uniform {
+            let kind = first_kind.unwrap_or(ElementKind::Tet4);
+            let et = to_fem_elem_type(kind).unwrap_or(FET::Tet4);
+            let mut conn: Vec<u32> = Vec::with_capacity(
+                self.volume_elements.len() * kind.n_nodes()
+            );
+            let mut tags: Vec<i32> = Vec::with_capacity(self.volume_elements.len());
+            for e in &self.volume_elements {
+                for &nid in &e.node_ids { conn.push(nid as u32); }
+                tags.push(e.tag as i32);
+            }
+            (conn, tags, et, None, None)
+        } else {
+            // Mixed: use CSR-like offsets
+            let mut conn: Vec<u32>  = Vec::new();
+            let mut tags: Vec<i32>  = Vec::with_capacity(self.volume_elements.len());
+            let mut etypes: Vec<FET> = Vec::with_capacity(self.volume_elements.len());
+            let mut offsets: Vec<usize> = vec![0usize];
+            for e in &self.volume_elements {
+                for &nid in &e.node_ids { conn.push(nid as u32); }
+                tags.push(e.tag as i32);
+                etypes.push(to_fem_elem_type(e.kind).unwrap_or(FET::Tet4));
+                offsets.push(conn.len());
+            }
+            let primary = to_fem_elem_type(
+                self.volume_elements.first().map(|e| e.kind).unwrap_or(ElementKind::Tet4)
+            ).unwrap_or(FET::Tet4);
+            (conn, tags, primary, Some(etypes), Some(offsets))
+        };
+
+        // --- boundary face connectivity ---
+        let first_face_kind = self.boundary_elements.first().map(|e| e.kind);
+        let faces_uniform = first_face_kind.map_or(true, |k| {
+            self.boundary_elements.iter().all(|e| e.kind == k)
+        });
+
+        let (face_conn, face_tags, face_type, face_types, face_offsets) = if faces_uniform {
+            let kind = first_face_kind.unwrap_or(ElementKind::Tri3);
+            let ft = to_fem_elem_type(kind).unwrap_or(FET::Tri3);
+            let mut fconn: Vec<u32>  = Vec::with_capacity(
+                self.boundary_elements.len() * kind.n_nodes()
+            );
+            let mut ftags: Vec<fem_mesh::BoundaryTag> =
+                Vec::with_capacity(self.boundary_elements.len());
+            for e in &self.boundary_elements {
+                for &nid in &e.node_ids { fconn.push(nid as u32); }
+                ftags.push(e.tag as i32);
+            }
+            (fconn, ftags, ft, None, None)
+        } else {
+            let mut fconn: Vec<u32>   = Vec::new();
+            let mut ftags: Vec<fem_mesh::BoundaryTag> = Vec::new();
+            let mut fetypes: Vec<FET> = Vec::new();
+            let mut foffsets: Vec<usize> = vec![0usize];
+            for e in &self.boundary_elements {
+                for &nid in &e.node_ids { fconn.push(nid as u32); }
+                ftags.push(e.tag as i32);
+                fetypes.push(to_fem_elem_type(e.kind).unwrap_or(FET::Tri3));
+                foffsets.push(fconn.len());
+            }
+            let primary_f = to_fem_elem_type(
+                self.boundary_elements.first().map(|e| e.kind).unwrap_or(ElementKind::Tri3)
+            ).unwrap_or(FET::Tri3);
+            (fconn, ftags, primary_f, Some(fetypes), Some(foffsets))
+        };
+
+        fem_mesh::SimplexMesh {
+            coords,
+            conn,
+            elem_tags,
+            elem_type,
+            elem_types,
+            elem_offsets,
+            face_conn,
+            face_tags,
+            face_type,
+            face_types,
+            face_offsets,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
