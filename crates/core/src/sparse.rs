@@ -441,6 +441,67 @@ fn apply_ssor(mat: &CsrMatrix, diag: &[f64], r: &[f64], omega: f64) -> Vec<f64> 
 }
 
 // ---------------------------------------------------------------------------
+// fem-solver backends
+// ---------------------------------------------------------------------------
+
+/// Solve A x = b using fem-rs ILU(0)-preconditioned CG.
+///
+/// ILU(0) is a stronger preconditioner than SSOR for large, sparse FEM
+/// stiffness matrices.  Falls back to returning `Err` on failure so the
+/// caller can retry with the built-in SSOR-PCG.
+///
+/// - `tol`      — relative residual tolerance
+/// - `max_iter` — maximum iterations
+///
+/// Not available on `wasm32` targets (fem-solver links against linger which
+/// requires native threading).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn solve_pcg_ilu0(
+    mat: &CsrMatrix,
+    b: &[f64],
+    tol: f64,
+    max_iter: usize,
+) -> Result<SolveResult, String> {
+    let fem_mat = mat.to_fem_csr();
+    let cfg = fem_solver::SolverConfig {
+        rtol: tol,
+        max_iter,
+        ..fem_solver::SolverConfig::default()
+    };
+    let mut x = vec![0.0f64; b.len()];
+    match fem_solver::solve_pcg_ilu0(&fem_mat, b, &mut x, &cfg) {
+        Ok(r) => Ok(SolveResult {
+            solution: x,
+            iterations: r.iterations,
+            residual_norm: r.final_residual,
+            converged: r.converged,
+        }),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Solve A x = b using a sparse direct Cholesky factorisation (fem-rs backend).
+///
+/// Suitable for small to medium symmetric positive-definite systems where
+/// iterative methods converge slowly (ill-conditioned problems, eigenmode
+/// shift-invert, etc.).
+///
+/// Not available on `wasm32` targets.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn solve_cholesky(mat: &CsrMatrix, b: &[f64]) -> Result<SolveResult, String> {
+    let fem_mat = mat.to_fem_csr();
+    match fem_solver::solve_sparse_cholesky(&fem_mat, b) {
+        Ok(x) => Ok(SolveResult {
+            solution: x,
+            iterations: 0,
+            residual_norm: 0.0,
+            converged: true,
+        }),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

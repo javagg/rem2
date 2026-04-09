@@ -8,3 +8,4 @@ thiserror    = { workspace = true }
 rem-parallel = { workspace = true }
 log          = { workspace = true }
 fem-linalg   = { workspace = true }
+fem-solver   = { workspace = true }
