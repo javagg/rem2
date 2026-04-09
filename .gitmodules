@@ -1,12 +1,6 @@
 [submodule "vendor/rmetis"]
 	path = vendor/rmetis
 	url = https://github.com/javagg/rmetis.git
-[submodule "vendor/fem-rs"]
-	path = vendor/fem-rs
-	url = https://github.com/javagg/fem-rs.git
-[submodule "vendor/jsmpi"]
-	path = vendor/jsmpi
-	url = https://github.com/jsmpi/jsmpi.git
 [submodule "vendor/rmsh"]
 	path = vendor/rmsh
 	url = https://github.com/rust-msh/rmsh.git
