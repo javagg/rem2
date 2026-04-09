@@ -1615,3 +1615,57 @@ Freq (GHz),Theta (deg),Phi (deg),RCS (dBsm)
 ---
 
 *最后更新: 2026-04-05 | v0.8.1 完成*
+
+---
+
+## 阶段 14: Palace v0.16 差距补全 P11–P13（v0.15.0）[COMPLETED]
+
+**目标**: 补全 Palace v0.16 相对 REM v0.14 的关键差距，并新增 Driven 求解器扩展能力。
+
+### 完成项清单
+
+| 任务 | 关键文件 | 说明 |
+|------|---------|------|
+| **P11-1** 完整 N×N S 参数矩阵 | `crates/driven/src/lib.rs` | `FreqResult.s_matrix: Vec<Vec<Complex64>>`；多端口 Z→S 转换；WASM flat 格式 |
+| **P11-2** 材料各向异性 ε/μ 张量装配 | `crates/materials/src/material.rs`, `crates/electrostatic/src/assemble.rs` | `epsilon_tensor: [[f64;3];3]`；`MaterialAxes` 旋转矩阵；`assemble_stiffness_aniso()`；静电/特征模/驱动三路均已接入 |
+| **P11-3** 导体 Q 因子（R_s 表面欧姆损耗） | `crates/eigenmode/src/lib.rs` | R_s = √(ωμ₀/2σ)；微扰法 1/Q_c；与介质 tan δ Q_d 合并；`Boundaries.Conductivity` 触发 |
+| **P11-4** 电流偶极子点源激励 | `crates/driven/src/lib.rs` | Palace v0.16 `Domains.CurrentDipole`；Hertz 偶极子 jω μ₀ Il 注入最近自由节点 |
+| **P12-1** Floquet 周期边界条件（Γ 点） | `crates/core/src/sparse.rs`, `crates/electrostatic/src/bc.rs`, `crates/eigenmode/src/lib.rs` | `TripletMatrix::remap_periodic_nodes()`；`collect_periodic_node_pairs()` 几何平移匹配；非零 FloquetWaveVector → 警告跳过 |
+| **P12-2** Drude-Lorentz 频变材料 | `crates/materials/src/material.rs`, `crates/materials/src/domain_map.rs`, `crates/driven/src/lib.rs` | ε(ω) = ε∞ + Σ ωp²/(ω0²−ω²+jγω)；每频点修正刚度矩阵；扣除静态损耗重叠 |
+| **P12-3** JSON Schema 运行时校验 | `crates/config/src/validate.rs`, `crates/config/src/lib.rs` | 两阶段：结构预校验 + 语义校验；5 个单元测试 |
+| **P12-4** 内存峰值报告 | `crates/core/src/memory.rs` | Linux VmPeak；Windows GetProcessMemoryInfo (raw psapi)；WASM → None；各求解器完成时 log::info 输出 |
+| **P12-5** 近远场变换（Kirchhoff 辐射方向图） | `crates/driven/src/far_field.rs`, `crates/wasm/src/lib.rs`, `crates/yew-app/src/solver.rs` | F(r̂)=∫E e^{jkr̂·r'}dS'；E=-∇φ 梯度恢复；dBi 归一化；`Solver.FarField` 配置；`far_field.csv` artifact |
+| **P13-1** 快照 ROM 频率扫描加速 | `crates/driven/src/rom.rs`, `crates/config/src/schema.rs` | 修正 Gram-Schmidt 正交化快照基；`A_r(ω)=V†A(ω)V` r×r LU 求解；展开频率均匀/对数分布；`DrivenSolver.RomOrder` 配置；仅单端口可用；3 个单元测试 |
+
+### 验收（构建验证）
+
+```bash
+cargo build -p rem-yew    # 0 错误
+cargo test -p rem-driven rom    # 3 通过
+cargo test -p rem-config        # 全部通过
+```
+
+*最后更新: 2026-04-09 | v0.15.0 完成*
+
+---
+
+## 阶段 15 — ROM 电路综合（P14-1）
+
+| 编号 | 功能 | 状态 |
+|------|------|------|
+| P14-1 | Vector Fitting 电路综合 | ✅ |
+
+### P14-1 Vector Fitting 电路综合
+
+- 新文件 `crates/driven/src/vf.rs`：Gustavsen-Semlyen VF 算法（实数化 LS + Schur 特征值）
+- Config: `DrivenSolver.CircuitSynthesis: bool`
+- 输出：`s_params.s1p`（Touchstone）、`circuit_model.csv`（极点-留数）、`equivalent_circuit.cir`（SPICE）
+- 11 项测试全通过，`cargo build -p rem-yew` 0 错误
+
+验证：
+```bash
+cargo test -p rem-driven vf   # 4 tests ok
+cargo build -p rem-yew         # 0 errors
+```
+
+*最后更新: 2026-04-09 | v0.16.0 完成*

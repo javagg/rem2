@@ -687,10 +687,15 @@ fn app() -> Html {
                                     </table>
                                     if let Some(vecs) = &r.eigenvectors {
                                         <p class="mode-info">
-                                            {format!("Viewing mode {} / {} — {} DOFs",
-                                                *selected_mode + 1,
-                                                vecs.len(),
-                                                vecs.get(*selected_mode).map(|v| v.len()).unwrap_or(0))}
+                                        {format!("Viewing mode {} / {} — {} DOFs{}",
+                                            *selected_mode + 1,
+                                            vecs.len(),
+                                            vecs.get(*selected_mode).map(|v| v.len()).unwrap_or(0),
+                                            r.frequencies_hz.as_ref()
+                                                .and_then(|fs| fs.get(*selected_mode).copied())
+                                                .map(|f| format!("  |  {:.6} GHz", f / 1e9))
+                                                .unwrap_or_default()
+                                        )}
                                         </p>
                                     }
                                 </div>
@@ -784,6 +789,9 @@ fn app() -> Html {
                             }
                             if let Some(max_b) = r.max_b {
                                 <p><strong>{"Max |B|: "}</strong>{format!("{:.4} T", max_b)}</p>
+                            }
+                            if let Some(cap) = r.capacitance {
+                                <p><strong>{"Capacitance: "}</strong>{format!("{:.4} pF", cap * 1e12)}</p>
                             }
                         </div>
                     }

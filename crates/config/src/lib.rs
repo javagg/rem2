@@ -1,5 +1,6 @@
 pub mod schema;
 mod preprocess;
+mod validate;
 
 pub use schema::*;
 use rem_core::{RemError, RemResult};
@@ -28,6 +29,17 @@ pub fn load_config(path: &Path) -> RemResult<PalaceConfig> {
 
 /// Parse a Palace config from a string with the given format.
 pub fn load_config_from_str(content: &str, fmt: ConfigFormat) -> RemResult<PalaceConfig> {
+    // Phase 1: structural pre-validation (before serde deserialization)
+    match fmt {
+        ConfigFormat::Json => {
+            let stripped = preprocess::strip_comments(content);
+            validate::validate_json_structure(&stripped)?;
+        }
+        ConfigFormat::Yaml => {
+            validate::validate_yaml_structure(content)?;
+        }
+    }
+
     let cfg = match fmt {
         ConfigFormat::Json => {
             let stripped = preprocess::strip_comments(content);
@@ -37,6 +49,10 @@ pub fn load_config_from_str(content: &str, fmt: ConfigFormat) -> RemResult<Palac
             serde_yaml::from_str(content).map_err(yaml_err)
         }
     }?;
+
+    // Phase 2: semantic validation on the deserialized config
+    validate::validate_config_semantics(&cfg)?;
+
     // Warn on Palace fields that are accepted but not fully implemented.
     schema::validate_palace_compat(&cfg);
     Ok(cfg)

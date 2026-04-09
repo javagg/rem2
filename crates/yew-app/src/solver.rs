@@ -26,6 +26,9 @@ pub struct SParamPoint {
     pub s11_db:  f64,
     pub s11_re:  f64,
     pub s11_im:  f64,
+    /// Row-major (re, im) pairs for full N×N S-matrix. Empty for single-port.
+    pub s_matrix_flat: Vec<f64>,
+    pub port_list: Vec<u32>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -47,6 +50,10 @@ pub struct SimResult {
     pub rcs_data: Option<Vec<(f64, f64, f64, f64)>>,
     /// Eigenmode: all eigenvectors (one per mode)
     pub eigenvectors: Option<Vec<Vec<f64>>>,
+    /// Electrostatic: capacitance [F]
+    pub capacitance: Option<f64>,
+    /// Driven: far-field pattern (theta_deg, phi_deg, power_linear, gain_dbi)
+    pub far_field: Option<Vec<(f64, f64, f64, f64)>>,
 }
 
 #[derive(Clone, Debug)]
@@ -79,14 +86,43 @@ fn vec3_csv(name: &str, field: &[[f64; 3]]) -> String {
 }
 
 fn s_params_csv(pts: &[SParamPoint]) -> String {
-    let mut out = String::from("freq_hz,freq_ghz,s11_db,s11_re,s11_im\n");
-    for p in pts {
-        out.push_str(&format!(
-            "{},{:.6},{:.4},{:.6},{:.6}\n",
-            p.freq_hz, p.freq_hz / 1e9, p.s11_db, p.s11_re, p.s11_im
-        ));
+    // Check if multi-port
+    let port_list = pts.first().map(|p| p.port_list.as_slice()).unwrap_or(&[]);
+    let n_ports = port_list.len();
+    if n_ports > 1 && pts.first().map(|p| !p.s_matrix_flat.is_empty()).unwrap_or(false) {
+        let mut header = String::from("freq_hz,freq_ghz");
+        for &pi in port_list {
+            for &pj in port_list {
+                header.push_str(&format!(",S{pi}{pj}_re,S{pi}{pj}_im,S{pi}{pj}_db"));
+            }
+        }
+        header.push('\n');
+        let mut out = header;
+        for p in pts {
+            out.push_str(&format!("{},{:.6}", p.freq_hz, p.freq_hz / 1e9));
+            for i in 0..n_ports {
+                for j in 0..n_ports {
+                    let base = (i * n_ports + j) * 2;
+                    let re = p.s_matrix_flat.get(base).copied().unwrap_or(0.0);
+                    let im = p.s_matrix_flat.get(base + 1).copied().unwrap_or(0.0);
+                    let mag2 = re * re + im * im;
+                    let db = if mag2 > 1e-300 { 10.0 * mag2.log10() } else { -300.0 };
+                    out.push_str(&format!(",{:.6},{:.6},{:.4}", re, im, db));
+                }
+            }
+            out.push('\n');
+        }
+        out
+    } else {
+        let mut out = String::from("freq_hz,freq_ghz,s11_db,s11_re,s11_im\n");
+        for p in pts {
+            out.push_str(&format!(
+                "{},{:.6},{:.4},{:.6},{:.6}\n",
+                p.freq_hz, p.freq_hz / 1e9, p.s11_db, p.s11_re, p.s11_im
+            ));
+        }
+        out
     }
-    out
 }
 
 fn time_series_csv(times: &[f64], voltages: &[f64]) -> String {
@@ -97,10 +133,26 @@ fn time_series_csv(times: &[f64], voltages: &[f64]) -> String {
     out
 }
 
+fn excitation_csv(times: &[f64], signal: &[f64]) -> String {
+    let mut out = String::from("time_s,time_ns,excitation\n");
+    for (t, s) in times.iter().zip(signal.iter()) {
+        out.push_str(&format!("{},{:.4},{:.6}\n", t, t * 1e9, s));
+    }
+    out
+}
+
 fn rcs_csv(data: &[(f64, f64, f64, f64)]) -> String {
     let mut out = String::from("freq_hz,freq_ghz,theta_deg,phi_deg,rcs_dbsm\n");
     for &(f, th, ph, db) in data {
         out.push_str(&format!("{},{:.6},{:.1},{:.1},{:.4}\n", f, f / 1e9, th, ph, db));
+    }
+    out
+}
+
+fn far_field_csv(data: &[(f64, f64, f64, f64)]) -> String {
+    let mut out = String::from("theta_deg,phi_deg,power_linear,gain_dbi\n");
+    for &(th, ph, pwr, gain) in data {
+        out.push_str(&format!("{:.1},{:.1},{:.6e},{:.4}\n", th, ph, pwr, gain));
     }
     out
 }
@@ -152,6 +204,8 @@ pub async fn run_example(key: &str, on_log: impl Fn(String) + 'static) -> Result
             s11_db:  p.s11_db,
             s11_re:  p.s11_re,
             s11_im:  p.s11_im,
+            s_matrix_flat: p.s_matrix_flat.clone(),
+            port_list: p.port_list.clone(),
         }).collect()
     });
 
@@ -160,6 +214,11 @@ pub async fn run_example(key: &str, on_log: impl Fn(String) + 'static) -> Result
         freqs.iter().flat_map(|(f, pts)| {
             pts.iter().map(move |p| (*f, p.theta_deg, p.phi_deg, p.rcs_dbsm))
         }).collect()
+    });
+
+    // Flatten far-field: Vec<FarFieldWasmPoint> → Vec<(theta, phi, power, gain)>
+    let far_field: Option<Vec<(f64, f64, f64, f64)>> = result.far_field.as_ref().map(|pts| {
+        pts.iter().map(|p| (p.theta_deg, p.phi_deg, p.power_linear, p.gain_dbi)).collect()
     });
 
     let node_count = result.solver_info.as_ref()
@@ -226,12 +285,48 @@ pub async fn run_example(key: &str, on_log: impl Fn(String) + 'static) -> Result
             file_name: "port_voltage.csv".to_string(),
             content: time_series_csv(times, voltages),
         });
+        if let Some(exc) = &result.excitation_signal {
+            if !exc.is_empty() {
+                artifacts.push(OutputArtifact {
+                    file_name: "excitation.csv".to_string(),
+                    content: excitation_csv(times, exc),
+                });
+            }
+        }
     }
 
     if let Some(rd) = &rcs_data {
         artifacts.push(OutputArtifact {
             file_name: "rcs.csv".to_string(),
             content: rcs_csv(rd),
+        });
+    }
+
+    if let Some(ff) = &far_field {
+        artifacts.push(OutputArtifact {
+            file_name: "far_field.csv".to_string(),
+            content: far_field_csv(ff),
+        });
+    }
+
+    if let Some(ts) = &result.touchstone_s1p {
+        artifacts.push(OutputArtifact {
+            file_name: "s_params.s1p".to_string(),
+            content: ts.clone(),
+        });
+    }
+
+    if let Some(csv) = &result.circuit_model_csv {
+        artifacts.push(OutputArtifact {
+            file_name: "circuit_model.csv".to_string(),
+            content: csv.clone(),
+        });
+    }
+
+    if let Some(spice) = &result.spice_netlist {
+        artifacts.push(OutputArtifact {
+            file_name: "equivalent_circuit.cir".to_string(),
+            content: spice.clone(),
         });
     }
 
@@ -249,6 +344,8 @@ pub async fn run_example(key: &str, on_log: impl Fn(String) + 'static) -> Result
             q_factors: result.q_factors,
             rcs_data,
             eigenvectors: result.eigenvectors,
+            capacitance: result.capacitance,
+            far_field,
         },
         artifacts,
     })

@@ -4,6 +4,7 @@ use rem_mesh::{load_mesh_from_bytes, gen::{annular_msh, rect_bimaterial_msh}};
 use rem_materials::DomainMap;
 use rem_parallel::WorldComm;
 use rem_electrostatic::{solve_one as solve_es, postprocess as post_es};
+use rem_electrostatic::bc::collect_dirichlet_dofs;
 use rem_magnetostatic::{solve_one as solve_ms};
 use rem_eigenmode::solve as solve_eigen;
 
@@ -17,6 +18,14 @@ pub fn init_panic_hook() {
 #[wasm_bindgen]
 pub fn init_logger() {
     console_log::init_with_level(log::Level::Info).expect("error initializing logger");
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct FarFieldWasmPoint {
+    pub theta_deg: f64,
+    pub phi_deg:   f64,
+    pub power_linear: f64,
+    pub gain_dbi:  f64,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
@@ -34,6 +43,11 @@ pub struct SParam {
     pub s11_im:  f64,
     /// |S11| in dB
     pub s11_db:  f64,
+    /// Full N×N S-matrix as flat row-major Vec of (re, im) pairs.
+    /// Length = n_ports² * 2.  Empty for single-port results.
+    pub s_matrix_flat: Vec<f64>,
+    /// Ordered port indices matching s_matrix_flat rows/cols.
+    pub port_list: Vec<u32>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)]
@@ -60,12 +74,24 @@ pub struct SimulationResult {
     /// Transient: time points [s] and corresponding port voltages [V]
     pub time_points: Option<Vec<f64>>,
     pub port_voltages: Option<Vec<f64>>,
+    /// Transient: excitation signal amplitude at each time point
+    pub excitation_signal: Option<Vec<f64>>,
     /// Eigenmode: Q-factors from dielectric loss perturbation (None if lossless)
     pub q_factors: Option<Vec<f64>>,
     /// Eigenmode: all eigenvectors (one per mode); phi holds mode 0 for backwards compat
     pub eigenvectors: Option<Vec<Vec<f64>>>,
     /// MoM/SBR: RCS pattern data, one entry per frequency
     pub rcs_data: Option<Vec<(f64, Vec<RcsPoint>)>>,
+    /// Electrostatic: capacitance extracted from energy method C = 2U/V² [F]
+    pub capacitance: Option<f64>,
+    /// Driven: far-field radiation pattern at peak response frequency
+    pub far_field: Option<Vec<FarFieldWasmPoint>>,
+    /// Driven: Touchstone .s1p content (Some if CircuitSynthesis = true)
+    pub touchstone_s1p: Option<String>,
+    /// Driven: pole-residue CSV content (Some if CircuitSynthesis = true)
+    pub circuit_model_csv: Option<String>,
+    /// Driven: SPICE netlist content (Some if CircuitSynthesis = true)
+    pub spice_netlist: Option<String>,
     /// Mesh and solver diagnostics
     pub solver_info: Option<SolverInfo>,
 }
@@ -91,12 +117,14 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
 
     match cfg.problem.problem_type {
         ProblemType::Electrostatic => {
+            let n_dirichlet = collect_dirichlet_dofs(&mesh, Some(1), 1.0).len();
             let phi = solve_es(&cfg, &mesh, &dm, Some(1), 1.0, &comm)
                 .map_err(|e| JsError::new(&format!("Solve error: {}", e)))?;
 
             let eps_fn = |tag: u32| dm.get(tag).epsilon_abs();
             let energy = post_es::electrostatic_energy(&phi, &mesh, eps_fn);
             let e_field = Some(post_es::gradient_recovery(&phi, &mesh));
+            let cap = post_es::capacitance(&phi, &mesh, |tag| dm.get(tag).epsilon_abs(), 1.0);
 
             let res = SimulationResult {
                 phi,
@@ -105,11 +133,13 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
                 b_field: None,
                 frequencies_hz: None,
                 s_params: None,
-                time_points: None, port_voltages: None, q_factors: None, rcs_data: None, eigenvectors: None, solver_info: Some(base_info.clone()),
+                time_points: None, port_voltages: None, excitation_signal: None, q_factors: None, rcs_data: None, eigenvectors: None, capacitance: Some(cap),
+                far_field: None, touchstone_s1p: None, circuit_model_csv: None, spice_netlist: None, solver_info: Some(SolverInfo { n_dirichlet, ..base_info.clone() }),
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
         ProblemType::Magnetostatic => {
+            let n_dirichlet = collect_dirichlet_dofs(&mesh, Some(1), 1.0).len();
             let az = solve_ms(&cfg, &mesh, &dm, Some(1), &comm)
                 .map_err(|e| JsError::new(&format!("Solve error: {}", e)))?;
 
@@ -127,7 +157,8 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
                 b_field: Some(b_field),
                 frequencies_hz: None,
                 s_params: None,
-                time_points: None, port_voltages: None, q_factors: None, rcs_data: None, eigenvectors: None, solver_info: Some(base_info.clone()),
+                time_points: None, port_voltages: None, excitation_signal: None, q_factors: None, rcs_data: None, eigenvectors: None, capacitance: None,
+                far_field: None, touchstone_s1p: None, circuit_model_csv: None, spice_netlist: None, solver_info: Some(SolverInfo { n_dirichlet, ..base_info.clone() }),
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
@@ -138,7 +169,15 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
             let s_params: Vec<SParam> = driven.freq_results.iter().map(|r| {
                 let mag = (r.s11_re * r.s11_re + r.s11_im * r.s11_im).sqrt();
                 let s11_db = if mag > 1e-300 { 20.0 * mag.log10() } else { -300.0 };
-                SParam { freq_hz: r.freq_hz, s11_re: r.s11_re, s11_im: r.s11_im, s11_db }
+                // Flatten s_matrix to Vec<f64> row-major (re, im, re, im, ...)
+                let s_matrix_flat: Vec<f64> = r.s_matrix.iter()
+                    .flat_map(|row| row.iter().flat_map(|c| [c.re, c.im]))
+                    .collect();
+                SParam {
+                    freq_hz: r.freq_hz, s11_re: r.s11_re, s11_im: r.s11_im, s11_db,
+                    s_matrix_flat,
+                    port_list: r.port_list.clone(),
+                }
             }).collect();
 
             // E-field and energy at the peak-|S11| frequency
@@ -153,10 +192,26 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
 
             let freq_list: Vec<f64> = driven.freq_results.iter().map(|r| r.freq_hz).collect();
 
+            // Convert far-field pattern
+            let far_field = if !driven.far_field_pattern.is_empty() {
+                Some(driven.far_field_pattern.iter().map(|p| FarFieldWasmPoint {
+                    theta_deg: p.theta_deg,
+                    phi_deg:   p.phi_deg,
+                    power_linear: p.power_linear,
+                    gain_dbi:  p.gain_dbi,
+                }).collect())
+            } else {
+                None
+            };
+
+            let (touchstone_s1p, circuit_model_csv, spice_netlist) = driven.circuit_artifacts();
+
             let res = SimulationResult {
                 phi: vec![], energy, e_field, b_field: None,
                 frequencies_hz: Some(freq_list), s_params: Some(s_params),
-                time_points: None, port_voltages: None, q_factors: None, rcs_data: None, eigenvectors: None, solver_info: Some(base_info.clone()),
+                time_points: None, port_voltages: None, excitation_signal: None, q_factors: None, rcs_data: None, eigenvectors: None, capacitance: None,
+                far_field, touchstone_s1p, circuit_model_csv, spice_netlist,
+                solver_info: Some(base_info.clone()),
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
@@ -176,9 +231,9 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
             let res = SimulationResult {
                 phi: vec![], energy: 0.0, e_field: None, b_field: None,
                 frequencies_hz: None, s_params: None,
-                time_points: None, port_voltages: None, q_factors: None,
-                rcs_data: Some(rcs_data), eigenvectors: None,
-                solver_info: Some(base_info.clone()),
+                time_points: None, port_voltages: None, excitation_signal: None, q_factors: None,
+                rcs_data: Some(rcs_data), eigenvectors: None, capacitance: None,
+                far_field: None, touchstone_s1p: None, circuit_model_csv: None, spice_netlist: None, solver_info: Some(base_info.clone()),
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
@@ -198,9 +253,9 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
             let res = SimulationResult {
                 phi: vec![], energy: 0.0, e_field: None, b_field: None,
                 frequencies_hz: None, s_params: None,
-                time_points: None, port_voltages: None, q_factors: None,
-                rcs_data: Some(rcs_data), eigenvectors: None,
-                solver_info: Some(base_info.clone()),
+                time_points: None, port_voltages: None, excitation_signal: None, q_factors: None,
+                rcs_data: Some(rcs_data), eigenvectors: None, capacitance: None,
+                far_field: None, touchstone_s1p: None, circuit_model_csv: None, spice_netlist: None, solver_info: Some(base_info.clone()),
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
@@ -224,10 +279,10 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
             let res = SimulationResult {
                 phi, energy, e_field, b_field: None,
                 frequencies_hz: Some(eigen.frequencies_hz), s_params: None,
-                time_points: None, port_voltages: None,
-                q_factors: eigen.q_factors, rcs_data: None,
+                time_points: None, port_voltages: None, excitation_signal: None,
+                q_factors: eigen.q_factors, rcs_data: None, capacitance: None,
                 eigenvectors: Some(all_vecs),
-                solver_info: Some(eigen_info),
+                far_field: None, touchstone_s1p: None, circuit_model_csv: None, spice_netlist: None, solver_info: Some(eigen_info),
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
@@ -249,7 +304,8 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
                 frequencies_hz: None, s_params: None,
                 time_points: Some(transient.time_points),
                 port_voltages: Some(transient.port_voltages),
-                q_factors: None, rcs_data: None, eigenvectors: None, solver_info: Some(base_info.clone()),
+                excitation_signal: Some(transient.excitation_signal),
+                q_factors: None, rcs_data: None, eigenvectors: None, capacitance: None, far_field: None, touchstone_s1p: None, circuit_model_csv: None, spice_netlist: None, solver_info: Some(base_info.clone()),
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }

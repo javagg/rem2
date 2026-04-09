@@ -21,8 +21,8 @@ pub mod assemble_mass;
 pub mod output;
 
 use rem_config::PalaceConfig;
-use rem_core::{CsrMatrix, RemError, RemResult, TripletMatrix, solve_pcg};
-use rem_electrostatic::{assemble::assemble_stiffness, bc::collect_dirichlet_dofs, bc::apply_dirichlet};
+use rem_core::{CsrMatrix, RemError, RemResult, TripletMatrix, report_peak_memory, solve_pcg};
+use rem_electrostatic::{assemble::assemble_stiffness, bc::{collect_dirichlet_dofs, apply_dirichlet, collect_periodic_node_pairs, apply_periodic}};
 use rem_materials::DomainMap;
 use rem_mesh::{RemMesh, amr};
 use rem_mesh::gmsh::read_msh_file;
@@ -35,6 +35,8 @@ const C0: f64 = 2.997_924_58e8;  // speed of light [m/s]
 
 // AMR eigenfrequency convergence tolerance: stop if max relative freq change < this
 const AMR_FREQ_TOL: f64 = 1e-4;
+/// AMR absolute frequency convergence tolerance [Hz]: also stop if max absolute change < this
+const AMR_FREQ_ABS_TOL: f64 = 1e6; // 1 MHz
 
 /// Entry point called from rem-cli.
 pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
@@ -92,9 +94,18 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
                         if f_old.abs() > 1e-30 { ((f_new - f_old) / f_old).abs() } else { 0.0 }
                     })
                     .fold(0.0f64, f64::max);
-                log::info!("AMR iter {amr_iter}: max freq rel-change = {max_rel_change:.3e}");
-                if max_rel_change < AMR_FREQ_TOL {
-                    log::info!("AMR freq-converged (rel-change {max_rel_change:.2e} < {AMR_FREQ_TOL:.0e}): stopping.");
+                let max_abs_change_hz = prev_freqs.iter()
+                    .zip(result.frequencies_hz.iter())
+                    .map(|(&f_old, &f_new)| (f_new - f_old).abs())
+                    .fold(0.0f64, f64::max);
+                log::info!(
+                    "AMR iter {amr_iter}: max freq rel-change = {max_rel_change:.3e}, abs-change = {max_abs_change_hz:.3e} Hz"
+                );
+                if max_rel_change < AMR_FREQ_TOL || max_abs_change_hz < AMR_FREQ_ABS_TOL {
+                    log::info!(
+                        "AMR freq-converged (rel {max_rel_change:.2e} < {AMR_FREQ_TOL:.0e}, abs {max_abs_change_hz:.0e} Hz < {} Hz): stopping.",
+                        AMR_FREQ_ABS_TOL
+                    );
                     break;
                 }
                 prev_freqs = result.frequencies_hz.clone();
@@ -118,6 +129,7 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
     }
 
     log::info!("Eigenmode solve complete: {} modes found", result.frequencies_hz.len());
+    report_peak_memory("Eigenmode solver");
     Ok(())
 }
 
@@ -157,7 +169,7 @@ pub fn solve(
     };
 
     // Assemble stiffness K and mass M — scalar or tensor path
-    let k_triplet = if domain_map.any_anisotropic() {
+    let mut k_triplet = if domain_map.any_anisotropic() {
         log::info!("Anisotropic material(s) detected — using tensor stiffness assembly.");
         use rem_electrostatic::assemble::assemble_stiffness_aniso;
         let tensor_fn = |tag: u32| domain_map.get(tag).epsilon_tensor;
@@ -167,18 +179,28 @@ pub fn solve(
         assemble_stiffness(mesh, eps_fn)?
     };
     let eps_fn = |tag: u32| domain_map.get(tag).epsilon_abs();
-    let m_triplet = if domain_map.any_anisotropic() {
+    let mut m_triplet = if domain_map.any_anisotropic() {
         let tensor_fn = |tag: u32| domain_map.get(tag).epsilon_tensor;
         assemble_mass::assemble_mass_aniso(mesh, tensor_fn)?
     } else {
         assemble_mass::assemble_mass(mesh, eps_fn)?
     };
 
+    // Apply periodic node remapping before converting to CSR
+    let periodic_pairs = collect_periodic_node_pairs(mesh, config);
+    if !periodic_pairs.is_empty() {
+        k_triplet.remap_periodic_nodes(&periodic_pairs);
+        m_triplet.remap_periodic_nodes(&periodic_pairs);
+    }
+
     let mut k_mat = k_triplet.to_csr();
     let m_mat = m_triplet.to_csr();
 
     // Collect Dirichlet DOFs (PEC / Ground → φ=0)
-    let dofs = collect_dirichlet_dofs(mesh, None, 0.0);
+    let mut dofs = collect_dirichlet_dofs(mesh, None, 0.0);
+    if !periodic_pairs.is_empty() {
+        apply_periodic(&mut dofs, &periodic_pairs);
+    }
 
     // Build shifted matrix A = K − σ M (before applying BCs to get scaling right)
     let a_mat = shifted_matrix(&k_mat, &m_mat, sigma, n);
@@ -299,9 +321,94 @@ pub fn solve(
         None
     };
 
+    // ── Conductor surface loss → Q_conductor ─────────────────────────────────
+    // Uses perturbation: 1/Q_c = R_s · ∫_PEC |∇φ_t|² dS / (ω₀μ₀ · 2·∫_Ω ε|φ|² dΩ)
+    // R_s = √(ω₀μ₀/(2σ_wall))  (surface resistance of conductor)
+    //
+    // Surface integral approximation: for each PEC boundary triangle (face),
+    // compute area-weighted |∇φ|² using the element gradient of the adjacent volume element.
+    // The denominator uses the eigenmode energy ∫ ε|∇φ|² dΩ (from stiffness Rayleigh quotient).
+    let q_factors: Option<Vec<f64>> = {
+        let sigma_wall = config.solver.eigenmode.as_ref()
+            .map(|e| e.wall_conductivity)
+            .unwrap_or(0.0);
+        if sigma_wall > 0.0 {
+            let freqs_for_q: Vec<f64> = eigenpairs.iter().map(|(f, _)| *f).collect();
+            let qs_combined: Vec<f64> = eigenpairs.iter().zip(freqs_for_q.iter()).map(|((freq_hz, phi), _)| {
+                // Rayleigh quotient denominator: φᵀ M φ (energy normalisation)
+                let mut m_phi = vec![0.0f64; n];
+                m_mat.matvec(phi, &mut m_phi, comm);
+                let denom: f64 = phi.iter().zip(m_phi.iter()).map(|(a, b)| a * b).sum();
+
+                // Surface integral: iterate over PEC boundary elements
+                let omega = 2.0 * std::f64::consts::PI * freq_hz;
+                let r_s = if omega > 0.0 {
+                    (omega * 1.25663706212e-6 / (2.0 * sigma_wall)).sqrt()  // μ₀ = 4πe-7
+                } else { 0.0 };
+
+                let mut surf_integral = 0.0f64;
+                for belem in &mesh.boundary_elements {
+                    let bc = match mesh.boundary_tags.get(&belem.tag) {
+                        Some(b) => b,
+                        None => continue,
+                    };
+                    use rem_mesh::BoundaryTag;
+                    if !matches!(bc, BoundaryTag::Pec | BoundaryTag::Ground) { continue; }
+                    // For Line2 (2-D) and Tri3 (3-D surface) elements
+                    let node_ids = &belem.node_ids;
+                    let (grad_phi, area) = boundary_element_grad_and_area(mesh, node_ids, phi);
+                    let grad_sq = grad_phi[0]*grad_phi[0] + grad_phi[1]*grad_phi[1] + grad_phi[2]*grad_phi[2];
+                    surf_integral += grad_sq * area;
+                }
+
+                let q_diel = q_factors.as_ref().and_then(|qs| qs.get(eigenpairs.iter().position(|(f, _)| f == freq_hz).unwrap_or(0)).copied()).unwrap_or(f64::INFINITY);
+
+                // Q_c from surface loss
+                let q_c = if surf_integral > 1e-300 && denom > 1e-300 && r_s > 0.0 {
+                    let mu0 = 1.25663706212e-6;
+                    // 1/Q_c = (R_s * surf_integral) / (ω₀ μ₀ * denom)
+                    let inv_qc = (r_s * surf_integral) / (omega * mu0 * denom);
+                    if inv_qc > 1e-300 { 1.0 / inv_qc } else { f64::INFINITY }
+                } else {
+                    f64::INFINITY
+                };
+
+                // Combined: 1/Q_total = 1/Q_diel + 1/Q_c
+                let inv_q_diel = if q_diel.is_infinite() { 0.0 } else { 1.0 / q_diel };
+                let inv_qc = if q_c.is_infinite() { 0.0 } else { 1.0 / q_c };
+                let inv_total = inv_q_diel + inv_qc;
+                if inv_total > 1e-300 { 1.0 / inv_total } else { f64::INFINITY }
+            }).collect();
+            log::info!(
+                "Q-factors: dielectric + conductor losses (σ_wall={:.3e} S/m, R_s={:.4} mΩ/□ at {:.3} GHz)",
+                sigma_wall,
+                {
+                    let f0 = eigenpairs.first().map(|(f, _)| *f).unwrap_or(1e9);
+                    let omega0 = 2.0 * std::f64::consts::PI * f0;
+                    (omega0 * 1.25663706212e-6 / (2.0 * sigma_wall)).sqrt() * 1e3
+                },
+                eigenpairs.first().map(|(f, _)| *f / 1e9).unwrap_or(0.0)
+            );
+            Some(qs_combined)
+        } else {
+            if q_factors.is_some() {
+                log::info!("Q-factors: dielectric loss only — set Solver.Eigenmode.WallConductivity for conductor losses.");
+            }
+            q_factors
+        }
+    };
+
     Ok(EigenResult {
         frequencies_hz: eigenpairs.iter().map(|(f, _)| *f).collect(),
-        eigenvectors:   eigenpairs.into_iter().map(|(_, v)| v).collect(),
+        eigenvectors:   {
+            let mut vecs: Vec<Vec<f64>> = eigenpairs.into_iter().map(|(_, mut v)| {
+                if !periodic_pairs.is_empty() {
+                    rem_electrostatic::bc::propagate_periodic(&mut v, &periodic_pairs);
+                }
+                v
+            }).collect();
+            vecs
+        },
         q_factors,
     })
 }
@@ -331,6 +438,66 @@ fn shifted_matrix(k: &CsrMatrix, m: &CsrMatrix, sigma: f64, n: usize) -> CsrMatr
     t.to_csr()
 }
 
+/// Compute the average gradient of φ over a boundary element (Line2 or Tri3)
+/// and the element's area (length for 1-D, area for 2-D surface).
+///
+/// Returns ([gx, gy, gz], measure) where the gradient is the arithmetic mean
+/// of nodal gradients (first-order approximation for P1 elements).
+fn boundary_element_grad_and_area(
+    mesh: &RemMesh,
+    node_ids: &[usize],
+    phi: &[f64],
+) -> ([f64; 3], f64) {
+    let nodes: Vec<_> = node_ids.iter()
+        .filter_map(|&id| mesh.nodes.get(id))
+        .collect();
+    let n = nodes.len();
+    if n == 0 { return ([0.0; 3], 0.0); }
+
+    match n {
+        2 => {
+            // Line2: length element (2-D mesh boundary)
+            let dx = nodes[1].x - nodes[0].x;
+            let dy = nodes[1].y - nodes[0].y;
+            let len = (dx*dx + dy*dy).sqrt().max(1e-300);
+            // Tangential direction: t = (dx, dy)/len
+            // Normal: n = (-dy, dx)/len
+            // Gradient of φ along tangent: (φ₁ - φ₀)/len
+            let dphi = (phi[node_ids[1]] - phi[node_ids[0]]) / len;
+            let gx = dphi * dx / len;
+            let gy = dphi * dy / len;
+            ([gx, gy, 0.0], len)
+        }
+        3 => {
+            // Tri3: triangle surface element (3-D mesh PEC face)
+            let v1 = [nodes[1].x - nodes[0].x, nodes[1].y - nodes[0].y, nodes[1].z - nodes[0].z];
+            let v2 = [nodes[2].x - nodes[0].x, nodes[2].y - nodes[0].y, nodes[2].z - nodes[0].z];
+            // Area = 0.5 |v1 × v2|
+            let cx = v1[1]*v2[2] - v1[2]*v2[1];
+            let cy = v1[2]*v2[0] - v1[0]*v2[2];
+            let cz = v1[0]*v2[1] - v1[1]*v2[0];
+            let area = 0.5 * (cx*cx + cy*cy + cz*cz).sqrt();
+            // Gradient of P1 field on triangle:
+            // ∇φ = (φ₁-φ₀)(∇λ₁) + (φ₂-φ₀)(∇λ₂)
+            // For simplicity: average nodal gradient using finite differences
+            let phi0 = phi.get(node_ids[0]).copied().unwrap_or(0.0);
+            let phi1 = phi.get(node_ids[1]).copied().unwrap_or(0.0);
+            let phi2 = phi.get(node_ids[2]).copied().unwrap_or(0.0);
+            let a11 = v1[0]; let a12 = v1[1]; let a13 = v1[2];
+            let a21 = v2[0]; let a22 = v2[1]; let a23 = v2[2];
+            // Solve 2×2 system for (s, t) such that grad_φ ≈ (phi1-phi0)*grad_s + (phi2-phi0)*grad_t
+            // Simplified: use barycentric gradient directly
+            let det = a11*a22 - a12*a21;
+            if det.abs() < 1e-300 {
+                return ([0.0; 3], area);
+            }
+            let gx = ((phi1-phi0)*a22 - (phi2-phi0)*a21) / det;
+            let gy = ((phi2-phi0)*a11 - (phi1-phi0)*a12) / det;
+            ([gx, gy, 0.0], area)
+        }
+        _ => ([0.0; 3], 0.0),
+    }
+}
 // ---------------------------------------------------------------------------
 // Lanczos with shift-invert
 // ---------------------------------------------------------------------------
@@ -368,6 +535,17 @@ fn lanczos(
 
         // Zero Dirichlet DOFs in w
         for &d in dofs.keys() { if d < n { w[d] = 0.0; } }
+
+        // Full reorthogonalization (double pass) against all previous basis vectors.
+        // Prevents accumulation of rounding errors that cause spurious eigenvalues.
+        for _pass in 0..2 {
+            for vk in &basis {
+                let mvk = matvec_csr(m, vk, comm);
+                let c = comm.allreduce_f64(dot(&w, &mvk));
+                axpy(-c, vk, &mut w);
+                for &d in dofs.keys() { if d < n { w[d] = 0.0; } }
+            }
+        }
 
         // α_j = <v_j, w>_M  = v_j^T M w
         let mw = matvec_csr(m, &w, comm);

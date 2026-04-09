@@ -17,7 +17,7 @@ pub mod postprocess;
 pub mod output;
 
 use rem_config::PalaceConfig;
-use rem_core::{RemResult, solve_pcg};
+use rem_core::{RemResult, solve_pcg, report_peak_memory};
 use rem_parallel::Comm;
 use rem_materials::DomainMap;
 use rem_mesh::{RemMesh, BoundaryTag, amr};
@@ -107,6 +107,7 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
         finalize(config, &mesh, &domain_map, &phi, output_dir, None)?;
     }
 
+    report_peak_memory("Electrostatic solver");
     Ok(())
 }
 
@@ -121,8 +122,11 @@ pub fn solve_one(
 ) -> RemResult<Vec<f64>> {
     let n = mesh.n_nodes();
 
+    // Collect periodic node pairs (empty if no Periodic BCs configured)
+    let periodic_pairs = bc::collect_periodic_node_pairs(mesh, config);
+
     // Assemble stiffness matrix — scalar or tensor path
-    let triplet = if domain_map.any_anisotropic() {
+    let mut triplet = if domain_map.any_anisotropic() {
         log::info!("Anisotropic material(s) detected — using tensor stiffness assembly.");
         let tensor_fn = |tag: u32| domain_map.get(tag).epsilon_tensor;
         assemble::assemble_stiffness_aniso(mesh, tensor_fn)?
@@ -130,11 +134,20 @@ pub fn solve_one(
         let eps_fn = |tag: u32| domain_map.get(tag).epsilon_abs();
         assemble::assemble_stiffness(mesh, eps_fn)?
     };
+
+    // Apply periodic remapping before converting to CSR
+    if !periodic_pairs.is_empty() {
+        triplet.remap_periodic_nodes(&periodic_pairs);
+    }
+
     let mut mat = triplet.to_csr();
     let mut rhs = vec![0.0f64; n];
 
     // Apply Dirichlet BCs
-    let dofs = bc::collect_dirichlet_dofs(mesh, excitation_tag, excitation_val);
+    let mut dofs = bc::collect_dirichlet_dofs(mesh, excitation_tag, excitation_val);
+    if !periodic_pairs.is_empty() {
+        bc::apply_periodic(&mut dofs, &periodic_pairs);
+    }
     log::info!("Dirichlet DOFs: {}", dofs.len());
     bc::apply_dirichlet(&mut mat, &mut rhs, &dofs);
 
@@ -150,7 +163,14 @@ pub fn solve_one(
         );
     }
 
-    Ok(result.solution)
+    let mut phi = result.solution;
+
+    // Propagate periodic DOF values: φ[recv] = φ[donor]
+    if !periodic_pairs.is_empty() {
+        bc::propagate_periodic(&mut phi, &periodic_pairs);
+    }
+
+    Ok(phi)
 }
 
 /// Post-process and write output files.

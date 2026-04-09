@@ -75,6 +75,8 @@ pub struct TransientResult {
     pub time_points: Vec<f64>,
     /// Port voltage at each time point [V].
     pub port_voltages: Vec<f64>,
+    /// Excitation signal amplitude at each time point (same indexing as time_points).
+    pub excitation_signal: Vec<f64>,
     /// Nodal potential at the time step of peak port voltage magnitude.
     /// Empty if no time steps were recorded.
     pub peak_phi: Vec<f64>,
@@ -162,6 +164,7 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
 
     let mut time_points: Vec<f64> = Vec::with_capacity(n_steps);
     let mut port_v: Vec<f64> = Vec::with_capacity(n_steps);
+    let mut excitation_signal: Vec<f64> = Vec::with_capacity(n_steps);
     let mut peak_phi: Vec<f64> = Vec::new();
     let mut peak_time_s: f64 = 0.0;
     let mut peak_vp_abs: f64 = -1.0;
@@ -227,6 +230,7 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
                 let vp = port_voltage(mesh, &v, excited_port);
                 time_points.push(t);
                 port_v.push(vp);
+                excitation_signal.push(excitation_amplitude(t, exc_kind, exc_freq_hz, exc_sigma_s));
                 if vp.abs() > peak_vp_abs { peak_vp_abs = vp.abs(); peak_time_s = t; peak_phi = v.clone(); }
 
                 #[cfg(not(target_arch = "wasm32"))]
@@ -346,6 +350,7 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
                     let vp = port_voltage(mesh, &v, excited_port);
                     time_points.push(t);
                     port_v.push(vp);
+                    excitation_signal.push(excitation_amplitude(t, exc_kind, exc_freq_hz, exc_sigma_s));
                     if vp.abs() > peak_vp_abs { peak_vp_abs = vp.abs(); peak_time_s = t; peak_phi = v.clone(); }
 
                     #[cfg(not(target_arch = "wasm32"))]
@@ -395,6 +400,7 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
                 let vp = port_voltage(mesh, &v, excited_port);
                 time_points.push(t);
                 port_v.push(vp);
+                excitation_signal.push(excitation_amplitude(t, exc_kind, exc_freq_hz, exc_sigma_s));
                 if vp.abs() > peak_vp_abs { peak_vp_abs = vp.abs(); peak_time_s = t; peak_phi = v.clone(); }
 
                 #[cfg(not(target_arch = "wasm32"))]
@@ -417,7 +423,7 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
 
     log::info!("Transient solve complete: {} time points, peak |V|={:.4e} at {:.3e} s",
         time_points.len(), peak_vp_abs, peak_time_s);
-    Ok(TransientResult { time_points, port_voltages: port_v, peak_phi, peak_time_s })
+    Ok(TransientResult { time_points, port_voltages: port_v, excitation_signal, peak_phi, peak_time_s })
 }
 
 // ─── Matrix helpers ───────────────────────────────────────────────────────────

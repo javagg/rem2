@@ -6,6 +6,7 @@
 ///    2. Zero row `d`: K[d,j] = 0 for j ≠ d, K[d,d] = 1
 ///    3. rhs[d] = v
 
+use rem_config::PalaceConfig;
 use rem_core::CsrMatrix;
 use rem_mesh::{RemMesh, BoundaryTag};
 use std::collections::HashMap;
@@ -91,6 +92,143 @@ pub fn apply_dirichlet(
         let effective = if k_diag.abs() > 1e-300 { k_diag } else { 1.0 };
         mat.zero_row_set_diag(d, effective);
         rhs[d] = effective * val;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Periodic (Floquet) boundary conditions
+// ---------------------------------------------------------------------------
+
+/// Collect (donor_node, receiver_node) pairs for periodic boundaries.
+///
+/// For each `Boundaries.Periodic` spec with a `Translation` vector,
+/// this function iterates over donor boundary faces and matches each donor
+/// node to the receiver node closest to `donor_pos + translation`.
+///
+/// **Γ-point only**: when `FloquetWaveVector` is zero (or absent) the BC
+/// reduces to a standard periodic (mirror) constraint  φ[recv] = φ[donor],
+/// handled by folding `recv` into the Dirichlet map.
+///
+/// If any `FloquetWaveVector` entry is non-zero the function logs a warning
+/// and returns an empty vec — complex phase-shift BCs require a complex solver
+/// and are not yet supported.
+pub fn collect_periodic_node_pairs(
+    mesh: &RemMesh,
+    config: &PalaceConfig,
+) -> Vec<(usize, usize)> {
+    let mut pairs: Vec<(usize, usize)> = Vec::new();
+
+    for periodic in &config.boundaries.periodic {
+        // Check for complex Floquet wave vector
+        let k_nonzero = periodic.floquet_wave_vector.iter().any(|&v| v.abs() > 1e-14);
+        if k_nonzero {
+            log::warn!(
+                "[REM] Floquet periodic BC: non-zero FloquetWaveVector — complex phase-shift BCs \
+                 are not yet supported. Ignoring periodic constraint for this pair. \
+                 Results for photonic crystals / metamaterials will be approximate."
+            );
+            continue;
+        }
+
+        for pair in &periodic.boundary_pairs {
+            // Translation vector (default zero = mirror symmetry)
+            let tx = pair.translation.first().copied().unwrap_or(0.0) * config.model.l0;
+            let ty = pair.translation.get(1).copied().unwrap_or(0.0) * config.model.l0;
+            let tz = pair.translation.get(2).copied().unwrap_or(0.0) * config.model.l0;
+
+            // Collect receiver nodes (sorted into a spatial lookup)
+            let mut recv_nodes: Vec<usize> = Vec::new();
+            for belem in &mesh.boundary_elements {
+                if pair.receiver_attributes.contains(&belem.tag) {
+                    for &nid in &belem.node_ids {
+                        if !recv_nodes.contains(&nid) {
+                            recv_nodes.push(nid);
+                        }
+                    }
+                }
+            }
+
+            // For each donor node, find the receiver node nearest to donor + translation
+            for belem in &mesh.boundary_elements {
+                if !pair.donor_attributes.contains(&belem.tag) {
+                    continue;
+                }
+                for &dnid in &belem.node_ids {
+                    let n = &mesh.nodes[dnid];
+                    let tx_x = n.x + tx;
+                    let tx_y = n.y + ty;
+                    let tx_z = n.z + tz;
+
+                    let closest = recv_nodes.iter().copied().min_by(|&a, &b| {
+                        let na = &mesh.nodes[a];
+                        let nb = &mesh.nodes[b];
+                        let da = (na.x - tx_x).powi(2) + (na.y - tx_y).powi(2) + (na.z - tx_z).powi(2);
+                        let db = (nb.x - tx_x).powi(2) + (nb.y - tx_y).powi(2) + (nb.z - tx_z).powi(2);
+                        da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+                    });
+
+                    if let Some(rnid) = closest {
+                        // Only add if the receiver node is genuinely close (within 1% of cell size)
+                        let rn = &mesh.nodes[rnid];
+                        let dist2 = (rn.x - tx_x).powi(2) + (rn.y - tx_y).powi(2) + (rn.z - tx_z).powi(2);
+                        // Use a generous tolerance: 1 nm or 0.1% of translation magnitude
+                        let tol_sq = {
+                            let tmag = (tx * tx + ty * ty + tz * tz).sqrt();
+                            let tol = if tmag > 1e-12 { tmag * 1e-3 } else { 1e-9 };
+                            tol * tol
+                        };
+                        if dist2 < tol_sq && dnid != rnid {
+                            if !pairs.iter().any(|&(d, r)| d == dnid && r == rnid) {
+                                pairs.push((dnid, rnid));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    log::info!("[REM] Periodic BC: {} node pairs matched (Γ-point, real constraint)", pairs.len());
+    pairs
+}
+
+/// Apply periodic (Γ-point) constraints φ[recv] = φ[donor].
+///
+/// **Strategy**: before this function is called, the stiffness / mass
+/// triplet matrices should have been remapped with
+/// `TripletMatrix::remap_periodic_nodes(pairs)`, which folds all receiver
+/// contributions into the donor DOF.  This function then:
+///   1. Inserts each receiver into `dofs` with value 0.0, so that
+///      `apply_dirichlet` subsequently zeros the recv row and sets K[recv,recv]=1.
+///   2. After the solve, the caller must copy  φ[recv] = φ[donor].
+///
+/// If the donor is already a Dirichlet DOF (e.g. PEC φ=0), the receiver
+/// inherits the same prescribed value (both are constrained; merge is still
+/// correct because the receiver row carries no free contributions after remapping).
+pub fn apply_periodic(
+    dofs: &mut HashMap<usize, f64>,
+    pairs: &[(usize, usize)],
+) {
+    for &(donor, recv) in pairs {
+        if dofs.contains_key(&recv) {
+            continue; // already constrained — Dirichlet wins
+        }
+        let donor_val = dofs.get(&donor).copied().unwrap_or(0.0);
+        // Mark receiver as Dirichlet = 0 (all coupling already remapped to donor).
+        // The actual solution value will be restored to φ[donor] post-solve.
+        let _ = donor_val;
+        dofs.insert(recv, 0.0);
+    }
+}
+
+/// After solving, propagate periodic DOF values from donor to receiver.
+///
+/// Call this once the solver has produced `phi[donor]`.
+pub fn propagate_periodic(phi: &mut Vec<f64>, pairs: &[(usize, usize)]) {
+    for &(donor, recv) in pairs {
+        if recv < phi.len() && donor < phi.len() {
+            phi[recv] = phi[donor];
+        }
     }
 }
 

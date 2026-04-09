@@ -21,6 +21,10 @@ pub struct Material {
     /// Reluctivity tensor ν = 1/(μ₀ μᵣ) [m/H], 3×3 row-major.
     /// Defaults to ν · I (scalar isotropic). Set by MaterialAxes when present.
     pub nu_tensor: [[f64; 3]; 3],
+    /// Drude-Lorentz oscillator poles: (ωp², ω0², γ) tuples.
+    /// ε(ω) = εᵣ + Σ ωp² / (ω0² − ω² + jγω)
+    /// Empty for most materials (static permittivity only).
+    pub drude_lorentz_poles: Vec<(f64, f64, f64)>,
 }
 
 impl Default for Material {
@@ -34,6 +38,7 @@ impl Default for Material {
             loss_tangent_magnetic: 0.0,
             epsilon_tensor: [[EPS0, 0.0, 0.0], [0.0, EPS0, 0.0], [0.0, 0.0, EPS0]],
             nu_tensor: [[nu, 0.0, 0.0], [0.0, nu, 0.0], [0.0, 0.0, nu]],
+            drude_lorentz_poles: Vec::new(),
         }
     }
 }
@@ -51,6 +56,7 @@ impl Material {
             loss_tangent_magnetic: 0.0,
             epsilon_tensor: [[eps, 0.0, 0.0], [0.0, eps, 0.0], [0.0, 0.0, eps]],
             nu_tensor: [[nu, 0.0, 0.0], [0.0, nu, 0.0], [0.0, 0.0, nu]],
+            drude_lorentz_poles: Vec::new(),
         }
     }
 
@@ -105,19 +111,47 @@ impl Material {
     }
 
     /// Effective (complex) permittivity at frequency `freq` [Hz].
-    /// εᵣ_eff = εᵣ (1 − j tan δ) − j σ / (ω ε₀)
+    ///
+    /// Returns `(εᵣ_eff_re, εᵣ_eff_im)` (relative, dimensionless).
+    ///
+    /// Includes:
+    /// - Static permittivity: εᵣ
+    /// - Dielectric loss:     −j εᵣ tan δ
+    /// - Conductivity:        −j σ / (ω ε₀)
+    /// - Drude-Lorentz poles: Σ ωp² / (ω0² − ω² + jγω)
+    ///
+    /// The imaginary part is negative (lossy convention: e^{+jωt} time dependence).
     pub fn epsilon_complex(&self, freq: f64) -> (f64, f64) {
         use std::f64::consts::PI;
         let omega = 2.0 * PI * freq;
-        let re = self.permittivity;
-        let im = -(self.permittivity * self.loss_tangent
+        let mut re = self.permittivity;
+        let mut im = -(self.permittivity * self.loss_tangent
             + if omega > 0.0 { self.conductivity / (omega * EPS0) } else { 0.0 });
+
+        // Drude-Lorentz poles: (ωp², ω0², γ)
+        for &(wp2, w02, gamma) in &self.drude_lorentz_poles {
+            // Denominator: (ω0² − ω²) + jγω
+            let denom_re = w02 - omega * omega;
+            let denom_im = gamma * omega;
+            let denom_sq = denom_re * denom_re + denom_im * denom_im;
+            if denom_sq > 1e-300 {
+                // wp² · conj(denom) / |denom|²
+                re +=  wp2 * denom_re / denom_sq;
+                im += -wp2 * denom_im / denom_sq;
+            }
+        }
+
         (re, im)
     }
 
-    /// Returns true if the material has any loss (tan δ > 0 or σ > 0).
+    /// Returns true if the material has any loss (tan δ > 0 or σ > 0 or Drude-Lorentz poles).
     pub fn is_lossy(&self) -> bool {
-        self.loss_tangent > 0.0 || self.conductivity > 0.0
+        self.loss_tangent > 0.0 || self.conductivity > 0.0 || !self.drude_lorentz_poles.is_empty()
+    }
+
+    /// Returns true if the material has Drude-Lorentz poles (frequency-dependent permittivity).
+    pub fn has_drude_lorentz(&self) -> bool {
+        !self.drude_lorentz_poles.is_empty()
     }
 
     /// Returns true if the material has magnetic loss (tan δ_m > 0).

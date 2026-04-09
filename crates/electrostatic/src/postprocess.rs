@@ -179,6 +179,29 @@ fn tet4_volume(mesh: &RemMesh, ids: &[usize]) -> f64 {
 }
 
 // ---------------------------------------------------------------------------
+// Capacitance extraction
+// ---------------------------------------------------------------------------
+
+/// Extract the capacitance between the excited electrode and ground.
+///
+/// Uses the energy method: **C = 2U / V²**
+///
+/// This is exact for a linear FEM solution with Dirichlet BC φ = `v_applied`
+/// on the excited conductor and φ = 0 on ground.
+pub fn capacitance(
+    phi: &[f64],
+    mesh: &RemMesh,
+    coeff_fn: impl Fn(u32) -> f64,
+    v_applied: f64,
+) -> f64 {
+    if v_applied.abs() < 1e-300 {
+        return 0.0;
+    }
+    let energy = electrostatic_energy(phi, mesh, coeff_fn);
+    2.0 * energy / (v_applied * v_applied)
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

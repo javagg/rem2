@@ -25,6 +25,10 @@ use std::collections::HashMap;
 const MU0: f64 = 1.256_637_061_4e-6; // H/m
 const C0:  f64 = 2.997_924_58e8;     // m/s
 
+/// Whether the cross-section mode is TE or TM.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModeType { Te, Tm }
+
 /// Result of a wave-port cross-section eigenvalue solve.
 #[derive(Debug, Clone)]
 pub struct PortMode {
@@ -33,6 +37,8 @@ pub struct PortMode {
     /// Mode shape: global node index → normalised excitation value ∈ [-1, 1].
     /// Only WavePort nodes appear; all others default to 0.
     pub shape: HashMap<usize, f64>,
+    /// TE or TM mode classification.
+    pub mode_type: ModeType,
 }
 
 impl PortMode {
@@ -49,6 +55,28 @@ impl PortMode {
         omega * MU0 / kz2.sqrt()
     }
 
+    /// TM-mode wave impedance Z_TM = k_z / (ω ε₀) at `freq_hz` [Ω].
+    ///
+    /// Returns `0.0` when below cutoff (evanescent mode).
+    pub fn tm_impedance(&self, freq_hz: f64) -> f64 {
+        let k = 2.0 * std::f64::consts::PI * freq_hz / C0;
+        let kz2 = k * k - self.kc * self.kc;
+        if kz2 <= 0.0 {
+            return 0.0; // below cutoff — evanescent
+        }
+        let eps0: f64 = 8.854_187_817e-12;
+        let omega = 2.0 * std::f64::consts::PI * freq_hz;
+        kz2.sqrt() / (omega * eps0)
+    }
+
+    /// Wave impedance appropriate for this mode's type.
+    pub fn impedance(&self, freq_hz: f64) -> f64 {
+        match self.mode_type {
+            ModeType::Te => self.te_impedance(freq_hz),
+            ModeType::Tm => self.tm_impedance(freq_hz),
+        }
+    }
+
     /// `true` when the port is above cutoff at `freq_hz`.
     pub fn is_propagating(&self, freq_hz: f64) -> bool {
         let k = 2.0 * std::f64::consts::PI * freq_hz / C0;
@@ -56,12 +84,22 @@ impl PortMode {
     }
 }
 
-/// Compute the fundamental TE mode for `port_idx` on `mesh`.
+/// Compute the wave-port mode for `port_idx` on `mesh`.
+///
+/// `mode_number` = 1 selects the fundamental (lowest k_c) TE mode.
+/// `mode_number` > 1 selects higher-order modes in eigenvalue order.
+/// When `mode_number` is 0 it is treated as 1.
 ///
 /// Returns `None` when:
 /// - No Line2 elements are found for this port tag.
 /// - The cross-section has fewer than 3 free DOFs (degenerate geometry).
 pub fn compute_wave_port_mode(mesh: &RemMesh, port_idx: u32) -> Option<PortMode> {
+    compute_wave_port_mode_n(mesh, port_idx, 1)
+}
+
+/// As `compute_wave_port_mode` but selects the `mode_n`-th eigenvalue (1-based).
+pub fn compute_wave_port_mode_n(mesh: &RemMesh, port_idx: u32, mode_n: u32) -> Option<PortMode> {
+    let mode_n = mode_n.max(1) as usize;
     // 1. Find the WavePort physical tag for this index
     let port_tag = mesh.boundary_tags.iter()
         .find_map(|(&tag, bc)| {
@@ -198,11 +236,16 @@ pub fn compute_wave_port_mode(mesh: &RemMesh, port_idx: u32) -> Option<PortMode>
         .collect();
     pairs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
 
-    let (lambda1, y1) = pairs.into_iter().next()?;
-    let kc = lambda1.sqrt();
+    // Select the mode_n-th mode (1-based index).
+    if pairs.len() < mode_n {
+        log::warn!("WavePort {port_idx}: only {} positive modes found, requested mode {}", pairs.len(), mode_n);
+        return None;
+    }
+    let (lambda_n, y_n) = pairs.remove(mode_n - 1);
+    let kc = lambda_n.sqrt();
 
     // 9. Back-transform to get x = L^{-T} y
-    let y1_vec = nalgebra::DVector::from_vec(y1);
+    let y1_vec = nalgebra::DVector::from_vec(y_n);
     let x_free = match lt.solve_upper_triangular(&y1_vec) {
         Some(v) => v,
         None => y1_vec,
@@ -226,12 +269,14 @@ pub fn compute_wave_port_mode(mesh: &RemMesh, port_idx: u32) -> Option<PortMode>
         .collect();
 
     log::info!(
-        "WavePort {port_idx}: k_c = {kc:.4e} rad/m, f_cutoff = {:.4e} Hz, {} free DOFs",
+        "WavePort {port_idx} mode {mode_n}: k_c = {kc:.4e} rad/m, f_cutoff = {:.4e} Hz, {} free DOFs",
         kc * C0 / (2.0 * std::f64::consts::PI),
         n_free
     );
 
-    Some(PortMode { kc, shape: shape_map })
+    // All modes solved with Dirichlet BCs at endpoints are TE modes.
+    // (TM modes require Neumann BCs and a separate solve — not yet implemented.)
+    Some(PortMode { kc, shape: shape_map, mode_type: ModeType::Te })
 }
 
 // ---------------------------------------------------------------------------

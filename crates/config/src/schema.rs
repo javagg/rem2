@@ -244,6 +244,35 @@ pub struct MaterialSpec {
     /// Triggers tensor epsilon assembly in electrostatic/eigenmode solvers.
     #[serde(rename = "MaterialAxes", default)]
     pub material_axes: Vec<Vec<f64>>,
+
+    /// Drude-Lorentz poles for frequency-dependent permittivity.
+    /// ε(ω) = ε∞ + Σ ωp² / (ω0² − ω² + jγω)
+    /// Relevant only for driven (frequency-domain) solvers.
+    #[serde(rename = "DrudeLorentz", default)]
+    pub drude_lorentz: Vec<DrudeLorentzPole>,
+}
+
+/// One Drude-Lorentz oscillator pole.
+///
+/// Contributes `plasma_freq_sq / (resonance_freq_sq − ω² + j·damping·ω)` to εᵣ(ω).
+///
+/// For a Drude free-carrier term: set `ResonanceFreq = 0`, `PlasmaFreq = ωp/(2π)`,
+/// `Damping = γ/(2π)`.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct DrudeLorentzPole {
+    /// Plasma frequency fₚ [Hz] — the pole contribution strength.
+    /// ωp² = (2π fₚ)²
+    #[serde(rename = "PlasmaFreq", default)]
+    pub plasma_freq: f64,
+
+    /// Resonance frequency f₀ [Hz].  Zero → Drude (free-carrier) term.
+    /// ω₀² = (2π f₀)²
+    #[serde(rename = "ResonanceFreq", default)]
+    pub resonance_freq: f64,
+
+    /// Damping rate γ [rad/s].  Also accepted as `DampingFreq` [Hz] (converted internally).
+    #[serde(rename = "Damping", default)]
+    pub damping: f64,
 }
 
 // ---------------------------------------------------------------------------
@@ -526,9 +555,36 @@ pub struct SolverConfig {
     /// REM extension: SBR+ solver parameters (ignored by Palace).
     #[serde(rename = "SBR", default)]
     pub sbr: Option<SbrSolverConfig>,
+
+    /// REM extension: near-to-far-field transform postprocessing.
+    #[serde(rename = "FarField", default)]
+    pub far_field: Option<FarFieldConfig>,
+}
+
+/// REM near-to-far-field configuration.
+///
+/// Computes radiation pattern from the driven solver's near-field solution.
+/// Uses Kirchhoff approximation: far-field amplitude ∝ ∫ **E**(r') e^{jk r̂·r'} dS'
+/// integrated over all boundary elements tagged in `surface_attributes`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct FarFieldConfig {
+    /// Physical group tags of boundary faces on which to integrate.
+    /// If empty, uses all boundary elements (whole mesh surface).
+    #[serde(rename = "Attributes", deserialize_with = "deserialize_attributes", default)]
+    pub attributes: Vec<u32>,
+
+    /// Number of elevation angle samples (θ from 0° to 180°). Default: 37 (5° steps).
+    #[serde(rename = "NTheta", default = "default_far_field_n")]
+    pub n_theta: usize,
+
+    /// Number of azimuth angle samples (φ from 0° to 360°). Default: 73 (5° steps).
+    #[serde(rename = "NPhi", default = "default_far_field_n2")]
+    pub n_phi: usize,
 }
 
 fn default_order() -> u8 { 1 }
+fn default_far_field_n() -> usize { 37 }
+fn default_far_field_n2() -> usize { 73 }
 
 impl Default for SolverConfig {
     fn default() -> Self {
@@ -543,6 +599,7 @@ impl Default for SolverConfig {
             linear: LinearSolver::default(),
             mom: None,
             sbr: None,
+            far_field: None,
         }
     }
 }
@@ -568,6 +625,12 @@ pub struct EigenmodeSolver {
     /// Number of modes to save to disk
     #[serde(rename = "Save", default = "default_save")]
     pub save: usize,
+
+    /// Conductor wall conductivity σ [S/m] for Q_conductor calculation.
+    /// Set to a positive value (e.g. 5.8e7 for copper) to enable ohmic surface
+    /// loss perturbation. Default 0 = disabled (only dielectric Q computed).
+    #[serde(rename = "WallConductivity", default)]
+    pub wall_conductivity: f64,
 }
 
 fn default_n_eig() -> usize { 1 }
@@ -592,6 +655,13 @@ pub struct DrivenSolver {
     #[serde(rename = "AdaptiveTol", default)]
     pub adaptive_tol: f64,
 
+    /// Snapshot-based ROM order: number of full solves used to build the reduced basis.
+    /// 0 (default) = disabled; 4–16 recommended for smooth S-parameter sweeps.
+    /// When enabled, only `RomOrder` full complex solves are performed; all other
+    /// frequency points are evaluated via the reduced system (much cheaper).
+    #[serde(rename = "RomOrder", default)]
+    pub rom_order: usize,
+
     /// Palace `Samples` — accepted, not implemented (use MinFreq/MaxFreq/FreqStep).
     #[serde(rename = "Samples", default)]
     pub samples: Vec<FreqSampleSpec>,
@@ -599,6 +669,13 @@ pub struct DrivenSolver {
     /// Palace `Save` array — accepted, not implemented (use SaveStep integer).
     #[serde(rename = "Save", default)]
     pub save: Vec<f64>,
+
+    /// Enable Vector Fitting circuit synthesis after the frequency sweep.
+    /// Produces three downloadable artifacts: `s_params.s1p` (Touchstone),
+    /// `circuit_model.csv` (pole-residue table), `equivalent_circuit.cir` (SPICE).
+    /// Number of poles defaults to min(N/4, 16); use `RomOrder` to override.
+    #[serde(rename = "CircuitSynthesis", default)]
+    pub circuit_synthesis: bool,
 }
 
 /// Palace `Driven.Samples` item.
@@ -996,10 +1073,24 @@ pub fn validate_palace_compat(cfg: &PalaceConfig) {
         );
     }
     if !cfg.boundaries.periodic.is_empty() {
-        log::warn!(
-            "[REM] Boundaries.Periodic: periodic/Floquet BCs are not implemented; ignored. \
-             Results may be incorrect for periodic structures."
-        );
+        let n_pairs: usize = cfg.boundaries.periodic.iter()
+            .map(|p| p.boundary_pairs.len())
+            .sum();
+        let k_complex = cfg.boundaries.periodic.iter()
+            .any(|p| p.floquet_wave_vector.iter().any(|&v| v.abs() > 1e-14));
+        if k_complex {
+            log::warn!(
+                "[REM] Boundaries.Periodic: {} spec(s), {} pair(s) — non-zero FloquetWaveVector \
+                 detected. Complex phase-shift BCs are not yet supported; Γ-point (k=0) pairs will \
+                 be applied, others skipped.",
+                cfg.boundaries.periodic.len(), n_pairs
+            );
+        } else {
+            log::info!(
+                "[REM] Boundaries.Periodic: {} spec(s), {} pair(s) — Γ-point periodic BCs enabled.",
+                cfg.boundaries.periodic.len(), n_pairs
+            );
+        }
     }
     if !cfg.domains.current_dipole.is_empty() {
         log::debug!(

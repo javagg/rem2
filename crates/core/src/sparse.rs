@@ -46,6 +46,35 @@ impl TripletMatrix {
 
     pub fn nnz(&self) -> usize { self.rows.len() }
 
+    /// Remap node indices for periodic boundary conditions.
+    ///
+    /// For each (donor, receiver) pair, replaces all occurrences of `receiver`
+    /// with `donor` in the row and column index arrays.  When `to_csr()` is
+    /// subsequently called, the receiver contributions accumulate into the donor
+    /// DOF, implementing the Γ-point periodic constraint φ[recv] = φ[donor].
+    ///
+    /// The `nrows` / `ncols` are NOT reduced — the receiver DOFs still exist
+    /// in the assembled matrix but with only a diagonal = 1 placeholder added
+    /// by `apply_dirichlet` when `recv` is put into the Dirichlet map with value 0.
+    pub fn remap_periodic_nodes(&mut self, pairs: &[(usize, usize)]) {
+        if pairs.is_empty() {
+            return;
+        }
+        // Build a substitution map: recv → donor (follow chains)
+        let n = self.nrows;
+        let mut subst: Vec<usize> = (0..n).collect();
+        for &(donor, recv) in pairs {
+            subst[recv] = donor;
+        }
+        // Apply substitution (one pass is enough since donor is never a receiver in well-formed input)
+        for r in &mut self.rows {
+            *r = subst[*r];
+        }
+        for c in &mut self.cols {
+            *c = subst[*c];
+        }
+    }
+
     /// Convert to CSR format, summing duplicate (row, col) entries.
     pub fn to_csr(self) -> CsrMatrix {
         let n = self.rows.len();
@@ -225,8 +254,11 @@ pub struct SolveResult {
     pub converged: bool,
 }
 
-/// Solve A x = b using Preconditioned Conjugate Gradient with Jacobi
-/// (diagonal) preconditioner.
+/// Solve A x = b using Preconditioned Conjugate Gradient with SSOR
+/// (Symmetric Successive Over-Relaxation, ω = 1.5) preconditioner.
+///
+/// SSOR is significantly more effective than Jacobi for FEM stiffness matrices,
+/// typically reducing iteration counts by 3–5×.
 ///
 /// - `tol`: convergence tolerance (relative: ||r|| / ||b|| < tol)
 /// - `max_iter`: maximum number of CG iterations
@@ -237,9 +269,7 @@ pub fn solve_pcg(mat: &CsrMatrix, b: &[f64], tol: f64, max_iter: usize, comm: &d
     assert_eq!(mat.nrows, n);
     assert_eq!(mat.ncols, n);
 
-    // Jacobi preconditioner: M^{-1} = diag(1/A_ii)
     let diag = mat.diagonal();
-    let m_inv: Vec<f64> = diag.iter().map(|&d| if d.abs() > 1e-300 { 1.0 / d } else { 1.0 }).collect();
 
     let b_norm = comm.allreduce_f64(dot(b, b)).sqrt();
     if b_norm < 1e-300 {
@@ -253,7 +283,7 @@ pub fn solve_pcg(mat: &CsrMatrix, b: &[f64], tol: f64, max_iter: usize, comm: &d
 
     let mut x = vec![0.0f64; n];
     let mut r = b.to_vec(); // r = b - A*x = b (x=0)
-    let mut z = apply_jacobi(&m_inv, &r);
+    let mut z = apply_ssor(mat, &diag, &r, 1.5);
     let mut p = z.clone();
     let mut rz = comm.allreduce_f64(dot(&r, &z));
 
@@ -282,7 +312,7 @@ pub fn solve_pcg(mat: &CsrMatrix, b: &[f64], tol: f64, max_iter: usize, comm: &d
             };
         }
 
-        z = apply_jacobi(&m_inv, &r);
+        z = apply_ssor(mat, &diag, &r, 1.5);
         let rz_new = comm.allreduce_f64(dot(&r, &z));
         let beta = rz_new / rz;
         // p = z + beta * p
@@ -310,8 +340,6 @@ fn dot(a: &[f64], b: &[f64]) -> f64 {
     a.iter().zip(b.iter()).map(|(&x, &y)| x * y).sum()
 }
 
-#[inline]
-
 /// y += alpha * x
 #[inline]
 fn axpy(alpha: f64, x: &[f64], y: &mut [f64]) {
@@ -320,9 +348,46 @@ fn axpy(alpha: f64, x: &[f64], y: &mut [f64]) {
     }
 }
 
-#[inline]
-fn apply_jacobi(m_inv: &[f64], r: &[f64]) -> Vec<f64> {
-    m_inv.iter().zip(r.iter()).map(|(&mi, &ri)| mi * ri).collect()
+/// SSOR preconditioner: M^{-1} r ≈ (D/ω + L)^{-1} · D/(2-ω) · (D/ω + U)^{-1} r
+/// where L, D, U are the strict lower, diagonal, strict upper parts of A.
+/// Implemented as: forward SOR sweep then backward SOR sweep.
+fn apply_ssor(mat: &CsrMatrix, diag: &[f64], r: &[f64], omega: f64) -> Vec<f64> {
+    let n = mat.nrows;
+    let mut z = vec![0.0f64; n];
+
+    // Forward sweep: (D/ω + L) z = r
+    for i in 0..n {
+        let mut s = r[i];
+        for k in mat.row_ptr[i]..mat.row_ptr[i + 1] {
+            let j = mat.col_idx[k];
+            if j < i {
+                s -= mat.values[k] * z[j];
+            }
+        }
+        let d = diag[i];
+        z[i] = if d.abs() > 1e-300 { s * omega / d } else { 0.0 };
+    }
+
+    // Scale by D * (2-ω)/ω
+    for i in 0..n {
+        let d = diag[i];
+        z[i] *= d * (2.0 - omega) / omega;
+    }
+
+    // Backward sweep: (D/ω + U) z = (scaled z from above)
+    for i in (0..n).rev() {
+        let mut s = z[i];
+        for k in mat.row_ptr[i]..mat.row_ptr[i + 1] {
+            let j = mat.col_idx[k];
+            if j > i {
+                s -= mat.values[k] * z[j];
+            }
+        }
+        let d = diag[i];
+        z[i] = if d.abs() > 1e-300 { s * omega / d } else { 0.0 };
+    }
+
+    z
 }
 
 // ---------------------------------------------------------------------------

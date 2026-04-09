@@ -59,15 +59,12 @@ These fields are deserialized and logged as warnings; they do NOT need to be rem
 - `Solver.Linear.KSPType` — only GMRES is supported; ignored with warning
 - `Solver.Linear.MGLevels` — algebraic multigrid not implemented; ignored
 - `Solver.Linear.ComplexCoarseSolve` — complex coarse-grid solve not implemented; ignored
-- `Domains.Materials[*].MaterialAxes` — anisotropic εᵣ/μᵣ not implemented; uses first component
 - `Domains.Materials[*].LossTan` (array form) — anisotropic loss not implemented; uses first element
 - `Domains.Postprocessing.Energy`, `Domains.Postprocessing.Probe` — not implemented
-- `Domains.CurrentDipole` — Hertzian dipole source not implemented
-- `Boundaries.Periodic` — periodic/Floquet BCs not implemented
+- `Boundaries.Periodic` — Γ-point periodic BCs supported; complex Floquet (non-zero FloquetWaveVector) logs warning and skips
 - `Boundaries.Postprocessing.{SurfaceFlux, FarField, Dielectric}` — not implemented
 - `Boundaries.WavePort.{Offset, MaxIts, EigenTol, Verbose}` — accepted, ignored
 - `Boundaries.LumpedPort.Elements` — multi-element lumped port; uses first element only
-- `Solver.Driven.Samples` — complex sampling schedules; ignored; use MinFreq/MaxFreq/FreqStep
 - `Solver.Driven.Save` (array) — ignored; use SaveStep integer
 - `Solver.Transient.{Excitation, ExcitationFreq, ExcitationWidth}` — custom waveforms not implemented
 
@@ -107,7 +104,8 @@ Model.Refinement: { MaxIter, Tol, Nonconformal }
 Material:         { Attributes, Permittivity, Permeability, LossTan, Conductivity }  # scalar only
 BoundaryTag:      PEC | PMC | Ground | Impedance | Absorbing | LumpedPort | WavePort | SurfaceCurrent
 Solver.Eigenmode: { N, Tol, Target, Save }
-Solver.Driven:    { MinFreq, MaxFreq, FreqStep, SaveStep, AdaptiveTol }
+Solver.Driven:    { MinFreq, MaxFreq, FreqStep, SaveStep, AdaptiveTol, RomOrder, Samples, CircuitSynthesis }
+Solver.FarField:  { NTheta, NPhi }   # near-to-far-field transform; generates far_field.csv artifact
 Solver.Transient: { Type, MaxTime, TimeStep, SaveStep }
 Solver.Linear:    { Tol, MaxIter }
 ```

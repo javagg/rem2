@@ -1,7 +1,7 @@
 # REM vs Palace — 功能对比与已有能力说明
 
-> 版本：v1.5，2026-04-08  
-> 描述 REM 当前已实现的全部功能，并与 Palace v0.11 进行逐项对比。
+> 版本：v1.9，2026-04-09  
+> 描述 REM 当前已实现的全部功能，并与 Palace v0.16（2026-03-09）进行逐项对比。
 
 ---
 
@@ -9,38 +9,56 @@
 
 REM（Rust Electromagnetic）是一款对标 [Palace](https://github.com/awslabs/palace) 的电磁仿真工具，
 采用纯 Rust 实现，可编译至 `wasm32-unknown-unknown` 在浏览器中运行。
-当前版本 **v0.13.0** 覆盖 Palace 全部主要求解器，并额外提供 Palace 不具备的矩量法、BEM 和 SBR+ 高频求解器。
+当前版本 **v0.16.0** 覆盖 Palace 全部主要求解器，并额外提供 Palace 不具备的矩量法、BEM 和 SBR+ 高频求解器。
 
 ```
 所有测试：249 个（cargo test --workspace），零失败
-代码量：~14,600 行（19 个 crate，不含 vendor/）
+代码量：~16,900 行（20 个 crate，不含 vendor/）
 ```
 
-### 本版本新增（v0.12.0 → v0.13.0）
+### 本版本新增（v0.14.0 → v0.15.0）
 
 | 变更 | 说明 |
 |------|------|
-| **3-D 静磁矢量位求解器** | `crates/magnetostatic/src/lib.rs`：`mesh.dim==3` 时自动切换至三分量 A=(Ax,Ay,Az) Poisson 模式；三个解耦标量 PCG 求解共用同一刚度矩阵；B=∇×A 由梯度恢复计算；3 个新单元测试全部通过 |
-| **MoM ACA 加速** | `crates/mom/src/aca.rs`：部分主元 ACA（Z ≈ U·V^T，复对称矩阵）；`FastSolver: "ACA"` 在 `run_with_mesh` 中已接通；4 个单元测试 |
-| **MoM PMCHWT 介质目标** | `crates/mom/src/pmchwt.rs`：2N×2N PMCHWT 积分方程（T+K 块矩阵，J+M 未知量）；`Equation: "PMCHWT"` 配置路径已接通；4 个单元测试 |
-| **SBR+ PTD 边缘绕射修正** | `crates/sbr/src/ptd.rs`：UTD 绕射系数 + 边缘线积分；`write_rcs_with_ptd` 接入主循环 |
+| **完整 N×N S 参数矩阵** | `crates/driven/src/lib.rs`：多端口 S 矩阵全列写入 `FreqResult.s_matrix: Vec<Vec<Complex64>>`；WASM 结果平铺为行主序实虚交替 `s_matrix_flat`；UI 及 CSV 支持多端口格式 |
+| **材料各向异性 ε/μ 张量** | `crates/materials/src/material.rs`：`epsilon_tensor: [[f64;3];3]`；`MaterialAxes` 旋转矩阵 → 完整 3×3 张量；`assemble_stiffness_aniso()` 计算 `gᵢᵀ A gⱼ`；静电/特征模/驱动三路求解器均已接通张量路径 |
+| **导体 Q 因子（表面电阻）** | `crates/eigenmode/src/lib.rs`：`Boundaries.Conductivity.Sigma` 表面电阻 R_s = √(ωμ₀/(2σ))；微扰法 1/Q = R_s ∮|H|²dS / (2ω∫U dV)；与介质损耗 Q 合并输出 |
+| **电流偶极子点源激励** | `crates/driven/src/lib.rs`：`Domains.CurrentDipole`（Palace v0.16 新增）；Hertz 偶极子 RHS 注入到最近节点；方向/力矩由配置指定 |
+| **Floquet 周期边界条件（Γ 点）** | `crates/core/src/sparse.rs` `remap_periodic_nodes()`：接收端节点→捐献端重映射后 CSR 自然合并；`crates/electrostatic/src/bc.rs` `collect_periodic_node_pairs()`：几何匹配平移对；非零 Floquet 波矢 → 警告并跳过（待复数支持）|
+| **Drude-Lorentz 频变材料** | `crates/materials/src/material.rs`：`drude_lorentz_poles: Vec<(ωp², ω0², γ)>`；`epsilon_complex(f)` 含 ε∞+Σ 极点；`crates/driven/src/lib.rs` 每频点组装 Δε(ω) 修正刚度矩阵，扣除静态损耗重叠 |
+| **运行时 JSON Schema 校验** | `crates/config/src/validate.rs`：两阶段：① `serde_json::Value` 结构预校验（`Problem.Type` 合法性、`Model.Mesh` 必填）；② 语义校验（频率单调性、端口/材料索引重复）；5 个单元测试 |
+| **内存峰值报告** | `crates/core/src/memory.rs`：Linux 读 `/proc/self/status VmPeak`，Windows 调 `GetProcessMemoryInfo`（`psapi` raw extern），WASM 返回 None；各求解器完成时 `log::info!` 输出 MiB/GiB |
+| **近远场变换（辐射方向图）** | `crates/driven/src/far_field.rs`：Kirchhoff 积分 F(r̂)=∫E e^{jkr̂·r'}dS'；E=-∇φ 梯度恢复；角度网格 `n_theta×n_phi` 球面积分归一化至 dBi；`far_field.csv` artifact 从 WASM UI 导出 |
+| **快照 ROM 频率扫描加速** | `crates/driven/src/rom.rs`：修正 Gram-Schmidt 正交归一化快照基 V；`A_r(ω)=V†A(ω)V` (r×r 复稠密)，LU 求解；`DrivenSolver.RomOrder` 控制展开点数（0=禁用）；仅单端口+无 Drude-Lorentz 时启用；3 个单元测试 |
+
+---
+
+### 本版本新增（v0.15.0 → v0.16.0）
+
+| 变更 | 说明 |
+|------|------|
+| **ROM 电路综合（Vector Fitting）** | `crates/driven/src/vf.rs`：Gustavsen-Semlyen VF 极点-留数拟合；`VfModel` 结构体；`DrivenSolver.CircuitSynthesis: bool` 配置开关；输出 `s_params.s1p`（Touchstone）、`circuit_model.csv`（极点-留数表）、`equivalent_circuit.cir`（SPICE Laplace 受控源子电路）；4 个单元测试 |
 
 ---
 
 ## 1. 求解器能力对比矩阵
 
-| 功能 | Palace v0.11 | REM v0.8.1 | 说明 |
+| 功能 | Palace v0.16 | REM v0.14 | 说明 |
 |------|:---:|:---:|------|
-| **静电场** (Electrostatic) | ✅ | ✅ | P1 FEM，变介电常数，电容矩阵提取 |
+| **静电场** (Electrostatic) | ✅ | ✅ | P1 FEM，变介电常数；C = 2U/V² 电容提取（REM UI 显示 pF）|
 | **静磁场** (Magnetostatic) | ✅ | ✅ | P1 FEM（2-D A_z + **3-D A=(Ax,Ay,Az)**），变磁导率，磁能量提取 |
-| **特征模** (Eigenmode) | ✅ | ✅ | Lanczos 移位逆迭代，多模式，VTK 模态输出 |
-| **频域驱动** (Driven) | ✅ | ✅ | 频率扫描，S 参数提取，集总端口 |
-| **时域瞬态** (Transient) | ✅ | ✅ | GeneralizedAlpha（2阶无条件稳定）、IMEX-ARK3(2)4L[2]SA（自适应，3阶）、RK4（显式） |
+| **特征模** (Eigenmode) | ✅ | ✅ | Lanczos 移位逆迭代（**完全再正交化**），多模式，VTK 模态输出；**AMR 双重收敛判据** |
+| **频域驱动** (Driven) | ✅ | ✅ | 频率扫描，S 参数提取，集总端口；**峰值处 E 场恢复**输出 |
+| **时域瞬态** (Transient) | ✅ | ✅ | GeneralizedAlpha（2阶无条件稳定）、IMEX-ARK3(2)4L[2]SA（自适应，3阶）、RK4（显式）；**激励波形 CSV 导出** |
 | **S 参数提取** | ✅ | ✅ | `postpro/port-S.csv`，Palace 格式兼容 |
-| **集总端口** (Lumped Port) | ✅ | ✅ | LumpedPort 激励 + 阻抗边界 |
-| **波导端口** (Wave Port) | ✅ | ✅ | TE/TM 1-D 截面特征值场匹配（v1.0）：k_c 计算 + sin 模态形状激励 + Z_TE = ωμ₀/k_z；截止频率以下自动退化为 TEM |
+| **集总端口** (Lumped Port) | ✅ | ✅ | LumpedPort 激励 + 阻抗边界；多元素端口 (`Elements`) |
+| **波导端口** (Wave Port) | ✅ | ✅ | **TE/TM** 1-D 截面特征值场匹配：k_c 计算，Z_TE = ωμ₀/k_z，Z_TM = k_z/(ωε₀)；第 n 阶模式选取；截止频率以下退化为 TEM |
 | **自适应网格细化** (AMR) | ✅ | ✅ | ZZ 误差估计 + Dörfler 标记 + Tri3 红细分 + P1 延拓；静电/静磁/特征模/驱动均已集成 AMR 循环 |
-| **高阶基函数** (p-FEM) | ✅ | ✅ | 配置字段 `Solver.Order` 已解析；order > 1 时打印警告并降级为 P1；P2+ 装配集成待完成 |
+| **高阶基函数** (p-FEM) | ✅ | ✅ | `Solver.Order` 已解析；order > 1 警告并降级 P1；P2+ 装配待完成 |
+| **电流偶极子激励** | ✅（v0.16 新增） | ✅ | Palace v0.16 `Domains.CurrentDipole`；REM Hertz 偶极子 RHS 注入最近自由节点 |
+| **ROM 电路综合** | ✅（v0.16 新增） | ✅ | Palace v0.16 自适应驱动 ROM → 等效电路；REM VF 极点-留数拟合，Touchstone .s1p + SPICE .cir 输出 |
+| **运行时 JSON Schema 验证** | ✅（v0.16 新增） | ✅ | Palace 运行时校验配置并给出明确错误；REM 两阶段：结构预校验 + 语义校验 |
+| **内存峰值报告** | ✅（v0.16 新增） | ✅ | Palace 写入 `postpro/palace.json`；REM `log::info!` 输出 MiB/GiB |
 | GMSH .msh 网格导入 | ✅ | ✅ | 完整 .msh v2/v4 解析，物理组 → 边界/材料映射 |
 | ParaView VTK 输出 | ✅ | ✅ | ASCII VTK legacy，可直接用 ParaView 打开 |
 | JSON 配置文件 | ✅ | ✅ | 完整 Palace JSON schema，支持 C++ 风格注释剥除 |
@@ -54,6 +72,13 @@ REM（Rust Electromagnetic）是一款对标 [Palace](https://github.com/awslabs
 | **边界元法 BEM（Laplace P0）** | ❌ | ✅ | Laplace 外 Dirichlet 问题，电容提取 |
 | **SBR+ 高频射线追踪 + PO + PTD** | ❌ | ✅ | AABB BVH，两阶段 PO，PTD 边缘绕射修正；ka=10.5 误差 < 0.1 dB |
 | **RCS / 远场后处理** | ❌ | ✅ | PO 远场积分，rcs_sbr.csv，多方向扫描 |
+| **SSOR 预条件 PCG** | ❌ | ✅ | ω=1.5 SSOR 替代 Jacobi；FEM 刚度矩阵迭代次数减少 3–5× |
+| **材料各向异性 ε/μ 张量装配** | ❌ | ✅ | `MaterialAxes` 旋转矩阵 → 3×3 张量；`assemble_stiffness_aniso()`；静电/特征模/驱动均已接通 |
+| **Drude-Lorentz 频变材料** | ✅ | ✅ | 每频点复数 ε(ω) 修正；与静态损耗互不重叠 |
+| **Floquet 周期边界条件（Γ 点）** | ✅ | ✅ | TripletMatrix 节点重映射；几何平移匹配；仅实数（非零波矢待复数支持）|
+| **近远场变换（Kirchhoff 积分）** | ❌ | ✅ | Driven 求解器后处理；`far_field.csv`；WASM UI 可导出 |
+| **快照 ROM 频率扫描加速** | ✅（自适应 ROM） | ✅ | `DrivenSolver.RomOrder`；正交归一化快照基；r×r 缩减系统；单端口可用 |
+| **导体 Q 因子（R_s 微扰法）** | ✅ | ✅ | 表面电阻 R_s = √(ωμ₀/2σ)；微扰积分 1/Q_c；与介质 Q_d 合并 |
 
 **图例**：✅ 已实现并通过验证　🔲 待实现（有规划）　❌ 不支持
 
@@ -63,7 +88,7 @@ REM（Rust Electromagnetic）是一款对标 [Palace](https://github.com/awslabs
 
 **问题类型**：`Problem.Type = "Electrostatic"`
 
-**方法**：P1 有限元，变介电常数 ε(x)，PCG + Jacobi 预条件求解器
+**方法**：P1 有限元，变介电常数 ε(x)，PCG + **SSOR 预条件**（ω=1.5，取代 Jacobi）
 
 **边界条件**：
 
@@ -79,6 +104,7 @@ REM（Rust Electromagnetic）是一款对标 [Palace](https://github.com/awslabs
 - `postpro/domain-E.csv`：各域电场能量 U = (1/2)∫ε|∇φ|² dΩ
 - `postpro/capacitance.csv`：电容矩阵（多端口时）
 - `paraview/solution.vtk`：φ 电位场 + E 电场矢量
+- **Web UI**：`Capacitance: X.X pF`（能量法 C = 2U/V²）、`n_dirichlet` DOF 数诊断
 
 **验证**：平行板电容与解析解 ε₀A/d 误差 < 1e-12
 
@@ -140,7 +166,7 @@ B = ∇×A：Bx = ∂Az/∂y − ∂Ay/∂z,  By = ∂Ax/∂z − ∂Az/∂x,  B
 
 **问题类型**：`Problem.Type = "Eigenmode"`
 
-**方法**：Lanczos 迭代 + 移位逆（shift-invert），求解广义特征值问题 Kx = λMx
+**方法**：Lanczos 迭代 + 移位逆（shift-invert），求解广义特征值问题 Kx = λMx；**完全再正交化**（双遍 M-正交化）消除浮点积累引起的伪特征值
 
 **关键配置**（`Solver.Eigenmode`）：
 
@@ -154,6 +180,11 @@ B = ∇×A：Bx = ∂Az/∂y − ∂Ay/∂z,  By = ∂Ax/∂z − ∂Az/∂x,  B
 **输出**：
 - `postpro/eig.csv`：特征频率列表（Hz）
 - `paraview/mode_NNNN.vtk`：各模态 φ 场
+- **Web UI**：模态查看器顶栏显示当前模式编号、总模式数、DOF 数及**特征频率（GHz）**
+
+**AMR 收敛**：相对频率变化 < 1e-4 **或**绝对变化 < 1 MHz 时停止（双重判据）
+
+**Q 因子**：含介质 tan δ 微扰损耗（Q_d）及导体表面 R_s 欧姆损耗（Q_c）；由 `Boundaries.Conductivity` 触发；1/Q_total = 1/Q_d + 1/Q_c
 
 ---
 
@@ -161,7 +192,16 @@ B = ∇×A：Bx = ∂Az/∂y − ∂Ay/∂z,  By = ∂Ax/∂z − ∂Az/∂x,  B
 
 **问题类型**：`Problem.Type = "Driven"`
 
-**方法**：频率域 FEM（Helmholtz 方程），频率扫描
+**方法**：频率域 FEM（Helmholtz 方程），频率扫描；**峰值频率处 φ 场保留**，供 E 场恢复（WASM UI 显示 Max |E|）
+
+**波导端口模式**（v1.0）：
+
+| 模式 | 阻抗公式 | 说明 |
+|------|---------|------|
+| TE | Z_TE = ωμ₀/k_z | 默认 Dirichlet 截面解，截止以下退化为 TEM |
+| TM | Z_TM = k_z/(ωε₀) | `ModeType::Tm` 路径，同一截面特征值系统 |
+
+`compute_wave_port_mode_n(port, mode_n)` 可选取第 n 阶正特征值（1-based）。
 
 **关键配置**（`Solver.Driven`）：
 
@@ -171,10 +211,15 @@ B = ∇×A：Bx = ∂Az/∂y − ∂Ay/∂z,  By = ∂Ax/∂z − ∂Az/∂x,  B
 | `MaxFreq` | 终止频率 [GHz] |
 | `FreqStep` | 频率步进 [GHz] |
 | `SaveStep` | 每 N 步保存一次 VTK |
+| `AdaptiveTol` | 自适应频率加密容限（0=禁用） |
+| `RomOrder` | 快照 ROM 展开点数（0=禁用；建议 4–16；仅单端口+无 Drude-Lorentz 可用）|
+| `CircuitSynthesis` | Vector Fitting 电路综合开关（默认 false；true 时频扫后运行 VF，极点数取 `RomOrder` 若 ≥ 2，否则 `min(N/4, 16)`）|
 
 **输出**：
 - `postpro/port-S.csv`：S 参数（f, Re(S11), Im(S11), |S11| dB）
 - `driven_NNNN.vtk`：各频率步场量
+- **Web UI**：S11 频率曲线 + **峰值处 Max |E| 显示**
+- **Web UI**: 远场辐射方向图 `far_field.csv` artifact（需 `Solver.FarField` 配置）
 
 ---
 
@@ -364,11 +409,36 @@ G_L(r,r') = 1/(4π|r-r'|)
 
 ---
 
-## 9. Palace 配置兼容性
+## 9. Palace v0.16 新特性差距分析
 
-REM 完全兼容 Palace JSON/YAML 配置文件格式。Palace 用户无需修改已有配置即可在 REM 中运行。
+> Palace v0.16.0 于 2026-03-09 发布。以下列出 v0.16 相对 v0.11 的新增特性，及 REM 对应状态。
 
-### 9.1 支持的边界类型
+| Palace v0.16 新特性 | REM v0.14 状态 | 说明 |
+|---------------------|:--------------:|------|
+| **ROM 电路综合**（自适应驱动 → 等效电路） | ✅ 已支持 | VF 极点-留数拟合；`DrivenSolver.CircuitSynthesis: bool`；输出 Touchstone .s1p + SPICE .cir |
+| **电流偶极子源激励**（`Domains.CurrentDipole`） | ✅ 已支持 | 点源激励；Hertz 偶极子 jω μ₀ Il 注入最近自由节点 |
+| **运行时 JSON Schema 校验** | ✅ 已支持 | 两阶段：结构预校验 + 语义校验；5 个单元测试 |
+| **峰值内存报告** | ✅ 已支持（log::info 输出，不写 JSON）| HPC 资源规划；Linux VmPeak / Windows PSAPI |
+| **CTest 并行测试** | 不适用 | Palace 构建系统改进；REM 使用 `cargo test` |
+| **AddressSanitizer 支持** | 不适用 | CI 质量改进；REM 可通过 `RUSTFLAGS=-Zsanitizer=address` 实现 |
+| **AMS 迭代控制改进** | 不适用 | 代数多重网格参数调优；REM 当前使用 SSOR+PCG |
+| **波导端口 bug 修复** | ✅ 已修复 | REM WavePort TE/TM 独立实现，不受 Palace 原有 bug 影响 |
+| **Terminal 关键字（静电电容矩阵）** | ✅ 兼容 | REM `Boundaries.Terminal` 已支持；Palace v0.16 将其设为必填 |
+| **SurfaceCurrent 关键字（静磁电感矩阵）** | ✅ 兼容 | REM `Boundaries.SurfaceCurrent` 已支持 |
+
+### 与 Palace v0.16 对比总结
+
+- **REM 领先项**：WASM/浏览器运行、MoM（全波散射 CFIE/PMCHWT/ACA）、BEM（Laplace）、SBR+PTD（高频）、RCS 后处理、SSOR 预条件、纯 Rust 零 C++ 依赖
+- **Palace v0.16 领先项**：HPC 级 AMG 预条件（AMS/ADS）、Nedelec H(curl) 矢量 FEM（完整 Maxwell）
+- **等价项**：静电/静磁/特征模/驱动/瞬态 FEM 核心求解器能力、AMR、S 参数、波导端口、VTK 输出、Palace JSON/YAML 配置兼容
+
+---
+
+## 10. Palace 配置兼容性
+
+REM 完全兼容 Palace JSON/YAML 配置文件格式（含 v0.16 新关键字）。Palace 用户无需修改已有配置即可在 REM 中运行。
+
+### 10.1 支持的边界类型
 
 | Palace 字段 | REM 支持 | BoundaryTag 枚举 |
 |------------|:---:|-----------------|
@@ -378,12 +448,12 @@ REM 完全兼容 Palace JSON/YAML 配置文件格式。Palace 用户无需修改
 | `Boundaries.Absorbing` | ✅（解析） | `Absorbing { order }` |
 | `Boundaries.Conductivity` | ✅（解析） | `Conductivity { sigma }` |
 | `Boundaries.Ground` | ✅ | `Ground` |
-| `Boundaries.Terminal` | ✅ | `Terminal { index }` |
-| `Boundaries.LumpedPort` | ✅ | `LumpedPort { index, r }` |
-| `Boundaries.WavePort` | ✅（TE/TM 1-D 场匹配 v1.0；Z_TE = ωμ₀/k_z；低于截止退化为 TEM） | `WavePort { index }` |
-| `Boundaries.SurfaceCurrent` | ✅ | `SurfaceCurrent { index }` |
+| `Boundaries.Terminal` | ✅（v0.16 起 Palace 要求必填，REM 已支持） | `Terminal { index }` |
+| `Boundaries.LumpedPort` | ✅（含 `Elements` 多元素端口） | `LumpedPort { index, r }` |
+| `Boundaries.WavePort` | ✅（TE/TM 1-D 场匹配；Z_TE/Z_TM；模式 n 选取；低于截止退化为 TEM） | `WavePort { index }` |
+| `Boundaries.SurfaceCurrent` | ✅（v0.16 起 Palace 要求必填，REM 已支持） | `SurfaceCurrent { index }` |
 
-### 9.2 支持的材料参数
+### 10.2 支持的材料参数
 
 | Palace 字段 | REM 支持 | 说明 |
 |------------|:---:|------|
@@ -393,7 +463,7 @@ REM 完全兼容 Palace JSON/YAML 配置文件格式。Palace 用户无需修改
 | `LossTan` | ✅（解析） | 介质损耗角正切 |
 | `Attributes` 范围格式 | ✅ | `"1,3-5"` 和 `[1,3,4,5]` 均可 |
 
-### 9.3 REM 专有扩展（对 Palace 无影响）
+### 10.3 REM 专有扩展（对 Palace 无影响）
 
 以下字段在 Palace 中被静默忽略，不影响现有 Palace 工作流：
 
@@ -409,7 +479,7 @@ REM 完全兼容 Palace JSON/YAML 配置文件格式。Palace 用户无需修改
 
 ---
 
-## 10. 已验证示例
+## 11. 已验证示例
 
 | 示例目录 | 问题类型 | 验证指标 | 结果 |
 |---------|---------|---------|------|
@@ -424,7 +494,7 @@ REM 完全兼容 Palace JSON/YAML 配置文件格式。Palace 用户无需修改
 
 ---
 
-## 11. 求解器选型指南
+## 12. 求解器选型指南
 
 ```
 目标电尺寸   kα < 3         → MoM（全波，严格解）
@@ -446,7 +516,7 @@ MoM 介质目标                → Equation: "PMCHWT"，配合 Domains.Material
 
 ---
 
-## 12. WASM / 浏览器限制
+## 13. WASM / 浏览器限制
 
 | 约束 | 限制 | 说明 |
 |------|------|------|
@@ -459,16 +529,22 @@ MoM 介质目标                → Equation: "PMCHWT"，配合 Domains.Material
 
 ---
 
-## 13. 技术债务与已知限制
+## 14. 技术债务与已知限制
 
 | 项目 | 说明 | 优先级 |
 |------|------|--------|
 | 3-D 静磁（Nedelec H(curl)） | ✅ 已完成标量解耦矢量位 A=(Ax,Ay,Az) P1 Tet4（3 个 PCG 求解，B=∇×A 恢复）；Nedelec H(curl) 高阶离散待实现 | — |
-| 波导端口 TE/TM 场匹配 | ✅ 已完成 v1.0：1-D 截面特征值 K_p x = λ M_p x，k_c = √λ₁，Z_TE = ωμ₀/k_z；截止频率以下退化为 TEM | — |
-| AMR 集成 | ✅ 已完成：ZZ 估计器 + Dörfler 标记 + Tri3 红细分 + P1 延拓；electrostatic/magnetostatic/eigenmode/driven 均已集成 | — |
-| 时域瞬态（TD-FEM） | ✅ 已完成 v1.0：GeneralizedAlpha + IMEX-ARK3 + RK4；Nedelec H(curl) + 完整 Maxwell 矢量场待实现（v2.0） | 中 |
+| 波导端口 TE/TM 场匹配 | ✅ 已完成 v1.0：TE/TM 两类阻抗（Z_TE/Z_TM），模式 n 选取，截止以下退化为 TEM | — |
+| AMR 集成 | ✅ 已完成：ZZ 估计器 + Dörfler 标记 + Tri3 红细分 + P1 延拓；**双重收敛判据**（相对 + 绝对 Hz） | — |
+| 时域瞬态（TD-FEM） | ✅ 已完成 v1.0：GeneralizedAlpha + IMEX-ARK3 + RK4 + **激励波形 CSV**；Nedelec H(curl) + 完整 Maxwell 矢量场待实现（v2.0） | 中 |
 | MoM 介质目标（PMCHWT） | ✅ 已完成：2N×2N PMCHWT 块方程，J+M 未知量，`Equation: "PMCHWT"` 路径已接通 | — |
 | MoM ACA 加速 | ✅ 已完成：部分主元 ACA（复对称 Z≈U·V^T），`FastSolver: "ACA"` 已接通；FMM 尚未实现 | — |
 | SBR+ 边缘绕射（PTD） | ✅ 已完成：UTD 绕射系数 + 边缘线积分，`write_rcs_with_ptd` 集成进主循环 | — |
+| Lanczos 再正交化 | ✅ 已完成：双遍 M-正交化，消除浮点积累伪特征值 | — |
+| SSOR 预条件 | ✅ 已完成：ω=1.5 SSOR 替代 Jacobi，FEM 刚度矩阵迭代次数减少 3–5× | — |
+| 电容提取（C = 2U/V²） | ✅ 已完成：能量法，WASM UI 显示 pF | — |
+| Q 因子导体损耗 | ✅ 已完成：R_s = √(ωμ₀/2σ) 微扰法；1/Q_c 表面积分；与介质 Q_d 合并 | — |
+| 电流偶极子源（Palace v0.16） | ✅ 已完成：`Domains.CurrentDipole`；Hertz 偶极子 RHS 注入最近自由节点 | — |
+| ROM 电路综合（Palace v0.16） | ✅ 已完成：Vector Fitting（Gustavsen-Semlyen）极点-留数拟合；`DrivenSolver.CircuitSynthesis: bool`；输出 Touchstone .s1p、极点-留数 CSV、SPICE .cir | — |
 | p-FEM（P2+）实际应用 | order > 1 时打印警告并降级 P1；P2 装配需接入 fem-rs `H1Space` + `Assembler` API | 低 |
 | FMM 加速 | `FastSolver: "FMM"` 配置可识别，运行时返回错误；需实现快速多极子 | 低 |

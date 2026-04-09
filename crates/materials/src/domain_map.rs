@@ -2,6 +2,7 @@ use crate::material::Material;
 use rem_config::PalaceConfig;
 use rem_core::RemResult;
 use std::collections::HashMap;
+use std::f64::consts::PI;
 
 /// Maps GMSH physical group tag → Material.
 pub struct DomainMap {
@@ -39,6 +40,22 @@ impl DomainMap {
                     )
                 };
                 mat.loss_tangent_magnetic = spec.loss_tangent_magnetic;
+
+                // Convert Drude-Lorentz poles: (plasma_freq Hz, resonance_freq Hz, damping rad/s)
+                // → internal (ωp², ω0², γ) in rad/s units
+                if !spec.drude_lorentz.is_empty() {
+                    mat.drude_lorentz_poles = spec.drude_lorentz.iter().map(|pole| {
+                        let wp2 = (2.0 * PI * pole.plasma_freq).powi(2);
+                        let w02 = (2.0 * PI * pole.resonance_freq).powi(2);
+                        let gamma = pole.damping; // already in rad/s per schema
+                        (wp2, w02, gamma)
+                    }).collect();
+                    log::info!(
+                        "Material attributes {:?}: {} Drude-Lorentz pole(s) loaded",
+                        spec.attributes, spec.drude_lorentz.len()
+                    );
+                }
+
                 mat
             })
             .collect();
@@ -91,6 +108,11 @@ impl DomainMap {
     /// Returns true if any material has a non-isotropic reluctivity (nu) tensor.
     pub fn any_magnetically_anisotropic(&self) -> bool {
         self.materials.iter().any(|m| m.is_magnetically_anisotropic())
+    }
+
+    /// Returns true if any material has Drude-Lorentz poles (frequency-dependent ε).
+    pub fn any_frequency_dependent(&self) -> bool {
+        self.materials.iter().any(|m| m.has_drude_lorentz())
     }
 
     /// Build a per-element epsilon coefficient array (for fem-rs assemblers).
