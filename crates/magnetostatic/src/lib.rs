@@ -23,7 +23,7 @@
 //! for both element types.
 
 use rem_config::PalaceConfig;
-use rem_core::{RemResult, solve_pcg};
+use rem_core::{RemResult, solve_spd};
 use rem_parallel::Comm;
 use rem_materials::DomainMap;
 use rem_mesh::{RemMesh, BoundaryTag, amr};
@@ -218,7 +218,7 @@ pub fn solve_3d(
         let dofs = collect_magnetostatic_dofs(mesh, excitation_tag, excitation_values[comp]);
         bc::apply_dirichlet(&mut mat, &mut rhs, &dofs);
 
-        let result = solve_pcg(&mat, &rhs, lin.tol, lin.max_iter, comm);
+        let result = solve_spd(&mat, &rhs, lin.tol, lin.max_iter, comm);
         if result.converged {
             log::info!("3-D A{}: PCG converged in {} iters (|r|={:.2e})",
                 labels[comp], result.iterations, result.residual_norm);
@@ -262,7 +262,7 @@ pub fn solve_one(
 
     // Solve
     let lin = &config.solver.linear;
-    let result = solve_pcg(&mat, &rhs, lin.tol, lin.max_iter, comm);
+    let result = solve_spd(&mat, &rhs, lin.tol, lin.max_iter, comm);
     if result.converged {
         log::info!("PCG converged in {} iterations (|r|={:.2e})", result.iterations, result.residual_norm);
     } else {

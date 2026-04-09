@@ -17,7 +17,7 @@ pub mod postprocess;
 pub mod output;
 
 use rem_config::PalaceConfig;
-use rem_core::{RemResult, solve_pcg, report_peak_memory};
+use rem_core::{RemResult, solve_spd, report_peak_memory};
 use rem_parallel::Comm;
 use rem_materials::DomainMap;
 use rem_mesh::{RemMesh, BoundaryTag, amr};
@@ -153,7 +153,7 @@ pub fn solve_one(
 
     // Solve
     let lin = &config.solver.linear;
-    let result = solve_pcg(&mat, &rhs, lin.tol, lin.max_iter, comm);
+    let result = solve_spd(&mat, &rhs, lin.tol, lin.max_iter, comm);
     if result.converged {
         log::info!("PCG converged in {} iterations (|r|={:.2e})", result.iterations, result.residual_norm);
     } else {

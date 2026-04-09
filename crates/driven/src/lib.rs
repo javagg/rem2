@@ -156,9 +156,9 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
             apply_dirichlet(&mut a_bc, &mut rhs, &dofs);
 
             // Use real solve for AMR only (estimator doesn't need complex accuracy)
-            use rem_core::solve_pcg;
+            use rem_core::solve_spd;
             let lin = &config.solver.linear;
-            let result = solve_pcg(&a_bc, &rhs, lin.tol, lin.max_iter, comm);
+            let result = solve_spd(&a_bc, &rhs, lin.tol, lin.max_iter, comm);
             let phi = result.solution;
 
             let eta = amr::zz_estimator(&cur_mesh, &phi);
