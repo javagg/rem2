@@ -6,4 +6,4 @@
 	url = https://github.com/rust-msh/rmsh.git
 [submodule "vendor/fem-rs"]
 	path = vendor/fem-rs
-	url = https://github.com/javagg/fem-rs.git
+	url = https://github.com/rem-rs/fem-rs.git
