@@ -506,16 +506,24 @@ fn run_frequency_sweep(
             }
             a
         };
+        // Resistive thin-sheet surface contribution: A[i,j] += (jω/Rs) ∫_Γ φ_i φ_j dS
+        let mut a_base = a_base;
+        apply_resistive_sheet(&mut a_base, mesh, omega);
+        // Surface impedance BC: A[i,j] += Ys(ω) ∫_Γ φ_i φ_j dS, Ys = 1/(Rs + jωLs + 1/(jωCs))
+        apply_surface_impedance(&mut a_base, mesh, omega);
+        // Silver-Müller ABC: A[i,j] += jk ∫_Γ φ_i φ_j dS  (1st-order absorbing BC)
+        apply_absorbing_bc(&mut a_base, mesh, k_wave);
 
         // ── Multi-port S-matrix path ──────────────────────────────────────────
         let (s11, s_matrix, phi_re) = if n_ports > 1 {
-            // Collect Z0 per port
-            let z0_vec: Vec<f64> = all_ports.iter().map(|(pidx, kind)| {
+            let omega = 2.0 * std::f64::consts::PI * freq;
+            let z0_vec: Vec<Complex64> = all_ports.iter().map(|(pidx, kind)| {
                 match kind {
-                    PortKind::Wave(idx) => wave_modes.get(idx)
-                        .map(|m| { let z = m.impedance(freq); if z.is_finite() { z } else { 50.0 } })
-                        .unwrap_or(50.0),
-                    _ => lumped_port_resistance(mesh, Some(*pidx)),
+                    PortKind::Wave(idx) => {
+                        let z = wave_modes.get(idx).map(|m| m.impedance(freq)).unwrap_or(50.0);
+                        Complex64::new(if z.is_finite() { z } else { 50.0 }, 0.0)
+                    }
+                    _ => lumped_port_impedance(mesh, Some(*pidx), omega),
                 }
             }).collect();
 
@@ -603,17 +611,20 @@ fn run_frequency_sweep(
 
             let phi_re: Vec<f64> = phi_c.iter().map(|x| x.re).collect();
             let (v_port, i_kphi) = compute_port_vi_complex(mesh, &phi_c, &k_dense, excited_port);
+            let omega = 2.0 * std::f64::consts::PI * freq;
             let (z0, i_port) = if let Some(mode) = &wave_port_mode {
                 let z = mode.impedance(freq);
                 let z_use = if z.is_finite() { z } else { 50.0 };
-                let i = if z_use.abs() > 1e-300 { v_port / Complex64::new(z_use, 0.0) } else { Complex64::ZERO };
-                (z_use, i)
+                let z0c = Complex64::new(z_use, 0.0);
+                let i = if z_use.abs() > 1e-300 { v_port / z0c } else { Complex64::ZERO };
+                (z0c, i)
             } else {
-                (lumped_port_resistance(mesh, excited_port), i_kphi)
+                let z0c = lumped_port_impedance(mesh, excited_port, omega);
+                (z0c, i_kphi)
             };
             let s11 = if i_port.norm() > 1e-300 {
                 let z = v_port / i_port;
-                let z0c = Complex64::new(z0, 0.0);
+                let z0c = z0;
                 (z - z0c) / (z + z0c)
             } else {
                 Complex64::ZERO
@@ -703,9 +714,10 @@ fn run_frequency_sweep(
                     a
                 };
                 let (s11, s_mat, phi_re) = if n_ports > 1 {
-                    let z0_vec: Vec<f64> = all_ports.iter().map(|(pidx, kind)| match kind {
-                        PortKind::Wave(idx) => wave_modes.get(idx).map(|m| { let z = m.impedance(freq); if z.is_finite() { z } else { 50.0 } }).unwrap_or(50.0),
-                        _ => lumped_port_resistance(mesh, Some(*pidx)),
+                    let omega = 2.0 * std::f64::consts::PI * freq;
+                    let z0_vec: Vec<Complex64> = all_ports.iter().map(|(pidx, kind)| match kind {
+                        PortKind::Wave(idx) => { let z = wave_modes.get(idx).map(|m| m.impedance(freq)).unwrap_or(50.0); Complex64::new(if z.is_finite() { z } else { 50.0 }, 0.0) }
+                        _ => lumped_port_impedance(mesh, Some(*pidx), omega),
                     }).collect();
                     let mut z_cols = Vec::with_capacity(n_ports);
                     let mut first_phi_re = Vec::new();
@@ -745,15 +757,18 @@ fn run_frequency_sweep(
                     let phi_c = gmres_complex(&a, &rhs_c, lin.tol, lin.max_iter)?;
                     let phi_re: Vec<f64> = phi_c.iter().map(|x| x.re).collect();
                     let (v_port, i_kphi) = compute_port_vi_complex(mesh, &phi_c, &k_dense, excited_port);
+                    let omega = 2.0 * std::f64::consts::PI * freq;
                     let (z0, i_port) = if let Some(mode) = &wave_port_mode {
                         let z = mode.impedance(freq);
                         let z_use = if z.is_finite() { z } else { 50.0 };
-                        (z_use, if z_use.abs() > 1e-300 { v_port / Complex64::new(z_use, 0.0) } else { Complex64::ZERO })
+                        let z0c = Complex64::new(z_use, 0.0);
+                        (z0c, if z_use.abs() > 1e-300 { v_port / z0c } else { Complex64::ZERO })
                     } else {
-                        (lumped_port_resistance(mesh, excited_port), i_kphi)
+                        let z0c = lumped_port_impedance(mesh, excited_port, omega);
+                        (z0c, i_kphi)
                     };
                     let s11 = if i_port.norm() > 1e-300 {
-                        let z = v_port / i_port; let z0c = Complex64::new(z0, 0.0);
+                        let z = v_port / i_port; let z0c = z0;
                         (z - z0c) / (z + z0c)
                     } else { Complex64::ZERO };
                     (s11, vec![], phi_re)
@@ -1069,22 +1084,154 @@ fn collect_all_ports(mesh: &RemMesh) -> Vec<(u32, PortKind)> {
     seen
 }
 
-/// Get port resistance from config (default 50 Ω).
-fn lumped_port_resistance(mesh: &RemMesh, port_idx: Option<u32>) -> f64 {
+/// Add Silver-Müller first-order absorbing BC:
+/// A[i,j] += jk · ∫_Γ φ_i φ_j dS
+///
+/// For order=2, adds a second-order correction term (not yet implemented; falls back to order=1).
+fn apply_absorbing_bc(a: &mut DMatrix<Complex64>, mesh: &RemMesh, k: f64) {
+    let jk = Complex64::new(0.0, k);
+    for belem in &mesh.boundary_elements {
+        let _order = match mesh.boundary_tags.get(&belem.tag) {
+            Some(BoundaryTag::Absorbing { order }) => *order,
+            _ => continue,
+        };
+        let nids = &belem.node_ids;
+        match nids.len() {
+            2 => {
+                let (p0, p1) = (&mesh.nodes[nids[0]], &mesh.nodes[nids[1]]);
+                let l = ((p1.x-p0.x).powi(2) + (p1.y-p0.y).powi(2) + (p1.z-p0.z).powi(2)).sqrt();
+                a[(nids[0], nids[0])] += jk * l / 3.0;
+                a[(nids[1], nids[1])] += jk * l / 3.0;
+                a[(nids[0], nids[1])] += jk * l / 6.0;
+                a[(nids[1], nids[0])] += jk * l / 6.0;
+            }
+            3 => {
+                let (p0, p1, p2) = (&mesh.nodes[nids[0]], &mesh.nodes[nids[1]], &mesh.nodes[nids[2]]);
+                let v1 = [p1.x-p0.x, p1.y-p0.y, p1.z-p0.z];
+                let v2 = [p2.x-p0.x, p2.y-p0.y, p2.z-p0.z];
+                let cx = v1[1]*v2[2] - v1[2]*v2[1];
+                let cy = v1[2]*v2[0] - v1[0]*v2[2];
+                let cz = v1[0]*v2[1] - v1[1]*v2[0];
+                let area = 0.5 * (cx*cx + cy*cy + cz*cz).sqrt();
+                for &ni in nids { a[(ni, ni)] += jk * area / 6.0; }
+                for ii in 0..3 {
+                    for jj in 0..3 {
+                        if ii != jj { a[(nids[ii], nids[jj])] += jk * area / 12.0; }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Add resistive thin-sheet surface contribution to system matrix:
+/// A[i,j] += (jω/Rs) · ∫_Γ φ_i φ_j dS
+fn apply_resistive_sheet(a: &mut DMatrix<Complex64>, mesh: &RemMesh, omega: f64) {
+    let j = Complex64::new(0.0, 1.0);
+    for belem in &mesh.boundary_elements {
+        let rs = match mesh.boundary_tags.get(&belem.tag) {
+            Some(BoundaryTag::ResistiveSheet { rs }) if *rs > 0.0 => *rs,
+            _ => continue,
+        };
+        let scale = j * omega / rs;
+        let nids = &belem.node_ids;
+        match nids.len() {
+            2 => {
+                let (p0, p1) = (&mesh.nodes[nids[0]], &mesh.nodes[nids[1]]);
+                let l = ((p1.x-p0.x).powi(2) + (p1.y-p0.y).powi(2) + (p1.z-p0.z).powi(2)).sqrt();
+                a[(nids[0], nids[0])] += scale * l / 3.0;
+                a[(nids[1], nids[1])] += scale * l / 3.0;
+                a[(nids[0], nids[1])] += scale * l / 6.0;
+                a[(nids[1], nids[0])] += scale * l / 6.0;
+            }
+            3 => {
+                let (p0, p1, p2) = (&mesh.nodes[nids[0]], &mesh.nodes[nids[1]], &mesh.nodes[nids[2]]);
+                let v1 = [p1.x-p0.x, p1.y-p0.y, p1.z-p0.z];
+                let v2 = [p2.x-p0.x, p2.y-p0.y, p2.z-p0.z];
+                let cx = v1[1]*v2[2] - v1[2]*v2[1];
+                let cy = v1[2]*v2[0] - v1[0]*v2[2];
+                let cz = v1[0]*v2[1] - v1[1]*v2[0];
+                let area = 0.5 * (cx*cx + cy*cy + cz*cz).sqrt();
+                for &ni in nids { a[(ni, ni)] += scale * area / 6.0; }
+                for ii in 0..3 {
+                    for jj in 0..3 {
+                        if ii != jj { a[(nids[ii], nids[jj])] += scale * area / 12.0; }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Add surface impedance BC contribution to system matrix:
+/// A[i,j] += Ys(ω) · ∫_Γ φ_i φ_j dS
+/// where Ys(ω) = 1 / (Rs + jωLs + 1/(jωCs))
+fn apply_surface_impedance(a: &mut DMatrix<Complex64>, mesh: &RemMesh, omega: f64) {
+    let j = Complex64::new(0.0, 1.0);
+    for belem in &mesh.boundary_elements {
+        let (rs, ls, cs) = match mesh.boundary_tags.get(&belem.tag) {
+            Some(BoundaryTag::Impedance { rs, ls, cs }) => (*rs, *ls, *cs),
+            _ => continue,
+        };
+        // Zs(ω) = Rs + jωLs + 1/(jωCs)
+        let mut zs = Complex64::new(rs.max(0.0), 0.0);
+        if ls > 0.0 { zs += j * omega * ls; }
+        if cs > 0.0 { zs += Complex64::new(1.0, 0.0) / (j * omega * cs); }
+        if zs.norm() < 1e-30 { continue; }
+        let ys = Complex64::new(1.0, 0.0) / zs;
+        let nids = &belem.node_ids;
+        match nids.len() {
+            2 => {
+                let (p0, p1) = (&mesh.nodes[nids[0]], &mesh.nodes[nids[1]]);
+                let l = ((p1.x-p0.x).powi(2) + (p1.y-p0.y).powi(2) + (p1.z-p0.z).powi(2)).sqrt();
+                a[(nids[0], nids[0])] += ys * l / 3.0;
+                a[(nids[1], nids[1])] += ys * l / 3.0;
+                a[(nids[0], nids[1])] += ys * l / 6.0;
+                a[(nids[1], nids[0])] += ys * l / 6.0;
+            }
+            3 => {
+                let (p0, p1, p2) = (&mesh.nodes[nids[0]], &mesh.nodes[nids[1]], &mesh.nodes[nids[2]]);
+                let v1 = [p1.x-p0.x, p1.y-p0.y, p1.z-p0.z];
+                let v2 = [p2.x-p0.x, p2.y-p0.y, p2.z-p0.z];
+                let cx = v1[1]*v2[2] - v1[2]*v2[1];
+                let cy = v1[2]*v2[0] - v1[0]*v2[2];
+                let cz = v1[0]*v2[1] - v1[1]*v2[0];
+                let area = 0.5 * (cx*cx + cy*cy + cz*cz).sqrt();
+                for &ni in nids { a[(ni, ni)] += ys * area / 6.0; }
+                for ii in 0..3 {
+                    for jj in 0..3 {
+                        if ii != jj { a[(nids[ii], nids[jj])] += ys * area / 12.0; }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Compute frequency-dependent lumped port impedance Z(ω) = R + jωL + 1/(jωC).
+fn lumped_port_impedance(mesh: &RemMesh, port_idx: Option<u32>, omega: f64) -> Complex64 {
+    let j = Complex64::new(0.0, 1.0);
     if let Some(idx) = port_idx {
         for bc in mesh.boundary_tags.values() {
             match bc {
-                BoundaryTag::LumpedPort { index, r } if *index == idx => {
-                    return if *r > 0.0 { *r } else { 50.0 };
+                BoundaryTag::LumpedPort { index, r, l, c } if *index == idx => {
+                    let r_val = if *r > 0.0 { *r } else { 50.0 };
+                    let mut z = Complex64::new(r_val, 0.0);
+                    if *l > 0.0 { z += j * omega * l; }
+                    if *c > 0.0 { z += Complex64::new(1.0, 0.0) / (j * omega * c); }
+                    return z;
                 }
                 BoundaryTag::WavePort { index } if *index == idx => {
-                    return 50.0;
+                    return Complex64::new(50.0, 0.0);
                 }
                 _ => {}
             }
         }
     }
-    50.0
+    Complex64::new(50.0, 0.0)
 }
 
 /// Build Dirichlet DOF map using the modal shape as excitation profile.
@@ -1225,7 +1372,7 @@ fn solve_one_excitation(
 /// matrix inversion for N > 2.
 fn z_to_s_matrix(
     z_cols: &[Vec<Complex64>],   // z_cols[j] = j-th column of Z (voltage at each port when port j excited)
-    z0: &[f64],                  // reference impedance per port
+    z0: &[Complex64],            // reference impedance per port (complex for RLC ports)
 ) -> Vec<Vec<Complex64>> {
     let n = z0.len();
     // Build Z matrix
@@ -1236,7 +1383,7 @@ fn z_to_s_matrix(
         }
     }
     // S = (Z − Z0)(Z + Z0)⁻¹ using nalgebra for inversion
-    let z0_diag: Vec<Complex64> = z0.iter().map(|&r| Complex64::new(r, 0.0)).collect();
+    let z0_diag: Vec<Complex64> = z0.to_vec();
     let mut zp = DMatrix::<Complex64>::zeros(n, n);
     let mut zm = DMatrix::<Complex64>::zeros(n, n);
     for i in 0..n {

@@ -50,6 +50,9 @@ pub struct SurfaceMesh {
     /// Per-face physical-group attribute tag (from the mesh boundary tags).
     /// Zero means "untagged / not extracted from a named boundary".
     pub face_attrs: Vec<u32>,
+    /// Global node IDs in the parent RemMesh (index i → global node ID).
+    /// Allows FE-BI coupling to map surface local DOFs back to volume DOFs.
+    pub global_node_ids: Vec<usize>,
 }
 
 // ---------------------------------------------------------------------------
@@ -132,7 +135,7 @@ impl SurfaceMesh {
         let (mut edges, boundary_edges) = build_edge_topology(&faces);
         patch_edge_lengths(&mut edges, &nodes);
 
-        Ok(SurfaceMesh { nodes, faces, edges, boundary_edges, face_attrs })
+        Ok(SurfaceMesh { nodes, faces, edges, boundary_edges, face_attrs, global_node_ids: global_ids })
     }
 
     /// Number of RWG basis functions = number of shared interior edges.

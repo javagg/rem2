@@ -1,0 +1,25 @@
+[package]
+name    = "rem-febi"
+version = "0.1.0"
+edition = "2021"
+description = "Hybrid FE-BI (Finite Element – Boundary Integral) solver for rem2"
+
+[dependencies]
+rem-core      = { workspace = true }
+rem-config    = { workspace = true }
+rem-mesh      = { workspace = true }
+rem-mom       = { workspace = true }
+rem-parallel  = { workspace = true }
+rem-touchstone = { workspace = true }
+rem-electrostatic = { workspace = true }
+rem-eigenmode     = { workspace = true }
+num-complex   = { workspace = true }
+nalgebra      = { workspace = true }
+thiserror     = { workspace = true }
+log           = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rayon = "1"
+
+[dev-dependencies]
+approx = "0.5"

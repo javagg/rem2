@@ -20,6 +20,9 @@ members = [
     "crates/mom",
     "crates/bem",
     "crates/sbr",
+    "crates/febi",
+    "crates/ddm",
+    "crates/planar",
     "vendor/rmetis",
 ]
 
@@ -41,6 +44,9 @@ rem-driven        = { path = "crates/driven" }
 rem-parallel      = { path = "crates/parallel" }
 rem-transient     = { path = "crates/transient" }
 rem-mom           = { path = "crates/mom" }
+rem-febi          = { path = "crates/febi" }
+rem-ddm           = { path = "crates/ddm" }
+rem-planar        = { path = "crates/planar" }
 rem-touchstone    = { path = "crates/touchstone" }
 rem-sbr           = { path = "crates/sbr" }
 rem-wasm          = { path = "crates/wasm" }
@@ -93,4 +99,3 @@ lto = "thin"
 inherits  = "release"
 opt-level = "s"
 lto       = true
-

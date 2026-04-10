@@ -71,6 +71,9 @@ fn main() -> anyhow::Result<()> {
         ProblemType::SBR => {
             rem_sbr::run(&config)?;
         }
+        ProblemType::FEBI => {
+            rem_febi::run(&config)?;
+        }
     }
 
     Ok(())

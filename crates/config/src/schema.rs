@@ -115,6 +115,9 @@ pub enum ProblemType {
     BEM,
     /// Shooting and Bouncing Rays + Physical Optics — REM extension, not in Palace
     SBR,
+    /// Hybrid Finite Element – Boundary Integral — REM extension, not in Palace
+    #[serde(rename = "FEBI")]
+    FEBI,
 }
 
 // ---------------------------------------------------------------------------
@@ -290,6 +293,9 @@ pub struct Boundaries {
     #[serde(rename = "Impedance", default)]
     pub impedance: Vec<ImpedanceSpec>,
 
+    #[serde(rename = "ResistiveSheet", default)]
+    pub resistive_sheet: Vec<ResistiveSheetSpec>,
+
     #[serde(rename = "LumpedPort", default)]
     pub lumped_port: Vec<LumpedPortSpec>,
 
@@ -398,6 +404,17 @@ pub struct TerminalSpec {
 pub struct AttrList {
     #[serde(rename = "Attributes", deserialize_with = "deserialize_attributes")]
     pub attributes: Vec<u32>,
+}
+
+/// Resistive thin-sheet boundary condition (Ω/□ sheet resistance).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ResistiveSheetSpec {
+    #[serde(rename = "Attributes", deserialize_with = "deserialize_attributes")]
+    pub attributes: Vec<u32>,
+
+    /// Sheet resistance [Ω/sq]
+    #[serde(rename = "Rs")]
+    pub rs: f64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -556,6 +573,14 @@ pub struct SolverConfig {
     #[serde(rename = "SBR", default)]
     pub sbr: Option<SbrSolverConfig>,
 
+    /// REM extension: Hybrid FE-BI solver parameters (ignored by Palace).
+    #[serde(rename = "FEBI", default)]
+    pub febi: Option<FeBiSolverConfig>,
+
+    /// REM extension: Domain Decomposition Method solver parameters (ignored by Palace).
+    #[serde(rename = "DDM", default)]
+    pub ddm: Option<DdmSolverConfig>,
+
     /// REM extension: near-to-far-field transform postprocessing.
     #[serde(rename = "FarField", default)]
     pub far_field: Option<FarFieldConfig>,
@@ -599,6 +624,8 @@ impl Default for SolverConfig {
             linear: LinearSolver::default(),
             mom: None,
             sbr: None,
+            febi: None,
+            ddm: None,
             far_field: None,
         }
     }
@@ -993,6 +1020,115 @@ fn default_weight_thresh()  -> f64    { 1.0e-4 }
 fn default_target_type()    -> String { "PEC".to_string() }
 
 // ---------------------------------------------------------------------------
+// FE-BI solver config (REM extension — ignored by Palace)
+// ---------------------------------------------------------------------------
+
+/// Hybrid FE-BI solver parameters, placed under `Solver.FEBI` in the config file.
+///
+/// FE-BI couples a volumetric FEM domain (for heterogeneous materials) with a
+/// boundary integral operator on the outer radiation surface, providing a
+/// rigorous open-domain boundary condition without PML layers.
+#[derive(Debug, Clone, Deserialize)]
+pub struct FeBiSolverConfig {
+    /// Start frequency [Hz]
+    #[serde(rename = "FreqMin")]
+    pub freq_min: f64,
+
+    /// End frequency [Hz]
+    #[serde(rename = "FreqMax")]
+    pub freq_max: f64,
+
+    /// Frequency step [Hz]; set to 0 for single-frequency solve
+    #[serde(rename = "FreqStep", default = "default_febi_freq_step")]
+    pub freq_step: f64,
+
+    /// Attribute IDs of the radiation boundary (outer surface Γ where BI is applied)
+    #[serde(rename = "RadiationBoundary", default)]
+    pub radiation_boundary: Vec<u32>,
+
+    /// Boundary integral equation type: "EFIE" | "CFIE"
+    #[serde(rename = "Equation", default = "default_febi_equation")]
+    pub equation: String,
+
+    /// CFIE mixing coefficient α ∈ [0,1]: 0 = pure EFIE, 1 = pure MFIE
+    #[serde(rename = "Alpha", default = "default_febi_alpha")]
+    pub alpha: f64,
+
+    /// ACA tolerance for compressing the BI block (0 = direct dense)
+    #[serde(rename = "AcaTol", default = "default_febi_aca_tol")]
+    pub aca_tol: f64,
+
+    /// GMRES relative residual tolerance for the coupled FE-BI system
+    #[serde(rename = "GmresTol", default = "default_febi_gmres_tol")]
+    pub gmres_tol: f64,
+
+    /// Maximum GMRES iterations
+    #[serde(rename = "GmresMaxIter", default = "default_febi_gmres_max_iter")]
+    pub gmres_max_iter: usize,
+
+    /// Lumped ports for S-parameter extraction (same format as MoM ports)
+    #[serde(rename = "Ports", default)]
+    pub ports: Vec<MomPort>,
+
+    /// Global reference impedance Z₀ [Ω] for S-parameter normalisation
+    #[serde(rename = "RefImpedance", default = "default_ref_impedance")]
+    pub ref_impedance: f64,
+
+    /// Output directory for postprocessing results
+    #[serde(rename = "OutputDir", default = "default_febi_output_dir")]
+    pub output_dir: String,
+}
+
+fn default_febi_freq_step()     -> f64    { 0.0 }
+fn default_febi_equation()      -> String { "CFIE".to_string() }
+fn default_febi_alpha()         -> f64    { 0.5 }
+fn default_febi_aca_tol()       -> f64    { 1.0e-3 }
+fn default_febi_gmres_tol()     -> f64    { 1.0e-6 }
+fn default_febi_gmres_max_iter() -> usize { 500 }
+fn default_febi_output_dir()    -> String { "postpro".to_string() }
+
+// ---------------------------------------------------------------------------
+// DDM solver config (REM extension — ignored by Palace)
+// ---------------------------------------------------------------------------
+
+/// Domain Decomposition Method solver parameters, placed under `Solver.DDM`.
+///
+/// Implements Robin-condition Schwarz iteration for parallel FEM solves.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DdmSolverConfig {
+    /// Number of subdomains (should equal MPI process count)
+    #[serde(rename = "NumSubdomains", default = "default_ddm_num_subdomains")]
+    pub num_subdomains: usize,
+
+    /// DDM algorithm: "Schwarz" | "FETI"
+    #[serde(rename = "Method", default = "default_ddm_method")]
+    pub method: String,
+
+    /// Robin condition coefficient order: 1 = first-order OSRC, 2 = second-order
+    #[serde(rename = "RobinOrder", default = "default_ddm_robin_order")]
+    pub robin_order: u8,
+
+    /// Convergence tolerance for the Schwarz outer iteration
+    #[serde(rename = "Tolerance", default = "default_ddm_tolerance")]
+    pub tolerance: f64,
+
+    /// Maximum number of Schwarz iterations
+    #[serde(rename = "MaxIter", default = "default_ddm_max_iter")]
+    pub max_iter: usize,
+
+    /// METIS partitioning: "Dual" | "Nodal"
+    #[serde(rename = "PartitionType", default = "default_ddm_partition_type")]
+    pub partition_type: String,
+}
+
+fn default_ddm_num_subdomains() -> usize  { 4 }
+fn default_ddm_method()         -> String { "Schwarz".to_string() }
+fn default_ddm_robin_order()    -> u8     { 1 }
+fn default_ddm_tolerance()      -> f64    { 1.0e-6 }
+fn default_ddm_max_iter()       -> usize  { 100 }
+fn default_ddm_partition_type() -> String { "Dual".to_string() }
+
+// ---------------------------------------------------------------------------
 // Postprocessing (REM extension — ignored by Palace)
 // ---------------------------------------------------------------------------
 
@@ -1100,10 +1236,8 @@ pub fn validate_palace_compat(cfg: &PalaceConfig) {
 
     // --- Boundaries ---
     if !cfg.boundaries.impedance.is_empty() {
-        log::warn!(
-            "[REM] Boundaries.Impedance: surface impedance BCs are not implemented; \
-             treated as PEC (lossless). Q-factor results will be approximate."
-        );
+        log::info!("[REM] Boundaries.Impedance: surface impedance BC active ({} regions).",
+            cfg.boundaries.impedance.len());
     }
     if !cfg.boundaries.periodic.is_empty() {
         let n_pairs: usize = cfg.boundaries.periodic.iter()

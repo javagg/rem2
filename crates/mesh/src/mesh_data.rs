@@ -88,9 +88,10 @@ pub enum BoundaryTag {
     Ground,
     ZeroCharge,
     Impedance { rs: f64, ls: f64, cs: f64 },
+    ResistiveSheet { rs: f64 },
     /// Electrostatic terminal (Palace "Terminal"): equipotential conductor surface.
     Terminal { index: u32 },
-    LumpedPort { index: u32, r: f64 },
+    LumpedPort { index: u32, r: f64, l: f64, c: f64 },
     WavePort   { index: u32 },
     Absorbing  { order: u8 },
     SurfaceCurrent { index: u32 },
@@ -756,8 +757,12 @@ fn build_boundary_tags(b: &Boundaries) -> RemResult<HashMap<u32, BoundaryTag>> {
         let bc = BoundaryTag::Impedance { rs: imp.rs, ls: imp.ls, cs: imp.cs };
         for &t in &imp.attributes { insert_unique!(t, bc.clone()); }
     }
+    for sheet in &b.resistive_sheet {
+        let bc = BoundaryTag::ResistiveSheet { rs: sheet.rs };
+        for &t in &sheet.attributes { insert_unique!(t, bc.clone()); }
+    }
     for port in &b.lumped_port {
-        let bc = BoundaryTag::LumpedPort { index: port.index, r: port.r };
+        let bc = BoundaryTag::LumpedPort { index: port.index, r: port.r, l: port.l, c: port.c };
         // Top-level attributes (legacy / single-element case)
         for &t in &port.attributes { insert_unique!(t, bc.clone()); }
         // Multi-element case: each element may carry its own attribute tags
