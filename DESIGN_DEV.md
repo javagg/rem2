@@ -1669,3 +1669,130 @@ cargo build -p rem-yew         # 0 errors
 ```
 
 *最后更新: 2026-04-09 | v0.16.0 完成*
+
+---
+
+## 阶段 16 — MoM 端口激励 + S 参数提取（v0.17.0）🔲
+
+> 详细规格：[docs/MOM_Sonnet19_Alignment_Plan.md](docs/MOM_Sonnet19_Alignment_Plan.md) § 阶段 16
+
+**目标**：在 MoM 框架内引入集总端口激励，输出 Touchstone `.sNp`，
+使 REM 能仿真微带/CPW 无源器件的 S 参数（Sonnet 核心场景）。
+
+### 关键任务
+
+| 编号 | 功能 | 文件 | 状态 |
+|------|------|------|------|
+| P16-1 | `MomPort` 配置解析 + `RefImpedance` | `crates/config/src/schema.rs` | 🔲 |
+| P16-2 | `crates/mom/src/port.rs`（集总端口模型） | 新文件 | 🔲 |
+| P16-3 | `crates/mom/src/sparams.rs`（S 矩阵 + Touchstone） | 新文件 | 🔲 |
+| P16-4 | 主流程端口分支（`lib.rs`） | `crates/mom/src/lib.rs` | 🔲 |
+| P16-5 | 单/双端口验证测试（偶极子 + 传输线） | `crates/mom/tests/` | 🔲 |
+
+### 验收标准
+
+- [ ] `Ports` 配置解析正确，S 参数路由激活
+- [ ] 双端口：2×2 S 矩阵写出 `.s2p`，ADS/Qucs 可读
+- [ ] 半波偶极子 S11 vs 解析阻抗误差 < 5%
+- [ ] 无端口时原有 RCS 路径零回归
+- [ ] `cargo test -p rem-mom` 全部通过
+
+---
+
+## 阶段 17 — 分层介质 Green 函数（v0.18.0）🔲
+
+> 详细规格：[docs/MOM_Sonnet19_Alignment_Plan.md](docs/MOM_Sonnet19_Alignment_Plan.md) § 阶段 17
+
+**目标**：引入多层介质 Sommerfeld 积分 Green 函数（DCIM 离散复像法），
+使 REM MoM 能仿真嵌入 PCB/MMIC 基板中的导体结构（Sonnet 最核心的物理能力）。
+
+### 关键任务
+
+| 编号 | 功能 | 文件 | 状态 |
+|------|------|------|------|
+| P17-1 | 新 crate `crates/layered_green`（传输矩阵 + DCIM） | 新 crate | 🔲 |
+| P17-2 | `GreenFunction` trait 抽象（自由空间 / 分层介质） | `crates/mom/src/green_trait.rs` | 🔲 |
+| P17-3 | `assemble_efie_rwg` / `assemble_mfie_rwg` 接受 trait | `crates/mom/src/assemble.rs` | 🔲 |
+| P17-4 | `SubstrateConfig` / `LayerConfig` 配置解析 | `crates/config/src/schema.rs` | 🔲 |
+| P17-5 | 贴片天线验证（FR4 基板） | `examples/patch_antenna/` | 🔲 |
+
+### 验收标准
+
+- [ ] DCIM 残差 vs 数值 Sommerfeld < 1e-3
+- [ ] 贴片天线谐振频率误差 < 2%
+- [ ] 原有自由空间 RCS 测试零回归
+
+---
+
+## 阶段 18 — 有损导体 SIBC + FFT 加速（v0.19.0）🔲
+
+> 详细规格：[docs/MOM_Sonnet19_Alignment_Plan.md](docs/MOM_Sonnet19_Alignment_Plan.md) § 阶段 18
+
+**目标**：引入表面阻抗边界条件（SIBC）建模铜导体损耗；
+在严格平面结构上实现 FFT 加速矩阵-向量积（O(N log N)）。
+
+### 关键任务
+
+| 编号 | 功能 | 文件 | 状态 |
+|------|------|------|------|
+| P18-1 | `crates/mom/src/sibc.rs`（SIBC 修正阻抗矩阵） | 新文件 | 🔲 |
+| P18-2 | `ConductivityBc` 扩展（MoM 路径） | `crates/config/src/schema.rs` | 🔲 |
+| P18-3 | `crates/mom/src/fft_accel.rs`（FFT 加速求解器） | 新文件 | 🔲 |
+| P18-4 | 铜微带传输线有损验证 | `examples/microstrip_lossy/` | 🔲 |
+
+### 验收标准
+
+- [ ] 趋肤深度公式验证 @ 1-30 GHz
+- [ ] 铜微带 S21 vs Sonnet 参考 ΔS21 < 0.1 dB
+- [ ] FFT 加速：N=2000 时速度提升 > 5×，精度 < 0.1 dB
+
+---
+
+## 阶段 19 — MoM AMR + 频率 ROM + Touchstone 完整（v0.20.0）🔲
+
+> 详细规格：[docs/MOM_Sonnet19_Alignment_Plan.md](docs/MOM_Sonnet19_Alignment_Plan.md) § 阶段 19
+
+**目标**：补齐剩余工程可用性差距：自适应网格细化、频率扫描 ROM 加速、
+完整 Touchstone 2.0 格式兼容。
+
+### 关键任务
+
+| 编号 | 功能 | 文件 | 状态 |
+|------|------|------|------|
+| P19-1 | `crates/mom/src/amr.rs`（表面电流梯度误差指示 + Dörfler 标记 + 面元细化） | 新文件 | 🔲 |
+| P19-2 | MoM 频率扫描快照 ROM（`RomOrder` 配置） | `crates/mom/src/rom.rs` | 🔲 |
+| P19-3 | Touchstone 2.0 完整（MA/RI/DB 格式、注释行、多端口规范） | `crates/mom/src/sparams.rs` | 🔲 |
+| P19-4 | `FEATURE_COMPARISON.md` 全面更新 | `FEATURE_COMPARISON.md` | 🔲 |
+
+### 验收标准
+
+- [ ] AMR：PEC 球 3 次迭代收敛（RCS 变化 < 0.1 dB）
+- [ ] ROM：100 频率点 = 10 锚点精度，S 参数误差 < 0.05 dB
+- [ ] `.s2p` 可被 ADS、Qucs、scikit-rf 读取
+- [ ] `cargo test --workspace` 全部通过
+
+---
+
+## 版本里程碑（更新）
+
+| 版本 | 内容 | 对应阶段 | 状态 |
+|------|------|---------|------|
+| v0.1.0 | 工作区 + 配置解析 + 静电/静磁 + CLI + VTK 输出 | 1-5 | ✅ |
+| v0.1.1 | WASM 绑定 + Yew Web Demo（可部署） | 6, 7.5 | ✅ |
+| v0.2.0 | 并行层 (jsmpi/Comm trait) + 分布式组装 | 6.5, 7 | ✅ |
+| v0.2.1 | rmetis 子模块 + METIS k-way 对偶图分区 | — | ✅ |
+| v0.3.0 | Palace 官方示例完整兼容测试 | 8 | ✅ |
+| v0.4.0 | MoM 基础设施：密集复数矩阵 + 表面网格提取 + 高斯求积 | 9 | ✅ |
+| v0.5.0 | MoM EFIE 求解器：Green 函数 + 脉冲基函数 + 验证 | 10 | ✅ |
+| v0.6.0 | MoM CFIE 求解器：RWG 基函数 + 奇异积分 + RCS 输出 | 11 | ✅ |
+| v0.7.0 | BEM 静态求解器：Laplace BEM + 与 FEM 交叉验证 | 12 | ✅ |
+| v0.8.0 | SBR+ 高频 PO 求解器：BVH + 两阶段 PO + Mie 验证 | — | ✅ |
+| v0.8.1 | 警告清理 + fem-rs submodule 更新 | — | ✅ |
+| v0.14.0–v0.16.0 | Palace v0.16 差距补全（材料、端口、ROM、电路综合） | 14-15 | ✅ |
+| **v0.17.0** | **MoM 集总端口 + S 参数 + Touchstone 基础** | **16** | **🔲** |
+| **v0.18.0** | **分层介质 Green 函数（DCIM）+ 基板配置** | **17** | **🔲** |
+| **v0.19.0** | **SIBC 有损导体 + FFT 加速平面 MoM** | **18** | **🔲** |
+| **v0.20.0** | **MoM AMR + 频率扫描 ROM + Touchstone 完整** | **19** | **🔲** |
+| v1.0.0 | 时域瞬态 (TD-FEM) + 生产就绪 | FDTD_PLAN.md | 🔲 |
+
+*最后更新: 2026-04-10 | 新增 Sonnet 19 对齐路线图（v0.17–v0.20）*
