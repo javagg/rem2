@@ -86,6 +86,13 @@ pub fn run_with_mesh(
     log::info!("MoM surface mesh: {} faces, {} interior edges (RWG bases)",
         surf.faces.len(), surf.edges.len());
 
+    // ── Port path (S-parameter sweep) ─────────────────────────────────────
+    if !mom_cfg.ports.is_empty() {
+        return run_s_param_sweep(config, mom_cfg, &surf);
+    }
+
+    // ── RCS path (original plane-wave path) ───────────────────────────────
+
     // Frequency sweep
     let freq_min  = mom_cfg.freq_min;
     let freq_max  = mom_cfg.freq_max;
@@ -189,4 +196,63 @@ pub fn run_with_mesh(
     #[cfg(target_arch = "wasm32")]
     log::info!("MoM solve complete.");
     Ok(MomResult { rcs: all_rcs })
+}
+
+/// Run the S-parameter sweep (port-excited MoM path).
+fn run_s_param_sweep(
+    config: &PalaceConfig,
+    mom_cfg: &MomSolverConfig,
+    surf: &surface_mesh::SurfaceMesh,
+) -> RemResult<MomResult> {
+    use std::f64::consts::PI;
+    use port::MomLumpedPort;
+
+    let output_dir = std::path::Path::new(config.problem.output_dir());
+    #[cfg(not(target_arch = "wasm32"))]
+    std::fs::create_dir_all(output_dir.join("postpro"))?;
+
+    let bases = basis::rwg::generate_rwg_bases(surf);
+    let quad  = quadrature::TriQuad::new(5);
+
+    // Build lumped ports
+    let lumped_ports: Vec<MomLumpedPort> = mom_cfg.ports.iter().map(|p| {
+        let z0 = p.impedance.unwrap_or(mom_cfg.ref_impedance);
+        MomLumpedPort::from_surface(surf, &bases, &p.attributes, p.index, &p.direction, z0)
+    }).collect::<RemResult<_>>()?;
+
+    // Frequency sweep
+    let mut freq = mom_cfg.freq_min;
+    let freq_max  = mom_cfg.freq_max;
+    let freq_step = mom_cfg.freq_step;
+    let mut all_matrices: Vec<sparams::SMatrix> = Vec::new();
+
+    while freq <= freq_max + 1e-3 * freq_step {
+        log::info!("MoM S-param solve at f = {:.3e} Hz", freq);
+        let _k = 2.0 * PI * freq / rem_core::C0;
+
+        let z_mat = assemble::assemble_cfie_rwg(
+            surf, &bases, freq, mom_cfg.alpha, &quad, mom_cfg.singular_tol,
+        )?;
+
+        let sm = sparams::compute_s_matrix(surf, &bases, &lumped_ports, &z_mat, freq)?;
+        log::info!("  S-matrix computed: {}×{}", sm.n_ports, sm.n_ports);
+        all_matrices.push(sm);
+
+        freq += freq_step;
+    }
+
+    // Write outputs
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let ts_ext = format!("s{}p", lumped_ports.len());
+        let ts_path = output_dir.join("postpro").join(format!("s_params.{}", ts_ext));
+        sparams::write_touchstone(&all_matrices, &ts_path, mom_cfg.ref_impedance)?;
+        log::info!("MoM S-param output: {}", ts_path.display());
+
+        let csv_path = output_dir.join("postpro").join("port-S.csv");
+        sparams::append_palace_csv(&all_matrices, &csv_path)?;
+    }
+
+    log::info!("MoM S-param sweep complete. {} frequency points.", all_matrices.len());
+    Ok(MomResult { rcs: vec![] })  // no RCS in S-param mode
 }
