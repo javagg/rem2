@@ -176,7 +176,7 @@ mod tests {
         let (c,n,a) = tri_geometry(&nodes[0],&nodes[1],&nodes[2]);
         SurfaceMesh {
             nodes, faces: vec![TriFace{nodes:[0,1,2],centroid:c,normal:n,area:a}],
-            edges: vec![], boundary_edges: vec![],
+            edges: vec![], boundary_edges: vec![], face_attrs: vec![0],
         }
     }
 

@@ -239,7 +239,7 @@ mod tests {
         }];
         // boundary edge: [0, 1] (the bottom edge)
         let boundary_edges = vec![[0, 1]];
-        SurfaceMesh { nodes, faces, edges: vec![], boundary_edges }
+        SurfaceMesh { nodes, faces, edges: vec![], boundary_edges, face_attrs: vec![0] }
     }
 
     #[test]

@@ -375,6 +375,7 @@ mod tests {
             faces: vec![TriFace { nodes:[0,1,2], centroid:c, normal:n, area:a }],
             edges: vec![],
             boundary_edges: vec![],
+            face_attrs: vec![0],
         };
         Bvh::build(Arc::new(surf))
     }

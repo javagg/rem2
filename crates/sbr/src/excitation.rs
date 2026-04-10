@@ -143,7 +143,7 @@ mod tests {
         let (c,n,a) = tri_geometry(&nodes[0],&nodes[1],&nodes[2]);
         let surf = SurfaceMesh {
             nodes, faces: vec![TriFace{nodes:[0,1,2],centroid:c,normal:n,area:a}],
-            edges: vec![], boundary_edges: vec![],
+            edges: vec![], boundary_edges: vec![], face_attrs: vec![0],
         };
         let wave = PlaneWave { theta_inc:0.0, phi_inc:0.0, pol:"theta".to_string() };
         let rays = launch_aperture_rays(&wave, &surf, 20.0, 1e4, 1e9);

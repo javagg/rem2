@@ -45,6 +45,7 @@ mod tests {
             faces: vec![TriFace { nodes:[0,1,2], centroid:c, normal:n, area:a }],
             edges: vec![],
             boundary_edges: vec![[0,1],[1,2],[2,0]],
+            face_attrs: vec![0],
         }
     }
 
