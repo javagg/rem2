@@ -195,6 +195,7 @@ mod tests {
             faces: vec![TriFace{nodes:[0,1,2],centroid:c,normal:n,area:a}],
             edges: vec![],
             boundary_edges: vec![],
+            face_attrs: vec![0],
         };
         let currents = vec![Complex64::new(1.0, 0.5)];
         (surf, currents)

@@ -47,6 +47,9 @@ pub struct SurfaceMesh {
     pub edges: Vec<SharedEdge>,
     /// Boundary (open) edges belonging to exactly one face
     pub boundary_edges: Vec<[usize; 2]>,
+    /// Per-face physical-group attribute tag (from the mesh boundary tags).
+    /// Zero means "untagged / not extracted from a named boundary".
+    pub face_attrs: Vec<u32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -110,6 +113,7 @@ impl SurfaceMesh {
 
         // ── 3. Build faces ───────────────────────────────────────────────────
         let mut faces: Vec<TriFace> = Vec::with_capacity(tri_elems.len());
+        let mut face_attrs: Vec<u32> = Vec::with_capacity(tri_elems.len());
         for elem in &tri_elems {
             let l0 = global_to_local[&elem.node_ids[0]];
             let l1 = global_to_local[&elem.node_ids[1]];
@@ -121,13 +125,14 @@ impl SurfaceMesh {
 
             let (centroid, normal, area) = tri_geometry(&p0, &p1, &p2);
             faces.push(TriFace { nodes: [l0, l1, l2], centroid, normal, area });
+            face_attrs.push(elem.tag as u32);
         }
 
         // ── 4. Build edge-face topology ──────────────────────────────────────
         let (mut edges, boundary_edges) = build_edge_topology(&faces);
         patch_edge_lengths(&mut edges, &nodes);
 
-        Ok(SurfaceMesh { nodes, faces, edges, boundary_edges })
+        Ok(SurfaceMesh { nodes, faces, edges, boundary_edges, face_attrs })
     }
 
     /// Number of RWG basis functions = number of shared interior edges.

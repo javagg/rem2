@@ -115,7 +115,7 @@ mod tests {
             minus_face: 1,
             length: (1.0f64 + 1.0).sqrt(),
         }];
-        SurfaceMesh { nodes, faces, edges, boundary_edges: vec![] }
+        SurfaceMesh { nodes, faces, edges, boundary_edges: vec![], face_attrs: vec![0, 0] }
     }
 
     #[test]

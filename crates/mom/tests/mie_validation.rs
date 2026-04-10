@@ -75,7 +75,8 @@ fn flat_plate_mesh(nx: usize, ny: usize, lx: f64, ly: f64) -> SurfaceMesh {
         }
     }
     patch_edge_lengths(&mut edges, &nodes);
-    SurfaceMesh { nodes, faces, edges, boundary_edges }
+    let n_faces = faces.len();
+    SurfaceMesh { nodes, faces, edges, boundary_edges, face_attrs: vec![0; n_faces] }
 }
 
 fn icosphere(radius: f64, subdivisions: usize) -> SurfaceMesh {
@@ -143,7 +144,8 @@ fn build_mesh(nodes: Vec<[f64;3]>, fidx: Vec<[usize;3]>) -> SurfaceMesh {
         }
     }
     patch_edge_lengths(&mut edges, &nodes);
-    SurfaceMesh { nodes, faces, edges, boundary_edges:be }
+    let n_faces = faces.len();
+    SurfaceMesh { nodes, faces, edges, boundary_edges:be, face_attrs: vec![0; n_faces] }
 }
 
 // ---------------------------------------------------------------------------

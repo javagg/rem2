@@ -4,14 +4,15 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-rem-core     = { workspace = true }
-rem-config   = { workspace = true }
-rem-mesh     = { workspace = true }
-rem-parallel = { workspace = true }
-num-complex  = { workspace = true }
-nalgebra     = { workspace = true }
-thiserror    = { workspace = true }
-log          = { workspace = true }
+rem-core      = { workspace = true }
+rem-config    = { workspace = true }
+rem-mesh      = { workspace = true }
+rem-parallel  = { workspace = true }
+rem-touchstone = { workspace = true }
+num-complex   = { workspace = true }
+nalgebra      = { workspace = true }
+thiserror     = { workspace = true }
+log           = { workspace = true }
 
 # Rayon only on non-WASM targets
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
