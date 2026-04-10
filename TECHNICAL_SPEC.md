@@ -1,5 +1,5 @@
 # REM — Rust Electromagnetic Solver
-## Technical Specification v0.5
+## Technical Specification v0.6
 
 > **目标**: 用纯 Rust（可编译至 `wasm32-unknown-unknown`）实现对标 Palace 的全波电磁仿真工具，
 > 基于 [fem-rs](https://github.com/javagg/fem-rs) 通用有限元库，兼容 Palace JSON/YAML 配置格式。
@@ -30,6 +30,7 @@
 | MPI 并行（native rsmpi） | ✅ | 🔲 | ✅ | ✅ |
 | MPI 模拟（jsmpi + Web Worker） | ❌ | ✅ | ✅ | ✅ |
 | **矩量法 MoM (EFIE/CFIE/PMCHWT+ACA)** | ❌ | ❌ | ❌ | ✅ **已实现** |
+| **MoM 集总端口 + S 参数** | ❌ | ❌ | ❌ | ✅ **已实现** |
 | **边界元法 BEM (Laplace P0)** | ❌ | ❌ | ❌ | ✅ **已实现** |
 | **SBR+ 高频射线追踪 + PO + PTD** | ❌ | ❌ | ❌ | ✅ **已实现** |
 | RCS / 远场后处理 | ❌ | ❌ | ❌ | ✅ **已实现** |
@@ -39,7 +40,8 @@
 - **纯 Rust + WASM**: 无 C/C++ 依赖，可在浏览器运行
 - **Palace 配置兼容**: 直接读取 Palace JSON/YAML 配置文件（详见第 7 节）
 - **fem-rs 驱动**: 复用已验证的 FEM 基础设施
-- **MoM/BEM/SBR+ 扩展**: 矩量法（`crates/mom`，支持 CFIE/PMCHWT/ACA）、Laplace P0 BEM（`crates/bem`）以及 SBR+PTD 高频射线追踪求解器（`crates/sbr`）均已实现，与 FEM 共享网格/配置层
+- **MoM/BEM/SBR+ 扩展**: 矩量法（`crates/mom`，支持 CFIE/PMCHWT/ACA + **集总端口 S 参数扫频**）、Laplace P0 BEM（`crates/bem`）以及 SBR+PTD 高频射线追踪求解器（`crates/sbr`）均已实现，与 FEM 共享网格/配置层
+- **Touchstone I/O**: `crates/touchstone` 独立 crate，N 端口 `.sNp` 格式（RI/MA/DB）
 - **超集定位**: Palace 完全兼容 + MoM/BEM/SBR+/PTD/RCS 额外能力，不破坏 Palace 用户现有工作流
 
 ---
@@ -387,6 +389,8 @@ rem2/
 │   │       ├── singular.rs      # Duffy 自积分 + Sauter-Schwab 奇异积分
 │   │       ├── assemble.rs      # EFIE/CFIE Z 矩阵装配（nalgebra dense + rayon）
 │   │       ├── excitation.rs    # 平面波激励向量
+│   │       ├── port.rs          # MomLumpedPort：face_attrs 标签，RHS 激励，电流提取
+│   │       ├── sparams.rs       # S 矩阵计算（LU 扫频），Touchstone/CSV 输出
 │   │       ├── postprocess.rs   # RCS CSV + VTK 输出
 │   │       ├── mie.rs           # Mie 级数解析解（验证用）
 │   │       └── basis/
@@ -398,8 +402,11 @@ rem2/
 │   │       ├── lib.rs           # run() 入口
 │   │       ├── kernel.rs        # Laplace Green 函数及法向导数
 │   │       ├── assemble.rs      # V/K 矩阵装配（P0 基函数 + Duffy 对角）
-│   │       ├── solve.rs         # nalgebra LU 求解
-│   │       └── postprocess.rs   # 电容矩阵 + 电位 VTK 输出
+│   │       └── postprocess.rs   # 电容提取 + 电位 VTK 输出
+│   │
+│   ├── touchstone/              # Touchstone N 端口 I/O ✅ 已实现
+│   │   └── src/
+│   │       └── lib.rs           # write_snp()：RI/MA/DB 格式，选项行 # GHz S RI R 50
 │   │
 │   ├── sbr/                     # SBR+ 高频射线追踪 + PO ✅ 已实现
 │   │   ├── src/
@@ -409,6 +416,7 @@ rem2/
 │   │   │   ├── fresnel.rs       # Fresnel 系数 + PEC 镜面反射 + PO 感应电流
 │   │   │   ├── excitation.rs    # 平面波激励 + 孔径射线发射
 │   │   │   ├── po_integral.rs   # 远场 PO 积分 → RCS
+│   │   │   ├── ptd.rs           # PTD 边缘绕射：Ufimtsev 半平面衍射系数
 │   │   │   └── output.rs        # RCS CSV + 感应电流 VTK
 │   │   ├── src/bin/
 │   │   │   └── gen_sbr_meshes.rs # 球面/平板测试网格生成工具
@@ -609,22 +617,28 @@ members = [
     "crates/magnetostatic",
     "crates/eigenmode",
     "crates/driven",
+    "crates/transient",
+    "crates/touchstone",
+    "crates/mom",
+    "crates/bem",
+    "crates/sbr",
     "crates/result",
+    "crates/parallel",
     "crates/cli",
     "crates/wasm",
+    "crates/yew-app",
+    "vendor/rmetis",
 ]
 
 [workspace.dependencies]
-# FEM 基础库
-fem-core    = { git = "https://github.com/javagg/fem-rs.git" }
-fem-mesh    = { git = "https://github.com/javagg/fem-rs.git" }
-fem-element = { git = "https://github.com/javagg/fem-rs.git" }
-fem-linalg  = { git = "https://github.com/javagg/fem-rs.git" }
-fem-io      = { git = "https://github.com/javagg/fem-rs.git" }
-fem-space   = { git = "https://github.com/javagg/fem-rs.git" }
-fem-assembly= { git = "https://github.com/javagg/fem-rs.git" }
-fem-solver  = { git = "https://github.com/javagg/fem-rs.git" }
-fem-amg     = { git = "https://github.com/javagg/fem-rs.git" }
+# FEM 基础库（vendor/fem-rs submodule）
+fem-core    = { path = "vendor/fem-rs/crates/core" }
+fem-mesh    = { path = "vendor/fem-rs/crates/mesh" }
+fem-element = { path = "vendor/fem-rs/crates/element" }
+fem-linalg  = { path = "vendor/fem-rs/crates/linalg" }
+fem-space   = { path = "vendor/fem-rs/crates/space" }
+fem-assembly= { path = "vendor/fem-rs/crates/assembly" }
+fem-solver  = { path = "vendor/fem-rs/crates/solver" }
 
 # 配置解析
 serde       = { version = "1", features = ["derive"] }

@@ -1,6 +1,6 @@
 # REM vs Palace — 功能对比与已有能力说明
 
-> 版本：v1.9，2026-04-09  
+> 版本：v2.0，2026-04-10  
 > 描述 REM 当前已实现的全部功能，并与 Palace v0.16（2026-03-09）进行逐项对比。
 
 ---
@@ -9,14 +9,22 @@
 
 REM（Rust Electromagnetic）是一款对标 [Palace](https://github.com/awslabs/palace) 的电磁仿真工具，
 采用纯 Rust 实现，可编译至 `wasm32-unknown-unknown` 在浏览器中运行。
-当前版本 **v0.16.0** 覆盖 Palace 全部主要求解器，并额外提供 Palace 不具备的矩量法、BEM 和 SBR+ 高频求解器。
+当前版本 **v0.17.0** 覆盖 Palace 全部主要求解器，并额外提供 Palace 不具备的矩量法、BEM 和 SBR+ 高频求解器。
 
 ```
-所有测试：249 个（cargo test --workspace），零失败
-代码量：~16,900 行（20 个 crate，不含 vendor/）
+所有测试：1496 个（cargo test --workspace），零失败
+代码量：~23,800 行（19 个 crate，不含 vendor/）
 ```
 
-### 本版本新增（v0.14.0 → v0.15.0）
+### 本版本新增（v0.16.0 → v0.17.0）
+
+| 变更 | 说明 |
+|------|------|
+| **`rem-touchstone` 独立 crate** | `crates/touchstone`：`write_snp()` 支持 N 端口 Touchstone 格式（RI/MA/DB，选项行 `# GHz S RI R 50`）；`rem-driven` 迁移依赖至此 crate |
+| **MoM 集总端口激励** | `crates/mom/src/port.rs`：`MomLumpedPort`，按 `face_attrs` 标签过滤 RWG 基函数；`excitation_rhs()` 向量 RHS；`extract_current()` 端口电流提取 |
+| **MoM S 参数扫频** | `crates/mom/src/sparams.rs`：`compute_s_matrix()` 单频 N×N S 矩阵（每端口一次 LU 求解）；`s_param_sweep()` 多频扫描；`write_touchstone()` 输出 `.sNp`；`append_palace_csv()` 输出 `port-S.csv` |
+| **`SurfaceMesh.face_attrs`** | `crates/mom/src/surface_mesh.rs`：每面元物理组属性标签 `Vec<u32>`，从 `.msh` 边界元素 tag 填充；全部依赖 crate 已同步 |
+| **子模块更新** | `vendor/fem-rs`：0165357（discrete_op/space 扩展，新增 CI/benchmarks）；`vendor/rmsh`：修复 criterion workspace 依赖 + binary v2 msh 测试数据对齐新解析器格式 |
 
 | 变更 | 说明 |
 |------|------|
@@ -69,6 +77,7 @@ REM（Rust Electromagnetic）是一款对标 [Palace](https://github.com/awslabs
 | MPI 模拟（WASM）| ❌ | ✅ | jsmpi + Web Worker，WASM 多线程模拟 |
 | 网格分区（METIS） | ✅ | ✅ | `vendor/rmetis`，纯 Rust METIS 5.1.x 兼容实现 |
 | **矩量法 MoM（RWG+CFIE+PMCHWT+ACA）** | ❌ | ✅ | 全波散射；PEC（CFIE）+ 介质目标（PMCHWT）；ACA 矩阵压缩加速 |
+| **MoM 集总端口 + S 参数** | ❌ | ✅ | `MomLumpedPort`；face_attrs 端口标签；N×N S 矩阵扫频；Touchstone `.sNp` + Palace CSV 输出 |
 | **边界元法 BEM（Laplace P0）** | ❌ | ✅ | Laplace 外 Dirichlet 问题，电容提取 |
 | **SBR+ 高频射线追踪 + PO + PTD** | ❌ | ✅ | AABB BVH，两阶段 PO，PTD 边缘绕射修正；ka=10.5 误差 < 0.1 dB |
 | **RCS / 远场后处理** | ❌ | ✅ | PO 远场积分，rcs_sbr.csv，多方向扫描 |
@@ -546,5 +555,7 @@ MoM 介质目标                → Equation: "PMCHWT"，配合 Domains.Material
 | Q 因子导体损耗 | ✅ 已完成：R_s = √(ωμ₀/2σ) 微扰法；1/Q_c 表面积分；与介质 Q_d 合并 | — |
 | 电流偶极子源（Palace v0.16） | ✅ 已完成：`Domains.CurrentDipole`；Hertz 偶极子 RHS 注入最近自由节点 | — |
 | ROM 电路综合（Palace v0.16） | ✅ 已完成：Vector Fitting（Gustavsen-Semlyen）极点-留数拟合；`DrivenSolver.CircuitSynthesis: bool`；输出 Touchstone .s1p、极点-留数 CSV、SPICE .cir | — |
+| MoM 集总端口 + S 参数（v0.17） | ✅ 已完成：`MomLumpedPort`（face_attrs 标签过滤 RWG）；`port.rs` + `sparams.rs`；N×N S 矩阵 LU 扫频；Touchstone `.sNp` + `port-S.csv` 输出 | — |
+| `rem-touchstone` 独立 crate（v0.17） | ✅ 已完成：`write_snp()` N 端口 RI/MA/DB 格式；`rem-driven` 迁移依赖；`SurfaceMesh.face_attrs` 字段扩展全 crate | — |
 | p-FEM（P2+）实际应用 | order > 1 时打印警告并降级 P1；P2 装配需接入 fem-rs `H1Space` + `Assembler` API | 低 |
 | FMM 加速 | `FastSolver: "FMM"` 配置可识别，运行时返回错误；需实现快速多极子 | 低 |
