@@ -896,6 +896,16 @@ pub struct MomSolverConfig {
     /// Incident plane wave polarization: "theta" | "phi" | "x" | "y" | "z"
     #[serde(rename = "Polarization", default = "default_polarization")]
     pub polarization: String,
+
+    /// Lumped ports for S-parameter extraction.  When non-empty the solver
+    /// runs one MoM solve per port and outputs S-matrix + Touchstone file.
+    /// When empty, the existing plane-wave + RCS path is used.
+    #[serde(rename = "Ports", default)]
+    pub ports: Vec<MomPort>,
+
+    /// Global reference impedance Z₀ [Ω] for S-parameter normalisation.
+    #[serde(rename = "RefImpedance", default = "default_ref_impedance")]
+    pub ref_impedance: f64,
 }
 
 fn default_mom_equation() -> String { "CFIE".to_string() }
@@ -904,6 +914,29 @@ fn default_cfie_alpha()    -> f64    { 0.5 }
 fn default_singular_tol()  -> f64    { 1.0e-6 }
 fn default_fast_solver()   -> String { "Direct".to_string() }
 fn default_polarization()  -> String { "theta".to_string() }
+fn default_ref_impedance() -> f64    { 50.0 }
+fn default_port_direction() -> String { "x".to_string() }
+
+/// A lumped port definition for MoM S-parameter extraction.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct MomPort {
+    /// Port index (1-based), matches Touchstone port ordering.
+    #[serde(rename = "Index")]
+    pub index: u32,
+
+    /// Physical-group attribute IDs that define the port surface.
+    #[serde(rename = "Attributes", default)]
+    pub attributes: Vec<u32>,
+
+    /// Dominant E-field direction: "x" | "y" | "z".  Determines how
+    /// the RHS excitation voltage is projected onto the port RWG functions.
+    #[serde(rename = "Direction", default = "default_port_direction")]
+    pub direction: String,
+
+    /// Per-port reference impedance [Ω].  When None, uses `MomSolverConfig::ref_impedance`.
+    #[serde(rename = "Impedance", default)]
+    pub impedance: Option<f64>,
+}
 
 // ---------------------------------------------------------------------------
 // SBR+ solver config (REM extension — ignored by Palace)

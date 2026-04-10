@@ -197,3 +197,50 @@ fn scalar_material_still_works() {
     assert!((mat.permittivity - 2.08).abs() < 1e-9);
     assert!((mat.loss_tangent - 4.0e-4).abs() < 1e-12);
 }
+
+// ── MoM port config ──────────────────────────────────────────────────────────
+
+#[test]
+fn mom_config_with_ports_parses() {
+    let json = r#"{
+        "Problem": { "Type": "MoM" },
+        "Model":   { "Mesh": "t.msh" },
+        "Solver": {
+            "MoM": {
+                "FreqMin": 1e9, "FreqMax": 2e9, "FreqStep": 1e9,
+                "RefImpedance": 75.0,
+                "Ports": [
+                    { "Index": 1, "Attributes": [10], "Direction": "x" },
+                    { "Index": 2, "Attributes": [11] }
+                ]
+            }
+        }
+    }"#;
+    let cfg = load_config_from_str(json, ConfigFormat::Json).unwrap();
+    let mom = cfg.solver.mom.as_ref().unwrap();
+    assert!((mom.ref_impedance - 75.0).abs() < 1e-12);
+    assert_eq!(mom.ports.len(), 2);
+    assert_eq!(mom.ports[0].index, 1);
+    assert_eq!(mom.ports[0].attributes, vec![10u32]);
+    assert_eq!(mom.ports[0].direction, "x");
+    assert_eq!(mom.ports[1].index, 2);
+    assert_eq!(mom.ports[1].direction, "x"); // default
+    assert!(mom.ports[1].impedance.is_none());
+}
+
+#[test]
+fn mom_config_no_ports_defaults() {
+    let json = r#"{
+        "Problem": { "Type": "MoM" },
+        "Model":   { "Mesh": "t.msh" },
+        "Solver": {
+            "MoM": {
+                "FreqMin": 1e9, "FreqMax": 2e9, "FreqStep": 1e9
+            }
+        }
+    }"#;
+    let cfg = load_config_from_str(json, ConfigFormat::Json).unwrap();
+    let mom = cfg.solver.mom.as_ref().unwrap();
+    assert!((mom.ref_impedance - 50.0).abs() < 1e-12); // default
+    assert!(mom.ports.is_empty());
+}
