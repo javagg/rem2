@@ -26,6 +26,7 @@ pub mod mie;
 pub mod aca;
 pub mod pmchwt;
 pub mod port;
+pub mod sparams;
 
 use rem_config::{PalaceConfig, MomSolverConfig};
 use rem_core::RemResult;
