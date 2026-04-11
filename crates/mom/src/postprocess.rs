@@ -1,8 +1,9 @@
 //! Post-processing: RCS computation and CSV output.
 
 use crate::surface_mesh::SurfaceMesh;
+use crate::green::green3d;
 use num_complex::Complex64;
-use rem_core::{RemResult, ETA0};
+use rem_core::{NearFieldPoint, RemResult, ETA0, MU0};
 use std::f64::consts::PI;
 use std::path::Path;
 
@@ -179,6 +180,107 @@ pub fn write_rcs(
 }
 
 // ---------------------------------------------------------------------------
+// Near-field export
+// ---------------------------------------------------------------------------
+
+/// Compute near-field (E and H) at the centroids of all surface faces.
+///
+/// Uses the electric field integral representation for PEC:
+///   E(r) = -jωμ A(r) - ∇(∇·A(r)) / (jωε₀)
+/// where A(r) = Σ_n I_n ∫ G(r,r') f_n(r') dS'
+///
+/// We evaluate A at face centroids using centroid quadrature and approximate
+/// E ≈ -jωμ A (the scalar-potential term is neglected at the centroid level).
+/// H is obtained from the surface current via n̂ × J_s / η₀.
+pub fn compute_near_field(
+    currents: &[Complex64],
+    surf: &SurfaceMesh,
+    k: f64,
+) -> Vec<NearFieldPoint> {
+    use crate::basis::rwg::generate_rwg_bases;
+
+    let omega = k * rem_core::C0;
+    let jw_mu = Complex64::new(0.0, omega * MU0);
+
+    let bases = generate_rwg_bases(surf);
+    let n_faces = surf.faces.len();
+    let mut points: Vec<NearFieldPoint> = Vec::with_capacity(n_faces);
+
+    for face_idx in 0..n_faces {
+        let face = &surf.faces[face_idx];
+        let r = &face.centroid;
+
+        // Vector potential A = Σ_n I_n ∫ G(r,r') f_n(r') dS'
+        let mut ax = Complex64::ZERO;
+        let mut ay = Complex64::ZERO;
+        let mut az = Complex64::ZERO;
+
+        for (n, base) in bases.iter().enumerate() {
+            let i_n = currents[n];
+            for &(fi, in_plus) in &[(base.plus_face, true), (base.minus_face, false)] {
+                let src_face = &surf.faces[fi];
+                let g = green3d(r, &src_face.centroid, k);
+                if g.norm() < 1e-300 {
+                    continue;
+                }
+                let f_n = base.eval(&src_face.centroid, surf, in_plus);
+                let contrib = i_n * g * src_face.area;
+                ax += f_n[0] * contrib;
+                ay += f_n[1] * contrib;
+                az += f_n[2] * contrib;
+            }
+        }
+
+        // E ≈ -jωμ A
+        let ex = -jw_mu * ax;
+        let ey = -jw_mu * ay;
+        let ez = -jw_mu * az;
+
+        // Surface current at this face: J_s = Σ_{n: n touches face} I_n · f_n(r)
+        let mut jx = Complex64::ZERO;
+        let mut jy = Complex64::ZERO;
+        let mut jz = Complex64::ZERO;
+        for (n, base) in bases.iter().enumerate() {
+            let i_n = currents[n];
+            for &(fi, in_plus) in &[(base.plus_face, true), (base.minus_face, false)] {
+                if fi == face_idx {
+                    let f_n = base.eval(r, surf, in_plus);
+                    jx += i_n * f_n[0];
+                    jy += i_n * f_n[1];
+                    jz += i_n * f_n[2];
+                }
+            }
+        }
+        // H = n̂ × Re(J_s) / η₀  (real-valued for PEC surface)
+        let nn = &face.normal;
+        let hx = (nn[1]*jz.re - nn[2]*jy.re) / ETA0;
+        let hy = (nn[2]*jx.re - nn[0]*jz.re) / ETA0;
+        let hz = (nn[0]*jy.re - nn[1]*jx.re) / ETA0;
+
+        points.push(NearFieldPoint::from_complex(
+            r[0], r[1], r[2],
+            ex, ey, ez,
+            Complex64::new(hx, 0.0),
+            Complex64::new(hy, 0.0),
+            Complex64::new(hz, 0.0),
+        ));
+    }
+
+    points
+}
+
+/// Write near-field data to CSV.
+pub fn write_near_field_csv(
+    output_dir: &Path,
+    points: &[NearFieldPoint],
+    output_file: Option<&str>,
+) -> RemResult<()> {
+    let filename = output_file.unwrap_or("postpro/near_field.csv");
+    let path = output_dir.join(filename);
+    rem_core::write_near_field_csv(&path, points)
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -196,6 +298,7 @@ mod tests {
             edges: vec![],
             boundary_edges: vec![],
             face_attrs: vec![0],
+            global_node_ids: vec![],
         };
         let currents = vec![Complex64::new(1.0, 0.5)];
         (surf, currents)

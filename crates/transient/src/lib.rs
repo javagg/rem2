@@ -26,6 +26,7 @@
 //!   - `paraview/transient_NNNN.vtk`: solution field at each SaveStep
 
 pub mod output;
+pub mod near_field;
 
 use rem_config::PalaceConfig;
 use rem_core::{CsrMatrix, RemError, RemResult, TripletMatrix, solve_pcg};
@@ -146,9 +147,21 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
     let exc_freq_hz = td_cfg.excitation_freq * 1.0e9;
     let exc_sigma_s = (td_cfg.excitation_width * 1.0e-9) / 2.0;
 
+    // NearFieldSource: load once if configured
+    let nf_src_path = td_cfg.near_field_source.clone();
+    if let Some(ref p) = nf_src_path {
+        log::info!("[REM] Transient: NearFieldSource configured from {}", p);
+    }
+
     // Helper: scale the static rhs_bc by excitation amplitude at time t
     let scaled_rhs = |base: &Vec<f64>, t: f64| -> Vec<f64> {
-        let amp = excitation_amplitude(t, exc_kind, exc_freq_hz, exc_sigma_s);
+        let mut amp = excitation_amplitude(t, exc_kind, exc_freq_hz, exc_sigma_s);
+        // If NearFieldSource is set, modulate by near-field excitation factor
+        if let Some(ref p) = nf_src_path {
+            if let Ok(factor) = near_field::near_field_excitation(mesh, Path::new(p), excited_port, t) {
+                amp *= factor;
+            }
+        }
         base.iter().map(|&x| x * amp).collect()
     };
 
@@ -236,6 +249,13 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
                 #[cfg(not(target_arch = "wasm32"))]
                 if step % save_step == 0 {
                     output::write_field_vtk(out_dir, mesh, &v, step + 1)?;
+                    if let Some(nf_cfg) = &config.postprocessing.near_field {
+                        let pts = near_field::export_near_field(mesh, &v, nf_cfg)?;
+                        if !pts.is_empty() {
+                            let nf_path = Path::new(out_dir).join(nf_cfg.output_file.as_deref().unwrap_or("postpro/near_field_transient.csv"));
+                            near_field::append_near_field_csv(&nf_path, &pts, t)?;
+                        }
+                    }
                 }
             }
         }
@@ -356,6 +376,13 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
                     #[cfg(not(target_arch = "wasm32"))]
                     if step % save_step == 0 {
                         output::write_field_vtk(out_dir, mesh, &v, step + 1)?;
+                        if let Some(nf_cfg) = &config.postprocessing.near_field {
+                            let pts = near_field::export_near_field(mesh, &v, nf_cfg)?;
+                            if !pts.is_empty() {
+                                let nf_path = Path::new(out_dir).join(nf_cfg.output_file.as_deref().unwrap_or("postpro/near_field_transient.csv"));
+                                near_field::append_near_field_csv(&nf_path, &pts, t)?;
+                            }
+                        }
                     }
                     step += 1;
                 }
@@ -406,6 +433,13 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
                 #[cfg(not(target_arch = "wasm32"))]
                 if step % save_step == 0 {
                     output::write_field_vtk(out_dir, mesh, &v, step + 1)?;
+                    if let Some(nf_cfg) = &config.postprocessing.near_field {
+                        let pts = near_field::export_near_field(mesh, &v, nf_cfg)?;
+                        if !pts.is_empty() {
+                            let nf_path = Path::new(out_dir).join(nf_cfg.output_file.as_deref().unwrap_or("postpro/near_field_transient.csv"));
+                            near_field::append_near_field_csv(&nf_path, &pts, t)?;
+                        }
+                    }
                 }
             }
         }
@@ -502,7 +536,7 @@ mod tests {
         ];
         let mut boundary_tags: HashMap<u32, BoundaryTag> = HashMap::new();
         boundary_tags.insert(10, BoundaryTag::Ground);
-        boundary_tags.insert(11, BoundaryTag::LumpedPort { index: 1, r: 0.0 });
+        boundary_tags.insert(11, BoundaryTag::LumpedPort { index: 1, r: 0.0, l: 0.0, c: 0.0 });
 
         RemMesh {
             nodes, volume_elements, boundary_elements,

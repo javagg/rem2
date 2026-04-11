@@ -46,6 +46,7 @@ mod tests {
             edges: vec![],
             boundary_edges: vec![[0,1],[1,2],[2,0]],
             face_attrs: vec![0],
+            global_node_ids: vec![],
         }
     }
 

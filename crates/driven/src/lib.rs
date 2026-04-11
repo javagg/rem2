@@ -24,6 +24,7 @@
 //!   - S11 now carries both real and imaginary parts; |S11| and phase are correct.
 
 pub mod far_field;
+pub mod near_field;
 pub mod output;
 pub mod port_modal;
 pub mod rom;
@@ -565,6 +566,25 @@ fn run_frequency_sweep(
                     log::warn!("f={freq:.3e} Hz is below WavePort cutoff (evanescent); using φ=0");
                     collect_dirichlet_dofs(mesh, excited_port, 0.0)
                 }
+            } else if let Some(nf_path) = &drv_cfg.near_field_source {
+                // Near-field linked source: interpolate E from CSV onto port nodes
+                let nf_path = Path::new(nf_path);
+                let port_tags = {
+                    let mut s = std::collections::HashSet::new();
+                    for belem in &mesh.boundary_elements {
+                        match mesh.boundary_tags.get(&belem.tag) {
+                            Some(BoundaryTag::LumpedPort { index, .. }) => {
+                                if Some(*index) == excited_port { s.insert(belem.tag); }
+                            }
+                            Some(BoundaryTag::WavePort { index }) => {
+                                if Some(*index) == excited_port { s.insert(belem.tag); }
+                            }
+                            _ => {}
+                        }
+                    }
+                    s
+                };
+                near_field::build_near_field_dirichlet(mesh, nf_path, &port_tags)?
             } else {
                 collect_dirichlet_dofs(mesh, excited_port, 1.0)
             };
@@ -807,6 +827,18 @@ fn run_frequency_sweep(
     if let Some(ff_cfg) = &config.solver.far_field {
         if !peak_phi.is_empty() {
             far_field_pattern = far_field::compute_far_field(mesh, &peak_phi, peak_freq_hz, ff_cfg);
+        }
+    }
+
+    // Near-field export (if configured)
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(nf_cfg) = &config.postprocessing.near_field {
+        if !peak_phi.is_empty() {
+            log::info!("[REM] Exporting near-field data on {} boundary attributes", nf_cfg.attributes.len());
+            let nf_points = near_field::export_near_field(mesh, &peak_phi, nf_cfg)?;
+            if !nf_points.is_empty() {
+                near_field::write_near_field(Path::new(out_dir), &nf_points, nf_cfg)?;
+            }
         }
     }
 

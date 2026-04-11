@@ -1,0 +1,37 @@
+{
+  "Problem": {
+    "Type": "Driven"
+  },
+  "Model": {
+    "Mesh": "../../meshes/coaxial.msh"
+  },
+  "Boundaries": {
+    "PEC": {
+      "Attributes": [1]
+    },
+    "LumpedPort": {
+      "Items": [
+        {
+          "Index": 1,
+          "Attributes": [10],
+          "Direction": [0, 0, 1],
+          "R": 50.0
+        }
+      ]
+    }
+  },
+  "Postprocessing": {
+    "NearField": {
+      "Attributes": [2],
+      "OutputFile": "postpro/near_field.csv"
+    }
+  },
+  "Solver": {
+    "Driven": {
+      "FMin": 1000000000.0,
+      "FMax": 2000000000.0,
+      "FStep": 1000000000.0,
+      "SolveOrder": 1
+    }
+  }
+}

@@ -1,7 +1,7 @@
 # REM 电磁仿真能力文档
 
 > 版本：v1.0，2026-04-10  
-> REM 版本：**v0.17.0**（1496 个测试全部通过，~23,800 行代码，19 个 crate）  
+> REM 版本：**v0.17.1**（1509 个测试全部通过，~24,100 行代码，19 个 crate）  
 > 对标基准：Palace v0.16（2026-03-09）、Sonnet Suite 19
 
 ---
@@ -58,6 +58,7 @@ v0.17.0 覆盖 Palace 全部主要求解器，并额外提供 Palace 不具备�
 | **Drude-Lorentz 频变材料** | ✅ | ✅ | 每频点复数 ε(ω) 修正；与静态损耗互不重叠 |
 | **Floquet 周期边界条件（Γ 点）** | ✅ | ✅ | TripletMatrix 节点重映射；几何平移匹配；仅实数（非零波矢待复数支持）|
 | **近远场变换（Kirchhoff 积分）** | ❌ | ✅ | Driven 求解器后处理；`far_field.csv`；WASM UI 可导出 |
+| **近场源导入/导出（Linked Source）** | ❌ | ✅ | 15 列 CSV 格式（x,y,z,E/H 复数分量），支持 MoM/Driven/Transient 双向耦合；IDW 空间插值 |
 | **快照 ROM 频率扫描加速** | ✅（自适应 ROM） | ✅ | `DrivenSolver.RomOrder`；正交归一化快照基；r×r 缩减系统；单端口可用 |
 | **导体 Q 因子（R_s 微扰法）** | ✅ | ✅ | 表面电阻 R_s = √(ωμ₀/2σ)；微扰积分 1/Q_c；与介质 Q_d 合并 |
 | **Touchstone I/O（独立 crate）** | ❌ | ✅ | `rem-touchstone`：N 端口 RI/MA/DB 格式，`write_snp()`，v0.17.0 新增 |
@@ -177,6 +178,9 @@ B = ∇×A：Bx = ∂Az/∂y − ∂Ay/∂z,  By = ∂Ax/∂z − ∂Az/∂x,  B
 - `postpro/port-S.csv`：S 参数（f, Re(S11), Im(S11), |S11| dB）
 - `driven_NNNN.vtk`：各频率步场量
 - `far_field.csv`：近远场变换辐射方向图（需 `Solver.FarField` 配置）
+- `postpro/near_field.csv`：近场 E 场导出（需 `Postprocessing.NearField` 配置）
+
+**近场源激励**：配置 `NearFieldSource` 后，从 CSV 读取 E 场数据，插值到端口边界节点，替代默认 Dirichlet 值。
 
 ---
 
@@ -191,6 +195,11 @@ B = ∇×A：Bx = ∂Az/∂y − ∂Ay/∂z,  By = ∂Ax/∂z − ∂Az/∂x,  B
 | GeneralizedAlpha | 2阶 | 无条件稳定 | 一般时域仿真（Palace 默认方案） |
 | IMEX-ARK3(2)4L[2]SA | 3阶 | 自适应步长 | Kennedy & Carpenter 2003 |
 | Explicit RK4 | 4阶 | 显式（需满足 CFL）| 高精度固定步长 |
+
+**近场导出/导入**：
+- `Postprocessing.NearField`：在每个 save step 导出 E = -grad(v) 到时间序列 CSV
+- `Transient.NearFieldSource`：读取 CSV 作为时间相关激励，替代默认 `excitation_amplitude()`
+- 支持 time_s 列，多时间点自动插值匹配
 
 ---
 
@@ -211,8 +220,8 @@ B = ∇×A：Bx = ∂Az/∂y − ∂Ay/∂z,  By = ∂Ax/∂z − ∂Az/∂x,  B
 | `green.rs` | 3D Helmholtz Green 函数及法向导数 |
 | `singular.rs` | Duffy 自积分 + Sauter-Schwab 奇异积分 |
 | `assemble.rs` | EFIE/MFIE/CFIE Z 矩阵装配；内置 LU、GMRES、ACA+GMRES 求解器 |
-| `excitation.rs` | 平面波激励向量（θ/φ 极化，任意入射方向） |
-| `postprocess.rs` | RCS 远场积分，VTK 表面电流输出 |
+| `excitation.rs` | 平面波激励向量（θ/φ 极化，任意入射方向）**+ 近场源 RHS 构建（IDW 插值）** |
+| `postprocess.rs` | RCS 远场积分，VTK 表面电流输出 **；近场 E/H 导出（`compute_near_field`）** |
 | `mie.rs` | Mie 级数解析解（验证用） |
 | `basis/rwg.rs` | RWG 基函数评估 + 散度计算 |
 | `aca.rs` | **部分主元 ACA**：Z ≈ U·V^T（复对称矩阵）；O(N·r) 矩阵向量积 |
@@ -473,10 +482,21 @@ REM 完全兼容 Palace JSON/YAML 配置文件格式（含 v0.16 新关键字）
 ```json
 "Solver": {
   "MoM":  { ... },   // MoM 求解器参数
-  "SBR":  { ... }    // SBR+ 求解器参数
+  "SBR":  { ... },    // SBR+ 求解器参数
+  "Driven": {
+    "NearFieldSource": "path/to/near_field.csv",  // 近场源激励
+    "NearFieldAttributes": [2]                     // 应用边界属性
+  },
+  "Transient": {
+    "NearFieldSource": "path/to/near_field.csv"   // 近场源激励（时间相关）
+  }
 },
 "Postprocessing": {
-  "RCS":  { ... }    // 远场/RCS 输出配置
+  "RCS":  { ... },    // 远场/RCS 输出配置
+  "NearField": {      // 近场导出（15列CSV格式）
+    "Attributes": [2],
+    "OutputFile": "postpro/near_field.csv"
+  }
 }
 ```
 
@@ -555,6 +575,7 @@ MoM S 参数提取              → Problem.Type = "MoM"，配 Ports 列表（v0
 
 | 版本 | 亮点 |
 |------|------|
+| v0.17.1 | **近场源 Linked Source**（NearField Export + Import）；15 列 CSV 格式（x,y,z,E/H 复数分量）；MoM/Driven/Transient 双向耦合；IDW 空间插值；`examples/near_field/` 示例配置 |
 | v0.17.0 | `rem-touchstone` 独立 crate；MoM 集总端口 + N×N S 参数 + Touchstone；子模块 fem-rs/rmsh 更新 |
 | v0.16.0 | ROM Vector Fitting 电路综合（SPICE .cir）；完整 N×N S 矩阵；近远场变换；快照 ROM |
 | v0.15.0 | 各向异性 ε/μ 张量；导体 Q 因子；电流偶极子激励；Floquet 周期边界；Drude-Lorentz 频变材料；JSON Schema 校验 |

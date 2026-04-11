@@ -85,7 +85,7 @@ fn build_mesh(nodes: Vec<[f64;3]>, fidx: Vec<[usize;3]>) -> SurfaceMesh {
     }
     patch_edge_lengths(&mut edges, &nodes);
     let n_faces = faces.len();
-    SurfaceMesh { nodes, faces, edges, boundary_edges:be, face_attrs: vec![0; n_faces] }
+    SurfaceMesh { nodes, faces, edges, boundary_edges:be, face_attrs: vec![0; n_faces], global_node_ids: vec![] }
 }
 
 /// Sphere capacitance test using first-kind BIE.

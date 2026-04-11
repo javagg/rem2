@@ -446,7 +446,7 @@ mod tests {
             length: 1.118,  // approx sqrt(1² + 1²) / sqrt(2)
         }];
         let boundary_edges = vec![[0usize, 1], [1, 2], [2, 3], [3, 0]];
-        SurfaceMesh { nodes, faces, edges, boundary_edges, face_attrs: vec![0, 0] }
+        SurfaceMesh { nodes, faces, edges, boundary_edges, face_attrs: vec![0, 0], global_node_ids: vec![] }
     }
 
     #[test]

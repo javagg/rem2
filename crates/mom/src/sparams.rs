@@ -172,6 +172,7 @@ mod tests {
             nodes, faces, edges,
             boundary_edges: vec![[0,1],[1,2],[2,3],[3,0]],
             face_attrs: vec![attr, attr],
+            global_node_ids: vec![],
         }
     }
 

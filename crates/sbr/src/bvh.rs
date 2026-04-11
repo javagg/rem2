@@ -376,6 +376,7 @@ mod tests {
             edges: vec![],
             boundary_edges: vec![],
             face_attrs: vec![0],
+            global_node_ids: vec![],
         };
         Bvh::build(Arc::new(surf))
     }

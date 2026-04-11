@@ -259,7 +259,7 @@ mod tests {
         }
         patch_edge_lengths(&mut edges, &nodes);
         let n_faces = faces.len();
-        SurfaceMesh { nodes, faces, edges, boundary_edges:be, face_attrs: vec![0; n_faces] }
+        SurfaceMesh { nodes, faces, edges, boundary_edges:be, face_attrs: vec![0; n_faces], global_node_ids: vec![] }
     }
 
     #[test]

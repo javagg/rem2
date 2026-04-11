@@ -261,7 +261,7 @@ mod tests {
         ];
         let mut boundary_tags: HashMap<u32, BoundaryTag> = HashMap::new();
         boundary_tags.insert(10, BoundaryTag::Ground);
-        boundary_tags.insert(11, BoundaryTag::LumpedPort { index: 1, r: 0.0 });
+        boundary_tags.insert(11, BoundaryTag::LumpedPort { index: 1, r: 0.0, l: 0.0, c: 0.0 });
 
         RemMesh {
             nodes,

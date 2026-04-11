@@ -121,11 +121,20 @@ pub fn run_with_mesh(
 
         let k = 2.0 * PI * freq / rem_core::C0;
 
-        // Incident plane wave
-        let wave = excitation::PlaneWave {
-            theta_inc: mom_cfg.theta_inc_deg.to_radians(),
-            phi_inc:   mom_cfg.phi_inc_deg.to_radians(),
-            pol:       mom_cfg.polarization.clone(),
+        // Incident plane wave OR near-field source
+        let rhs = if let Some(nf_path) = &mom_cfg.near_field_source {
+            let nf_path = std::path::Path::new(nf_path);
+            log::info!("MoM: loading near-field source from {}", nf_path.display());
+            let nf_points = rem_core::read_near_field_csv(nf_path)?;
+            log::info!("MoM: loaded {} near-field points", nf_points.len());
+            excitation::near_field_rhs(&surf, k, &nf_points, &mom_cfg.basis)
+        } else {
+            let wave = excitation::PlaneWave {
+                theta_inc: mom_cfg.theta_inc_deg.to_radians(),
+                phi_inc:   mom_cfg.phi_inc_deg.to_radians(),
+                pol:       mom_cfg.polarization.clone(),
+            };
+            excitation::plane_wave_rhs_general(&surf, k, &wave, &mom_cfg.basis)
         };
 
         // PMCHWT path: dielectric target (J + M unknowns, 2N×2N system)
@@ -135,6 +144,15 @@ pub fn run_with_mesh(
                 .unwrap_or((2.0, 1.0));
             let mat = pmchwt::DielectricMaterial::new(eps_r, mu_r);
             log::info!("MoM PMCHWT: ε_r={eps_r:.2}, μ_r={mu_r:.2}, f={freq:.3e} Hz");
+            // PMCHWT path: for now use plane wave excitation only
+            let wave = excitation::PlaneWave {
+                theta_inc: mom_cfg.theta_inc_deg.to_radians(),
+                phi_inc:   mom_cfg.phi_inc_deg.to_radians(),
+                pol:       mom_cfg.polarization.clone(),
+            };
+            if mom_cfg.near_field_source.is_some() {
+                log::warn!("MoM: NearFieldSource is ignored for PMCHWT equation; using plane wave");
+            }
             let (j_coeffs, _m_coeffs) = pmchwt::solve_pmchwt(
                 &surf, mat, freq, &wave, &quad, &mom_cfg.fast_solver,
             )?;
@@ -150,7 +168,6 @@ pub fn run_with_mesh(
                     assemble::assemble_cfie_rwg(&surf, &bases, freq, mom_cfg.alpha, &quad, mom_cfg.singular_tol)
                 }
             }?;
-            let rhs = excitation::plane_wave_rhs_general(&surf, k, &wave, &mom_cfg.basis);
             match mom_cfg.fast_solver.to_uppercase().as_str() {
                 "GMRES" => assemble::gmres_solve(&z_mat, &rhs)?,
                 "ACA" => {
@@ -186,6 +203,12 @@ pub fn run_with_mesh(
                 .join("postpro")
                 .join(format!("surface_current_{:.3e}Hz.vtk", freq));
             postprocess::write_surface_vtk(&vtk_path, &currents, &surf)?;
+
+            // Near-field export (if configured)
+            if let Some(nf_cfg) = &config.postprocessing.near_field {
+                let nf_points = postprocess::compute_near_field(&currents, &surf, k);
+                postprocess::write_near_field_csv(output_dir, &nf_points, nf_cfg.output_file.as_deref())?;
+            }
         }
 
         freq += freq_step;

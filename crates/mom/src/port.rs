@@ -154,6 +154,7 @@ mod tests {
             edges,
             boundary_edges: vec![[0,1],[1,2],[2,3],[3,0]],
             face_attrs: vec![1, 1],   // both faces tagged as attr 1
+            global_node_ids: vec![],
         }
     }
 

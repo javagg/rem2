@@ -156,6 +156,58 @@ fn rwg_rhs(surf: &SurfaceMesh, k: f64, wave: &PlaneWave) -> Vec<Complex64> {
 }
 
 // ---------------------------------------------------------------------------
+// Near-field source excitation
+// ---------------------------------------------------------------------------
+
+/// Build RHS vector from near-field data by interpolating E onto RWG basis
+/// functions.
+///
+/// For each RWG basis function n:
+///   V_n = -∫ f_n(r) · E_nf(r) dS
+///
+/// E_nf(r) is obtained by inverse-distance-weighted interpolation from the
+/// nearest 3 near-field points.
+pub fn near_field_rhs(
+    surf: &SurfaceMesh,
+    _k: f64,
+    nf_points: &[rem_core::NearFieldPoint],
+    basis: &str,
+) -> Vec<num_complex::Complex64> {
+    use rem_core::interpolate_e_vec_at;
+
+    match basis.to_lowercase().as_str() {
+        "pulse" => {
+            surf.faces.iter().map(|face| {
+                let r = &face.centroid;
+                let [ex, ey, ez] = interpolate_e_vec_at([r[0], r[1], r[2]], nf_points, 3);
+                // Project E onto face normal direction (simplified tangential coupling)
+                let nn = &face.normal;
+                let e_tan = ex * nn[0] + ey * nn[1] + ez * nn[2];
+                -e_tan * face.area
+            }).collect()
+        }
+        _ => {
+            use crate::basis::rwg::generate_rwg_bases;
+            let bases = generate_rwg_bases(surf);
+
+            bases.iter().map(|b| {
+                let mut val = num_complex::Complex64::ZERO;
+                for &(face_idx, in_plus) in &[(b.plus_face, true), (b.minus_face, false)] {
+                    let face = &surf.faces[face_idx];
+                    let r = &face.centroid;
+                    let [ex, ey, ez] = interpolate_e_vec_at([r[0], r[1], r[2]], nf_points, 3);
+                    let f_n = b.eval(r, surf, in_plus);
+                    let dot = ex.re * f_n[0] + ey.re * f_n[1] + ez.re * f_n[2];
+                    // Use real part of E for the coupling (simplified; full treatment would use complex E)
+                    val += num_complex::Complex64::new(dot, 0.0) * face.area;
+                }
+                -val
+            }).collect()
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

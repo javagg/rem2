@@ -34,6 +34,7 @@
 | **边界元法 BEM (Laplace P0)** | ❌ | ❌ | ❌ | ✅ **已实现** |
 | **SBR+ 高频射线追踪 + PO + PTD** | ❌ | ❌ | ❌ | ✅ **已实现** |
 | RCS / 远场后处理 | ❌ | ❌ | ❌ | ✅ **已实现** |
+| **近场源导入/导出（Linked Source）** | ❌ | ❌ | ❌ | ✅ **已实现 v0.17.1** |
 
 ### 1.2 核心差异化特性
 
@@ -795,6 +796,16 @@ REM v1.0 在 `Problem.Type` 中新增以下值，Palace 工作流完全不受影
 | `RCS.PhiDeg` | 远场 φ 角列表（度） |
 | `RCS.ThetaDeg` | 远场 θ 角范围，支持 `"0:5:180"` 格式 |
 | `NearField.Attributes` | 近场计算面的物理组 ID |
+| `NearField.OutputFile` | 输出文件路径（默认: "postpro/near_field.csv"） |
+
+**求解器近场源激励**：
+
+| 字段 | 求解器 | 说明 |
+|------|--------|------|
+| `Solver.MoM.NearFieldSource` | MoM | 从 CSV 读取近场，IDW 插值到 RWG 基函数 |
+| `Solver.Driven.NearFieldSource` | Driven | 从 CSV 插值到端口边界节点，替代默认 Dirichlet 值 |
+| `Solver.Driven.NearFieldAttributes` | Driven | 应用近场激励的边界属性 ID |
+| `Solver.Transient.NearFieldSource` | Transient | 从 CSV 读取时间相关近场，调制激励振幅 |
 
 ### 7.3 配置兼容性保证矩阵
 

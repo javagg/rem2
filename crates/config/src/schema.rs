@@ -703,6 +703,12 @@ pub struct DrivenSolver {
     /// Number of poles defaults to min(N/4, 16); use `RomOrder` to override.
     #[serde(rename = "CircuitSynthesis", default)]
     pub circuit_synthesis: bool,
+
+    /// Near-field source file path for linked-source excitation.  When set,
+    /// the Dirichlet BC values on excited port boundaries are interpolated
+    /// from the CSV near-field data instead of using a uniform φ=1.
+    #[serde(rename = "NearFieldSource", default)]
+    pub near_field_source: Option<String>,
 }
 
 /// Palace `Driven.Samples` item.
@@ -756,6 +762,12 @@ pub struct TransientSolver {
     /// Palace `ExcitationWidth` [ns] — accepted, not fully implemented.
     #[serde(rename = "ExcitationWidth", default)]
     pub excitation_width: f64,
+
+    /// Near-field source file path for linked-source excitation.  When set,
+    /// the time-domain excitation envelope is replaced by the near-field
+    /// data interpolated at each time step.
+    #[serde(rename = "NearFieldSource", default)]
+    pub near_field_source: Option<String>,
 }
 
 fn default_transient_type() -> String { "GeneralizedAlpha".to_string() }
@@ -933,6 +945,13 @@ pub struct MomSolverConfig {
     /// Global reference impedance Z₀ [Ω] for S-parameter normalisation.
     #[serde(rename = "RefImpedance", default = "default_ref_impedance")]
     pub ref_impedance: f64,
+
+    /// Near-field source file path. When set, the RHS is built from the
+    /// near-field CSV data instead of the plane-wave model.  The file
+    /// contains spatially sampled E/H fields exported from a previous
+    /// simulation, enabling multi-solver near-field coupling.
+    #[serde(rename = "NearFieldSource", default)]
+    pub near_field_source: Option<String>,
 }
 
 fn default_mom_equation() -> String { "CFIE".to_string() }
@@ -1320,6 +1339,34 @@ pub struct Postprocessing {
     /// Far-field RCS pattern output
     #[serde(rename = "RCS", default)]
     pub rcs: Option<RcsConfig>,
+
+    /// Near-field data export on specified boundary surfaces.
+    #[serde(rename = "NearField", default)]
+    pub near_field: Option<NearFieldExportConfig>,
+}
+
+/// Configuration for near-field export.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct NearFieldExportConfig {
+    /// Boundary attribute IDs whose surface/boundary faces will have E/H fields exported.
+    #[serde(rename = "Attributes", default)]
+    pub attributes: Vec<u32>,
+
+    /// Output file path relative to output directory (default: "postpro/near_field.csv").
+    #[serde(rename = "OutputFile", default)]
+    pub output_file: Option<String>,
+}
+
+/// Configuration for near-field source import (used as excitation).
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct NearFieldSourceConfig {
+    /// Path to a near-field CSV file exported from a previous simulation.
+    #[serde(rename = "File")]
+    pub file: String,
+
+    /// Boundary attribute IDs where the near-field will be applied as excitation.
+    #[serde(rename = "Attributes", default)]
+    pub attributes: Vec<u32>,
 }
 
 /// Configuration for RCS (Radar Cross Section) output.
