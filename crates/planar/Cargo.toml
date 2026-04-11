@@ -1,6 +1,6 @@
 [package]
 name    = "rem-planar"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 description = "Planar MoM + FFT solver for layered-medium circuits (Sonnet-compatible)"
 

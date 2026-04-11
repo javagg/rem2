@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test-workspace:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run first-party crate tests
+        run: >-
+          cargo test --quiet
+          -p rem-core
+          -p rem-config
+          -p rem-mesh
+          -p rem-materials
+          -p rem-bc
+          -p rem-electrostatic
+          -p rem-magnetostatic
+          -p rem-eigenmode
+          -p rem-driven
+          -p rem-transient
+          -p rem-result
+          -p rem-cli
+          -p rem-parallel
+          -p rem-touchstone
+          -p rem-mom
+          -p rem-bem
+          -p rem-sbr
+          -p rem-febi
+          -p rem-ddm
+          -p rem-planar
+
+  build-wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build rem-wasm
+        run: cargo build --release --target wasm32-unknown-unknown -p rem-wasm
+
+  build-yew:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Trunk
+        run: cargo install trunk --locked
+
+      - name: Build Yew app
+        working-directory: crates/yew-app
+        run: trunk build --release

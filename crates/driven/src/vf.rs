@@ -618,24 +618,36 @@ mod tests {
     /// eval_vf must reconstruct reasonable values after fitting smooth data.
     #[test]
     fn test_eval_vf_consistency() {
-        // Use a simple smooth response (no sharp resonances)
+        // Use a response generated from a known pole-residue model so the
+        // regression test tracks VF consistency instead of arbitrary smooth-data fit quality.
         let freqs: Vec<f64> = (0..30)
             .map(|i| 1e9 + i as f64 * 1e8)
             .collect();
-        // Artificial smooth S11 decreasing from 0.9 to 0.1
-        let h_data: Vec<Complex64> = freqs.iter().enumerate().map(|(i, _)| {
-            let t = i as f64 / 29.0;
-            Complex64::new(0.9 - 0.8 * t, -0.3 * (PI * t).sin())
-        }).collect();
+
+        let reference = VfModel {
+            poles: vec![
+                Complex64::new(-8.0e7, 2.0 * PI * 1.4e9),
+                Complex64::new(-1.2e8, 2.0 * PI * 2.2e9),
+            ],
+            residues: vec![
+                Complex64::new(0.7, -0.1),
+                Complex64::new(-0.2, 0.35),
+            ],
+            d_term: 0.08,
+            f_min_hz: *freqs.first().unwrap(),
+            f_max_hz: *freqs.last().unwrap(),
+            rms_error: 0.0,
+        };
+        let h_data = eval_vf(&reference, &freqs);
 
         let model = vector_fit(&freqs, &h_data, 4, 15, 1e-6)
-            .expect("VF should converge on smooth data");
+            .expect("VF should converge on generated pole-residue data");
         let h_fit = eval_vf(&model, &freqs);
 
-        // Each point should be reasonably close (not exact for 4 poles on 30 samples)
         let max_err = h_data.iter().zip(h_fit.iter())
             .map(|(a, b)| (a - b).norm())
             .fold(0.0_f64, f64::max);
-        assert!(max_err < 0.6, "Max pointwise error too large: {:.4}", max_err);
+        assert!(model.rms_error < 5e-4, "RMS error too large: {:.4e}", model.rms_error);
+        assert!(max_err < 1e-3, "Max pointwise error too large: {:.4e}", max_err);
     }
 }

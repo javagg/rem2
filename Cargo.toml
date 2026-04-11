@@ -26,6 +26,9 @@ members = [
     "vendor/rmetis",
 ]
 
+[workspace.package]
+version = "0.17.1"
+
 # fem-rs sub-workspaces cannot be listed as members (separate workspace roots),
 # but their crates are available as path dependencies below.
 

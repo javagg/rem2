@@ -1,6 +1,6 @@
 [package]
 name    = "rem-febi"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 description = "Hybrid FE-BI (Finite Element – Boundary Integral) solver for rem2"
 
