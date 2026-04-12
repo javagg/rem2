@@ -9,7 +9,7 @@ wasm-bindgen = { workspace = true }
 wasm-bindgen-futures = "0.4"
 web-sys      = { version = "0.3", features = ["HtmlSelectElement", "HtmlInputElement"] }
 gloo         = { version = "0.11", features = ["futures"] }
-jsmpi        = { path = "../../vendor/rmetis/vendor/jsmpi" }
+jsmpi        = "0.1"
 js-sys       = "0.3"
 serde        = { workspace = true }
 serde_json   = { workspace = true }
