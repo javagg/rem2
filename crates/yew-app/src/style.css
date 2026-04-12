@@ -10,14 +10,43 @@ h1 {
     margin-bottom: 16px;
 }
 
-.main-layout {
+.page-intro {
+    margin: -8px 0 14px 0;
+    padding: 8px 10px;
+    border: 1px solid #d6e4ff;
+    border-radius: 6px;
+    background: #f5f9ff;
+    color: #204a87;
+    font-size: 13px;
+}
+
+.demo-layout {
     display: flex;
+    flex-direction: column;
     gap: 14px;
-    height: 80vh;
+}
+
+.row-top,
+.row-middle,
+.row-ranks {
+    display: grid;
+    gap: 14px;
+}
+
+.row-top {
+    grid-template-columns: 1fr 1fr;
+}
+
+.row-middle {
+    grid-template-columns: 2fr 1fr;
+    align-items: stretch;
+}
+
+.row-ranks {
+    grid-template-columns: 1fr;
 }
 
 .controls-panel {
-    flex: 0 0 320px;
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -26,6 +55,67 @@ h1 {
     border-radius: 8px;
     background: #f8f9fa;
     overflow-y: auto;
+}
+
+.example-panel {
+    min-height: 280px;
+}
+
+.top-log-panel {
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    background: #f8f9fa;
+    padding: 10px;
+}
+
+.top-log-panel h3 {
+    margin: 0 0 8px 0;
+    font-size: 14px;
+}
+
+.top-log-panel pre {
+    background: #eee;
+    padding: 8px;
+    font-size: 12px;
+    border-radius: 4px;
+    overflow-y: auto;
+    margin: 0;
+    white-space: pre-wrap;
+}
+
+.scene-panel {
+    border: 1px solid #333;
+    border-radius: 8px;
+    background: #1d2228;
+    color: #dbe6f1;
+    min-height: 460px;
+    overflow: hidden;
+}
+
+.scene-panel-header {
+    padding: 10px 12px;
+    border-bottom: 1px solid #2f3740;
+    background: #242b33;
+}
+
+.scene-panel-header h3 {
+    margin: 0;
+    font-size: 14px;
+}
+
+.scene-panel-body {
+    padding: 12px;
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.scene-panel-body ul {
+    margin: 10px 0 0 18px;
+    padding: 0;
+}
+
+.config-panel {
+    min-height: 460px;
 }
 
 .code-panel {
@@ -425,13 +515,9 @@ h1 {
 }
 
 @media (max-width: 960px) {
-    .main-layout {
-        flex-direction: column;
-        height: auto;
-    }
-
-    .controls-panel {
-        flex: 1 1 auto;
+    .row-top,
+    .row-middle {
+        grid-template-columns: 1fr;
     }
 
     .rank-panel-list {

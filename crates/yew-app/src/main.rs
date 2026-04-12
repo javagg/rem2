@@ -44,6 +44,16 @@ fn clamp_ranks(n: u32) -> u32 {
 
 #[cfg(target_arch = "wasm32")]
 fn parse_rank_from_text(text: &str) -> Option<u32> {
+    if let Some(rest) = text.split("rank=").nth(1) {
+        if let Some(parsed) = rest
+            .split(' ')
+            .next()
+            .and_then(|s| s.trim().parse::<u32>().ok())
+        {
+            return Some(parsed);
+        }
+    }
+
     if let Some(rest) = text.strip_prefix("[rank ") {
         return rest
             .split(']')
@@ -56,6 +66,29 @@ fn parse_rank_from_text(text: &str) -> Option<u32> {
             .next()
             .and_then(|s| s.trim().parse::<u32>().ok());
     }
+
+    if let Some(idx) = text.find("[rank ") {
+        let rest = &text[idx + 6..];
+        if let Some(parsed) = rest
+            .split(']')
+            .next()
+            .and_then(|s| s.trim().parse::<u32>().ok())
+        {
+            return Some(parsed);
+        }
+    }
+
+    if let Some(idx) = text.find("rank ") {
+        let rest = &text[idx + 5..];
+        if let Some(parsed) = rest
+            .split(|c: char| !c.is_ascii_digit())
+            .next()
+            .and_then(|s| s.trim().parse::<u32>().ok())
+        {
+            return Some(parsed);
+        }
+    }
+
     None
 }
 
@@ -65,6 +98,14 @@ fn append_line(existing: &str, line: &str) -> String {
     } else {
         format!("{}\n{}", existing, line)
     }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn extract_message_text(text: &str) -> String {
+    if let Some(idx) = text.find(" message=") {
+        return text[idx + 9..].to_string();
+    }
+    text.to_string()
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -347,7 +388,8 @@ fn app() -> Html {
                                         rank,
                                         text: String::new(),
                                     });
-                                    let cleaned = strip_rank_prefix(&text, rank);
+                                    let message = extract_message_text(&text);
+                                    let cleaned = strip_rank_prefix(&message, rank);
                                     entry.text = append_line(&entry.text, cleaned);
                                     rank_logs_on_log.set(map.clone());
                                 }
@@ -574,13 +616,18 @@ fn app() -> Html {
         Tab::Source => example.source_code,
         Tab::Mesh => "3D mesh preview will be added in a later iteration.\n\nPlanned capabilities:\n- Rotate / pan / zoom\n- Boundary / domain coloring\n- Rank partition overlay in MPI mode\n- Probe point and field value tooltip",
     };
+    let mpi_is_enabled = *mpi_enabled;
 
     html! {
         <div id="app">
             <h1>{"REM EM Solver Demo (Yew + WASM)"}</h1>
+            <p class="page-intro">
+                {"页面主体已由 Rust/Yew 渲染，index.html 仅保留 Trunk 资源入口与运行时桥接脚本。"}
+            </p>
 
-            <div class="main-layout">
-                <div class="controls-panel">
+            <div class="demo-layout">
+                <div class="row-top">
+                <section class="controls-panel example-panel">
                     <div class="control-group">
                         <label for="example-select">{"Example:"}</label>
                         <select id="example-select"
@@ -796,50 +843,30 @@ fn app() -> Html {
                         </div>
                     }
 
-                    <div class="log-panel">
-                        <h3>{"Logs:"}</h3>
-                        <pre>{&*log_text}</pre>
-                    </div>
+                </section>
 
-                    if *mpi_enabled {
-                        <div class="rank-logs-panel">
-                            <h3>{"Per-rank Output:"}</h3>
-                            <div class="rank-panel-list">
-                                { for rank_logs.values().map(|entry| {
-                                    let line_count = entry.text.lines().filter(|s| !s.trim().is_empty()).count();
-                                    html! {
-                                        <section class="rank-output-panel">
-                                            <header class="rank-output-header">
-                                                <h4>{format!("Rank {}", entry.rank)}</h4>
-                                                <span class="rank-output-meta">{format!("{} lines", line_count)}</span>
-                                            </header>
-                                            <div class="rank-output-body">
-                                                <pre>{&entry.text}</pre>
-                                            </div>
-                                        </section>
-                                    }
-                                }) }
-
-                                { if rank_logs.is_empty() {
-                                    html! {
-                                        <section class="rank-output-panel rank-output-empty">
-                                            <header class="rank-output-header">
-                                                <h4>{"No rank output yet"}</h4>
-                                            </header>
-                                            <div class="rank-output-body">
-                                                <pre>{"Run an MPI job to populate per-rank output panels."}</pre>
-                                            </div>
-                                        </section>
-                                    }
-                                } else {
-                                    html! {}
-                                }}
-                            </div>
-                        </div>
-                    }
+                <section class="log-panel top-log-panel">
+                    <h3>{"Logs Panel"}</h3>
+                    <pre>{&*log_text}</pre>
+                </section>
                 </div>
 
-                <div class="code-panel">
+                <div class="row-middle">
+                <section class="scene-panel">
+                    <header class="scene-panel-header">
+                        <h3>{"3D Mesh Scene (WGPU Planned)"}</h3>
+                    </header>
+                    <div class="scene-panel-body">
+                        <p>{"这里预留给未来的 WGPU 3D 网格/场场景渲染。"}</p>
+                        <ul>
+                            <li>{"网格旋转 / 缩放 / 平移"}</li>
+                            <li>{"场量着色与切片"}</li>
+                            <li>{"MPI 分区覆盖显示"}</li>
+                        </ul>
+                    </div>
+                </section>
+
+                <div class="code-panel config-panel">
                     <div class="code-panel-header">
                         <h3>{"Config & View"}</h3>
                         <button type="button"
@@ -877,6 +904,43 @@ fn app() -> Html {
                             {"Config panel is collapsed by default. Expand when you need to inspect JSON, source, or upcoming 3D mesh preview."}
                         </div>
                     }
+                </div>
+                </div>
+
+                <div class="row-ranks">
+                    <div class="rank-logs-panel">
+                        <h3>{"Rank Output Panels (0-7)"}</h3>
+                        <div class="rank-panel-list">
+                            { for (0u32..8u32).map(|rank| {
+                                if let Some(entry) = rank_logs.get(&rank) {
+                                    let line_count = entry.text.lines().filter(|s| !s.trim().is_empty()).count();
+                                    html! {
+                                        <section class="rank-output-panel">
+                                            <header class="rank-output-header">
+                                                <h4>{format!("Rank {}", rank)}</h4>
+                                                <span class="rank-output-meta">{format!("{} lines", line_count)}</span>
+                                            </header>
+                                            <div class="rank-output-body">
+                                                <pre>{&entry.text}</pre>
+                                            </div>
+                                        </section>
+                                    }
+                                } else {
+                                    html! {
+                                        <section class="rank-output-panel rank-output-empty">
+                                            <header class="rank-output-header">
+                                                <h4>{format!("Rank {}", rank)}</h4>
+                                                <span class="rank-output-meta">{"idle"}</span>
+                                            </header>
+                                            <div class="rank-output-body">
+                                                <pre>{if mpi_is_enabled { "Waiting for output..." } else { "MPI disabled." }}</pre>
+                                            </div>
+                                        </section>
+                                    }
+                                }
+                            }) }
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -1042,6 +1106,9 @@ fn main() {
     console_error_panic_hook::set_once();
     if web_sys::window().is_none() {
         return;
+    }
+    if let Some(document) = web_sys::window().and_then(|w| w.document()) {
+        document.set_title("REM EM Solver Demo (Yew + WASM)");
     }
     console_log::init_with_level(log::Level::Info).ok();
     yew::Renderer::<App>::new().render();
