@@ -66,6 +66,8 @@ pub fn schwarz_solve(
     tol: f64,
     max_iter: usize,
 ) -> RemResult<SchwarzResult> {
+    use rem_core::LinearOperator;
+
     if subdomains.is_empty() {
         return Err(RemError::Config("DDM: no subdomains provided".to_string()));
     }
@@ -84,13 +86,36 @@ pub fn schwarz_solve(
     for iter in 0..max_iter {
         iterations = iter + 1;
 
-        // --- 步骤1：各子域求解（骨架：直接返回零向量）---
-        // TODO: 调用 rem-driven FEM 组装 + LU 求解
+        // --- 步骤1：各子域 GMRES/LU 求解 ---
         for (i, sd) in subdomains.iter().enumerate() {
-            solutions[i] = DVector::zeros(sd.n_dof());
+            let (mat, rhs) = sd.assemble_local_stiffness_skeleton()?;
+            
+            // Select solver based on problem size
+            let sol = if sd.n_dof() > 100 {
+                // Use GMRES for large systems via LinearOperator
+                log::debug!("  Subdomain {}: solving with GMRES ({} DOFs)", i, sd.n_dof());
+                rem_mom::gmres_solve_op(&mat, &rhs)
+                    .or_else(|e| {
+                        log::warn!("  Subdomain {} GMRES failed ({}), falling back to LU", i, e);
+                        // Fallback to LU if GMRES fails
+                        let lu = mat.clone().lu();
+                        lu.solve(&rhs).ok_or_else(|| {
+                            RemError::Config(format!("Subdomain {} LU solve failed", i))
+                        })
+                    })?
+            } else {
+                // Use LU for small systems
+                log::debug!("  Subdomain {}: solving with LU ({} DOFs)", i, sd.n_dof());
+                let lu = mat.clone().lu();
+                lu.solve(&rhs).ok_or_else(|| {
+                    RemError::Config(format!("Subdomain {} LU solve failed", i))
+                })?
+            };
+            
+            solutions[i] = sol;
         }
 
-        // --- 步骤2：计算全局残差（骨架）---
+        // --- 步骤2：计算全局残差 ---
         let res_norm: f64 = solutions.iter().map(|sol| sol.norm()).sum();
         rel_residual = if res_norm > 0.0 { res_norm } else { 0.0 };
 

@@ -28,6 +28,9 @@ pub mod pmchwt;
 pub mod port;
 pub mod sparams;
 
+// Public re-exports for cross-crate solver integration
+pub use assemble::{gmres_solve, gmres_solve_generic, gmres_solve_op, aca_gmres_solve, gmres_generic_with_aca};
+
 use rem_config::{PalaceConfig, MomSolverConfig};
 use rem_core::RemResult;
 use rem_mesh::RemMesh;

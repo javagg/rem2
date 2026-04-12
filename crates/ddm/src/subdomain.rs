@@ -81,14 +81,24 @@ impl SubDomain {
     ///
     /// 当前为骨架：返回单位矩阵。
     /// TODO：接入 rem-driven 的真实 FEM 装配。
-    pub fn assemble_local_stiffness(
+    pub fn assemble_local_stiffness_skeleton(
         &self,
-        _mesh: &RemMesh,
-        _freq: f64,
     ) -> RemResult<(DMatrix<Complex64>, DVector<Complex64>)> {
         let n = self.n_dof();
         let mat = DMatrix::identity(n, n).map(|x: f64| Complex64::new(x, 0.0));
         let rhs = DVector::zeros(n);
         Ok((mat, rhs))
+    }
+
+    /// 组装本地刚度矩阵（P1 FEM 占位）
+    ///
+    /// 当前为骨架：返回单位矩阵。
+    /// TODO：接入 rem-driven 的真实 FEM 装配。
+    pub fn assemble_local_stiffness(
+        &self,
+        _mesh: &RemMesh,
+        _freq: f64,
+    ) -> RemResult<(DMatrix<Complex64>, DVector<Complex64>)> {
+        self.assemble_local_stiffness_skeleton()
     }
 }

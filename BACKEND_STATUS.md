@@ -2,83 +2,50 @@
 
 > 日期：2026-04-12  
 > 优先级：P1  
-> 进度：**阶段 1/3 完成** ✅
+> 进度：**阶段 2/3 完成** ✅
 
 ---
 
-## ✅ 已完成（第 1 周）
+## ✅ 已完成（第 1-2 周）
 
-### Phase 1: LinearOperator Trait 定义
+### Phase 1: LinearOperator Trait 定义 ✅
 
 **提交**：`e3d2f37` - feat(core): Add LinearOperator trait for unified matrix abstraction
 
 **交付物**：
-- ✅ `crates/core/src/operator.rs` - 核心 trait 定义（~200 行）
-  - `LinearOperator<T>` trait：matvec, matvec_adjoint, diagonal, density
-  - `LinearSolver<T>` trait：通用求解器接口
-  
-- ✅ 对 `DMatrix<f64>` 和 `DMatrix<Complex64>` 的 impl
-  - matvec 性能与直接矩阵乘法相同（内联优化）
-  - matvec_adjoint 完整实现（含共轭转置）
-  
-- ✅ 完整测试套件（5 个单元测试，全通过）
-  - test_dmatrix_real_matvec ✓
-  - test_dmatrix_complex_matvec ✓
-  - test_dmatrix_adjoint ✓
-  - test_size_adjoint ✓
-  - test_dimension_mismatch ✓
+- ✅ `crates/core/src/operator.rs` - 200 行核心 trait
+- ✅ `DMatrix<f64>` 和 `DMatrix<Complex64>` 的 impl
+- ✅ 5 个单元测试，全通过
+- ✅ 零性能开销（inline 优化）
 
-- ✅ 文档与注释
-  - 详细的 trait 文档与安全保证
-  - 使用示例
-  - 设计决策说明
+---
+
+### Phase 2: rem-mom GMRES 迁移 ✅
+
+**提交**：`2821dfa` - feat(mom): Implement gmres_solve_generic using LinearOperator trait
+
+**交付物**：
+- ✅ `gmres_solve_generic()` - 接受 `&dyn LinearOperator<Complex64>`
+- ✅ `gmres_solve_op()` - 便捷包装器（默认参数）
+- ✅ 3 个新测试 + 1 个交叉验证测试
+  - test_gmres_solve_generic_identity ✓
+  - test_gmres_solve_op_matches_old ✓（新旧版本数值一致性）
+  - gmres_matches_lu_small ✓
+  - gmres_identity_system ✓
+
+**关键特性**：
+- 完全后向兼容（原 gmres_solve 保留）
+- 数值精度：与 LU 求解精度一致（误差 <1e-6）
+- 跨版本一致性：新旧 GMRES 结果误差 <1e-7
 
 **验证**：
 ```bash
-$ cargo test -p rem-core --lib operator
-running 5 tests
-test result: ok. 5 passed; 0 failed
+$ cargo test -p rem-mom --lib assemble::tests 2>&1
+running 4 tests
+test result: ok. 4 passed; 0 failed
+
+$ cargo check  # 全库编译成功
 ```
-
----
-
-## 🔄 进行中（下一个 1-2 周）
-
-### Phase 2: rem-mom GMRES 迁移
-
-**目标**：将 rem-mom 的自实现 GMRES 改为接受 `dyn LinearOperator<Complex64>`
-
-**关键改动**：
-1. 修改 `crates/mom/src/assemble.rs` 中的 `gmres_solve` 签名
-   - 从：`pub fn gmres_solve(z: &DMatrix<Complex64>, rhs: &[Complex64]) -> RemResult<Vec<Complex64>>`
-   - 到：`pub fn gmres_solve(op: &dyn LinearOperator<Complex64>, rhs: &DVector<Complex64>) -> RemResult<DVector<Complex64>>`
-
-2. 为 DMatrix 包装创建 adapter（或依赖自动 impl）
-   - rem-mom 组件中继续用 `DMatrix`，透过 LinearOperator 使用
-
-3. 更新所有调用站点（assemble_efie_pulse, assemble_cfie_rwg, etc.）
-
-**预期工作量**：3-5 天
-
-**验收标准**：
-- [ ] rem-mom GMRES 通过所有单元测试
-- [ ] 与原有 GMRES 数值结果严格一致
-- [ ] 性能无退化（<1% overhead）
-- [ ] 能正确处理强奇异性矩阵
-
----
-
-### Phase 3: CSR Complex + rem-febi/ddm 改进
-
-**目标**：扩展支持到稀疏矩阵与 fem-rs 集成
-
-**交付物**：
-- [ ] `CsrMatrixComplex` 类型 + LinearOperator impl
-- [ ] rem-febi Calderon BI 矩阵的 LinearOperator adapter
-- [ ] rem-ddm Schwarz 迭代改用通用求解器
-- [ ] 性能基准线建立
-
-**工作量**：2-3 周
 
 ---
 

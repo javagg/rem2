@@ -8,6 +8,7 @@ rem-core      = { workspace = true }
 rem-config    = { workspace = true }
 rem-mesh      = { workspace = true }
 rem-parallel  = { workspace = true }
+rem-mom       = { workspace = true }
 nalgebra      = { workspace = true }
 num-complex   = { workspace = true }
 thiserror     = { workspace = true }

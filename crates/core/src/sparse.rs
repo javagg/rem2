@@ -602,3 +602,203 @@ mod tests {
         assert_eq!(csr.col_idx, vec![0, 3]);
     }
 }
+
+// ---------------------------------------------------------------------------
+// CsrMatrixComplex: Complex sparse matrix with LinearOperator support
+// ---------------------------------------------------------------------------
+
+use num_complex::Complex64;
+
+/// Sparse matrix in CSR format with Complex64 values.
+/// Supports LinearOperator interface for use with generic GMRES and other iterative solvers.
+#[derive(Debug, Clone)]
+pub struct CsrMatrixComplex {
+    pub nrows: usize,
+    pub ncols: usize,
+    pub row_ptr: Vec<usize>,
+    pub col_idx: Vec<usize>,
+    pub values: Vec<Complex64>,
+}
+
+impl CsrMatrixComplex {
+    /// Construct a zero matrix.
+    pub fn new(nrows: usize, ncols: usize) -> Self {
+        CsrMatrixComplex {
+            nrows,
+            ncols,
+            row_ptr: vec![0; nrows + 1],
+            col_idx: Vec::new(),
+            values: Vec::new(),
+        }
+    }
+
+    /// Number of non-zero entries.
+    pub fn nnz(&self) -> usize {
+        self.values.len()
+    }
+
+    /// Sparse matrix–vector product: y = A * x
+    pub fn matvec(&self, x: &nalgebra::DVector<Complex64>, y: &mut nalgebra::DVector<Complex64>) -> Result<(), String> {
+        if x.len() != self.ncols || y.len() != self.nrows {
+            return Err(format!(
+                "CsrMatrixComplex::matvec dimension mismatch: matrix {}×{}, x.len()={}, y.len()={}",
+                self.nrows, self.ncols, x.len(), y.len()
+            ));
+        }
+        
+        for i in 0..self.nrows {
+            let mut s = Complex64::new(0.0, 0.0);
+            for k in self.row_ptr[i]..self.row_ptr[i + 1] {
+                let j = self.col_idx[k];
+                s += self.values[k] * x[j];
+            }
+            y[i] = s;
+        }
+        Ok(())
+    }
+
+    /// Extract the main diagonal.
+    pub fn diagonal(&self) -> nalgebra::DVector<Complex64> {
+        let len = self.nrows.min(self.ncols);
+        let mut d = nalgebra::DVector::zeros(len);
+        for i in 0..len {
+            for k in self.row_ptr[i]..self.row_ptr[i + 1] {
+                if self.col_idx[k] == i {
+                    d[i] = self.values[k];
+                    break;
+                }
+            }
+        }
+        d
+    }
+}
+
+/// Implement LinearOperator trait for CsrMatrixComplex.
+impl crate::operator::LinearOperator<Complex64> for CsrMatrixComplex {
+    fn size(&self) -> (usize, usize) {
+        (self.nrows, self.ncols)
+    }
+
+    fn matvec(&self, x: &nalgebra::DVector<Complex64>, y: &mut nalgebra::DVector<Complex64>) -> Result<(), String> {
+        CsrMatrixComplex::matvec(self, x, y)
+    }
+
+    fn matvec_adjoint(&self, x: &nalgebra::DVector<Complex64>, y: &mut nalgebra::DVector<Complex64>) -> Result<(), String> {
+        if x.len() != self.nrows || y.len() != self.ncols {
+            return Err(format!(
+                "CsrMatrixComplex::matvec_adjoint dimension mismatch: matrix {}×{}, x.len()={}, y.len()={}",
+                self.nrows, self.ncols, x.len(), y.len()
+            ));
+        }
+        
+        // Clear y first
+        for i in 0..y.len() {
+            y[i] = Complex64::new(0.0, 0.0);
+        }
+        
+        // Accumulate: y[j] += conj(A[i,j]) * x[i]
+        for i in 0..self.nrows {
+            for k in self.row_ptr[i]..self.row_ptr[i + 1] {
+                let j = self.col_idx[k];
+                y[j] += self.values[k].conj() * x[i];
+            }
+        }
+        Ok(())
+    }
+
+    fn diagonal(&self) -> Option<nalgebra::DVector<Complex64>> {
+        Some(CsrMatrixComplex::diagonal(self))
+    }
+
+    fn density(&self) -> f64 {
+        let total = self.nrows * self.ncols;
+        if total == 0 {
+            0.0
+        } else {
+            self.nnz() as f64 / total as f64
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests_csr_complex {
+    use super::*;
+
+    #[test]
+    fn csr_complex_matvec_basic() {
+        let mut mat = CsrMatrixComplex::new(2, 2);
+        mat.row_ptr = vec![0, 1, 2];
+        mat.col_idx = vec![0, 1];
+        mat.values = vec![Complex64::new(1.0, 1.0), Complex64::new(2.0, 0.0)];
+        
+        let x = nalgebra::DVector::from_vec(vec![
+            Complex64::new(1.0, 0.0),
+            Complex64::new(0.0, 1.0),
+        ]);
+        let mut y = nalgebra::DVector::zeros(2);
+        
+        mat.matvec(&x, &mut y).unwrap();
+        
+        // y[0] = (1+i) * (1+0i) = 1+i
+        assert!((y[0].re - 1.0).abs() < 1e-14);
+        assert!((y[0].im - 1.0).abs() < 1e-14);
+        
+        // y[1] = 2 * (0+i) = 0+2i
+        assert!((y[1].re - 0.0).abs() < 1e-14);
+        assert!((y[1].im - 2.0).abs() < 1e-14);
+    }
+
+    #[test]
+    fn csr_complex_adjoint_basic() {
+        use crate::operator::LinearOperator;
+
+        let mut mat = CsrMatrixComplex::new(2, 2);
+        mat.row_ptr = vec![0, 1, 2];
+        mat.col_idx = vec![0, 1];
+        mat.values = vec![Complex64::new(1.0, 1.0), Complex64::new(2.0, 0.0)];
+        
+        let x = nalgebra::DVector::from_vec(vec![
+            Complex64::new(1.0, 0.0),
+            Complex64::new(0.0, 1.0),
+        ]);
+        let mut y = nalgebra::DVector::zeros(2);
+        
+        mat.matvec_adjoint(&x, &mut y).unwrap();
+        
+        // y[0] = conj(1+i) * (1+0i) = (1-i) * 1 = 1-i
+        assert!((y[0].re - 1.0).abs() < 1e-14);
+        assert!((y[0].im + 1.0).abs() < 1e-14);
+        
+        // y[1] = conj(2) * (0+i) = 2 * (0+i) = 0+2i
+        assert!((y[1].re - 0.0).abs() < 1e-14);
+        assert!((y[1].im - 2.0).abs() < 1e-14);
+    }
+
+    #[test]
+    fn csr_complex_implements_linear_operator() {
+        use crate::operator::LinearOperator;
+
+        let mut mat = CsrMatrixComplex::new(3, 3);
+        mat.row_ptr = vec![0, 1, 2, 3];
+        mat.col_idx = vec![0, 1, 2];
+        mat.values = vec![
+            Complex64::new(1.0, 0.0),
+            Complex64::new(2.0, 0.0),
+            Complex64::new(3.0, 0.0),
+        ];
+        
+        let x = nalgebra::DVector::from_vec(vec![
+            Complex64::new(1.0, 0.0),
+            Complex64::new(1.0, 0.0),
+            Complex64::new(1.0, 0.0),
+        ]);
+        let mut y = nalgebra::DVector::zeros(3);
+        
+        // Via LinearOperator trait
+        mat.matvec(&x, &mut y).unwrap();
+        
+        assert!((y[0].re - 1.0).abs() < 1e-14);
+        assert!((y[1].re - 2.0).abs() < 1e-14);
+        assert!((y[2].re - 3.0).abs() < 1e-14);
+    }
+}

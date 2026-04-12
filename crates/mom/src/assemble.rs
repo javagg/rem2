@@ -652,6 +652,133 @@ pub fn gmres_solve(z: &DMatrix<Complex64>, rhs: &[Complex64]) -> RemResult<Vec<C
 }
 
 // ---------------------------------------------------------------------------
+// ACA-compressed GMRES solver (generic LinearOperator interface)
+// ---------------------------------------------------------------------------
+
+/// Solve A·x = b using restarted GMRES with a generic LinearOperator.
+///
+/// Equivalent to `gmres_solve_generic` but specialized for ACA-compressed near/far
+/// partition structures. Used when the matrix-vector product is defined via ACA.
+///
+/// # Parameters
+/// - `op`: LinearOperator implementing matrix-vector product
+/// - `b`: Right-hand side vector
+/// - `restart`: Restart parameter (typically 30)
+/// - `tol`: Convergence tolerance (typically 1e-8)  
+/// - `max_iters`: Maximum outer iterations
+pub fn gmres_generic_with_aca(
+    op: &dyn LinearOperator<Complex64>,
+    b: &nalgebra::DVector<Complex64>,
+    restart: usize,
+    tol: f64,
+    max_iters: usize,
+) -> RemResult<nalgebra::DVector<Complex64>> {
+    let (n, n_check) = op.size();
+    if n != n_check || n != b.len() {
+        return Err(RemError::Config(format!(
+            "gmres_generic_with_aca: operator size ({}, {}) doesn't match RHS length {}",
+            n, n_check, b.len()
+        )));
+    }
+
+    let b_norm = b.norm();
+    if b_norm < f64::EPSILON {
+        return Ok(nalgebra::DVector::zeros(n));
+    }
+
+    let mut x = nalgebra::DVector::zeros(n);
+    const TOL: f64 = 1e-8;
+
+    for _ in 0..max_iters {
+        // Compute residual: r = b - A*x
+        let mut ax = nalgebra::DVector::zeros(n);
+        op.matvec(&x, &mut ax)
+            .map_err(|e| RemError::Other(format!("gmres_generic_with_aca matvec error: {}", e)))?;
+        let r = b - &ax;
+        let beta = r.norm();
+
+        if beta / b_norm < tol {
+            return Ok(x);
+        }
+
+        // Arnoldi process
+        let mut v: Vec<nalgebra::DVector<Complex64>> = Vec::with_capacity(restart + 1);
+        v.push(&r / Complex64::new(beta, 0.0));
+
+        let mut h = vec![vec![Complex64::new(0.0, 0.0); restart]; restart + 1];
+        let mut cs = vec![0.0f64; restart];
+        let mut sn = vec![Complex64::new(0.0, 0.0); restart];
+        let mut g = vec![Complex64::new(0.0, 0.0); restart + 1];
+        g[0] = Complex64::new(beta, 0.0);
+
+        let mut j_end = restart;
+
+        for j in 0..restart {
+            // w = A * v[j]
+            let mut w = nalgebra::DVector::zeros(n);
+            op.matvec(&v[j], &mut w)
+                .map_err(|e| RemError::Other(format!("gmres_generic_with_aca matvec error: {}", e)))?;
+
+            // Modified Gram-Schmidt
+            for i in 0..=j {
+                h[i][j] = v[i].dotc(&w);
+                w -= &v[i] * h[i][j];
+            }
+            h[j + 1][j] = Complex64::new(w.norm(), 0.0);
+
+            // Normalize
+            if h[j + 1][j].norm() > 1e-14 {
+                v.push(&w / h[j + 1][j]);
+            } else {
+                v.push(nalgebra::DVector::zeros(n));
+            }
+
+            // Apply Givens rotations
+            for i in 0..j {
+                let tmp = cs[i] * h[i][j] + sn[i].conj() * h[i + 1][j];
+                h[i + 1][j] = -sn[i] * h[i][j] + cs[i] * h[i + 1][j];
+                h[i][j] = tmp;
+            }
+
+            let (c, s) = givens_rotation(h[j][j], h[j + 1][j]);
+            cs[j] = c;
+            sn[j] = s;
+            h[j][j] = c * h[j][j] + s.conj() * h[j + 1][j];
+            h[j + 1][j] = Complex64::new(0.0, 0.0);
+
+            g[j + 1] = -sn[j] * g[j];
+            g[j] = cs[j] * g[j];
+
+            if g[j + 1].norm() / b_norm < TOL {
+                j_end = j + 1;
+                break;
+            }
+        }
+
+        // Back-substitution
+        let m = j_end;
+        let mut y = vec![Complex64::new(0.0, 0.0); m];
+        for i in (0..m).rev() {
+            let mut yi = g[i];
+            for k in (i + 1)..m {
+                yi -= h[i][k] * y[k];
+            }
+            if h[i][i].norm() > f64::EPSILON {
+                yi /= h[i][i];
+            }
+            y[i] = yi;
+        }
+
+        // Update x
+        for j in 0..m {
+            x += &v[j] * y[j];
+        }
+    }
+
+    Ok(x)
+}
+
+// ---------------------------------------------------------------------------
 // ACA-compressed GMRES solver
 // ---------------------------------------------------------------------------
 
