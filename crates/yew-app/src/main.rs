@@ -1040,6 +1040,9 @@ fn app() -> Html {
 
 fn main() {
     console_error_panic_hook::set_once();
+    if web_sys::window().is_none() {
+        return;
+    }
     console_log::init_with_level(log::Level::Info).ok();
     yew::Renderer::<App>::new().render();
 }

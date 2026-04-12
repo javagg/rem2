@@ -10,3 +10,4 @@ log          = { workspace = true }
 fem-linalg   = { workspace = true }
 fem-solver   = { workspace = true }
 num-complex  = { workspace = true }
+nalgebra     = { workspace = true }

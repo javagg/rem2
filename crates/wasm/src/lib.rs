@@ -17,7 +17,7 @@ pub fn init_panic_hook() {
 
 #[wasm_bindgen]
 pub fn init_logger() {
-    console_log::init_with_level(log::Level::Info).expect("error initializing logger");
+    console_log::init_with_level(log::Level::Info).ok();
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
