@@ -110,7 +110,7 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
 /// Entry point for pre-loaded mesh (used by WASM path).
 /// Returns the driven frequency sweep result including S-params and peak E-field.
 pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> RemResult<DrivenResult> {
-    log::info!("=== Driven (frequency-domain) solver ===");
+    log::info!("\n=== Driven (frequency-domain) solver ===\n");
 
     let drv_cfg = config.solver.driven.as_ref().ok_or_else(|| {
         RemError::Config("Driven problem requires a [Solver.Driven] section".into())
@@ -124,6 +124,13 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
         );
     }
 
+    // Report solver configuration
+    log::info!("Solver configuration:");
+    log::info!("  Frequency range    = {:.3e} to {:.3e} Hz", drv_cfg.min_freq, drv_cfg.max_freq);
+    log::info!("  Frequency step     = {:.3e} Hz", drv_cfg.freq_step);
+    log::info!("  Save step          = {}", drv_cfg.save_step);
+    log::info!("");
+
     let domain_map = DomainMap::from_config(config)?;
 
     // AMR pre-refinement: refine mesh at center frequency before the full sweep
@@ -133,7 +140,11 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
 
     let refined_mesh: RemMesh;
     let work_mesh: &RemMesh = if max_amr_iter > 0 {
-        log::info!("AMR pre-refinement enabled: max_iter={}, θ={}", max_amr_iter, amr_theta);
+        log::info!("Adaptive mesh refinement (AMR) — pre-sweep:");
+        log::info!("  Max iterations = {}", max_amr_iter);
+        log::info!("  Dörfler marking = {:.1}%", amr_theta * 100.0);
+        log::info!("");
+
         let f_center = (drv_cfg.min_freq + drv_cfg.max_freq) * 0.5;
         let k_wave = 2.0 * std::f64::consts::PI * f_center / C0;
         let k2 = k_wave * k_wave;
@@ -164,17 +175,17 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
 
             let eta = amr::zz_estimator(&cur_mesh, &phi);
             let total_err: f64 = eta.iter().map(|&e| e * e).sum::<f64>().sqrt();
-            log::info!("AMR iter {amr_iter}: nodes={}, |η|={total_err:.3e}", cur_mesh.n_nodes());
+            log::info!("  Iteration {}: {} nodes, error = {:.3e}", amr_iter, cur_mesh.n_nodes(), total_err);
 
             let marked = amr::dorfler_mark(&eta, amr_theta);
             if marked.is_empty() {
-                log::info!("AMR pre-refinement converged: no elements marked.");
+                log::info!("  → Converged: no elements marked for refinement");
                 break;
             }
             let (fine_mesh, _) = amr::refine_marked(&cur_mesh, &marked);
             cur_mesh = fine_mesh;
         }
-        log::info!("AMR pre-refinement complete: {} nodes", cur_mesh.n_nodes());
+        log::info!("  → Complete: {} nodes\n", cur_mesh.n_nodes());
         refined_mesh = cur_mesh;
         &refined_mesh
     } else {

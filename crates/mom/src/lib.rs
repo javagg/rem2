@@ -72,6 +72,8 @@ pub fn run_with_mesh(
 ) -> RemResult<MomResult> {
     use std::f64::consts::PI;
 
+    log::info!("\n=== Method of Moments (MoM) solver ===\n");
+
     // Collect PEC surface attribute IDs
     let pec_attrs: Vec<u32> = config.boundaries.pec
         .as_ref()
@@ -86,8 +88,10 @@ pub fn run_with_mesh(
 
     // Build surface mesh
     let surf = surface_mesh::SurfaceMesh::extract(mesh, &pec_attrs)?;
-    log::info!("MoM surface mesh: {} faces, {} interior edges (RWG bases)",
-        surf.faces.len(), surf.edges.len());
+    log::info!("Surface mesh (RWG basis):");
+    log::info!("  {} triangular faces", surf.faces.len());
+    log::info!("  {} interior edges (basis functions)", surf.edges.len());
+    log::info!("");
 
     // ── Port path (S-parameter sweep) ─────────────────────────────────────
     if !mom_cfg.ports.is_empty() {

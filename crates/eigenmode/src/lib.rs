@@ -40,7 +40,7 @@ const AMR_FREQ_ABS_TOL: f64 = 1e6; // 1 MHz
 
 /// Entry point called from rem-cli.
 pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
-    log::info!("=== Eigenmode solver ===");
+    log::info!("\n=== Eigenmode (frequency-domain) solver ===\n");
 
     let eig_cfg = config.solver.eigenmode.as_ref().ok_or_else(|| {
         RemError::Config("Eigenmode problem requires a [Solver.Eigenmode] section".into())
@@ -53,6 +53,15 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
             config.solver.order
         );
     }
+
+    // Report solver configuration
+    log::info!("Solver configuration:");
+    log::info!("  Target frequency = {:.3e} Hz", eig_cfg.target);
+    log::info!("  Number of modes  = {}", eig_cfg.n);
+    log::info!("  Tolerance        = {:.3e}", eig_cfg.tol);
+    log::info!("  Max iterations   = {}", eig_cfg.max_iter);
+    log::info!("");
+
     let mesh_path = Path::new(&config.model.mesh);
     let raw = read_msh_file(mesh_path)?;
     let mut mesh = RemMesh::from_raw(raw, config)?;
@@ -65,7 +74,11 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
     let amr_theta    = if amr_cfg.tol > 0.0 { amr_cfg.tol } else { 0.5 };
 
     let (final_mesh, result) = if max_amr_iter > 0 {
-        log::info!("AMR enabled: max_iter={}, θ={}", max_amr_iter, amr_theta);
+        log::info!("Adaptive mesh refinement (AMR):");
+        log::info!("  Max iterations = {}", max_amr_iter);
+        log::info!("  Dörfler marking = {:.1}%", amr_theta * 100.0);
+        log::info!("");
+
         let mut cur_mesh = mesh;
         let mut result = solve(config, &cur_mesh, &domain_map, comm)?;
         let mut prev_freqs = result.frequencies_hz.clone();
@@ -75,11 +88,11 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
             if let Some(phi) = result.eigenvectors.first() {
                 let eta = amr::zz_estimator(&cur_mesh, phi);
                 let total_err: f64 = eta.iter().map(|&e| e * e).sum::<f64>().sqrt();
-                log::info!("AMR iter {amr_iter}: nodes={}, |η|={total_err:.3e}", cur_mesh.n_nodes());
+                log::info!("AMR iteration {}: {} nodes, error = {:.3e}", amr_iter, cur_mesh.n_nodes(), total_err);
 
                 let marked = amr::dorfler_mark(&eta, amr_theta);
                 if marked.is_empty() {
-                    log::info!("AMR converged: no elements marked.");
+                    log::info!("  → Converged: no elements marked for refinement");
                     break;
                 }
 
@@ -99,12 +112,12 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
                     .map(|(&f_old, &f_new)| (f_new - f_old).abs())
                     .fold(0.0f64, f64::max);
                 log::info!(
-                    "AMR iter {amr_iter}: max freq rel-change = {max_rel_change:.3e}, abs-change = {max_abs_change_hz:.3e} Hz"
+                    "  → Frequency change: {:.3e} (rel), {:.3e} Hz (abs)",
+                    max_rel_change, max_abs_change_hz
                 );
                 if max_rel_change < AMR_FREQ_TOL || max_abs_change_hz < AMR_FREQ_ABS_TOL {
                     log::info!(
-                        "AMR freq-converged (rel {max_rel_change:.2e} < {AMR_FREQ_TOL:.0e}, abs {max_abs_change_hz:.0e} Hz < {} Hz): stopping.",
-                        AMR_FREQ_ABS_TOL
+                        "  → AMR converged (freq change < tolerance)"
                     );
                     break;
                 }
@@ -128,7 +141,10 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
         output::write_mode_vtk(out_dir, &final_mesh, phi, mode_idx + 1)?;
     }
 
-    log::info!("Eigenmode solve complete: {} modes found", result.frequencies_hz.len());
+    log::info!("");
+    log::info!("Eigenmode solve complete:");
+    log::info!("  {} modes computed", result.frequencies_hz.len());
+    log::info!("  {} modes saved to output/", save_n);
     report_peak_memory("Eigenmode solver");
     Ok(())
 }

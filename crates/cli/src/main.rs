@@ -4,6 +4,8 @@ use rem_config::{load_config, ProblemType};
 use rem_parallel::{NoComm, WorldComm, Comm};
 use std::path::PathBuf;
 
+mod output;
+
 #[derive(Parser)]
 #[command(name = "rem", about = "Rust Electromagnetic Solver — Palace-compatible")]
 struct Args {
@@ -32,6 +34,12 @@ fn main() -> anyhow::Result<()> {
         env_logger::Env::default().default_filter_or(log_level),
     )
     .init();
+
+    // Print banner and system info only in info mode or verbose
+    if args.verbose >= 1 {
+        output::print_banner();
+        output::print_system_info(None, None);
+    }
 
     let mut config = load_config(&args.config)
         .with_context(|| format!("reading config: {}", args.config.display()))?;

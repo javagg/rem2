@@ -100,7 +100,7 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
 /// Entry point for pre-loaded mesh (used by WASM path).
 /// Returns a `TransientResult` with time series, port voltages and peak E-field phi.
 pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> RemResult<TransientResult> {
-    log::info!("=== Transient (time-domain) solver ===");
+    log::info!("\n=== Transient (time-domain) solver ===\n");
 
     let td_cfg = config.solver.transient.as_ref().ok_or_else(|| {
         RemError::Config("Transient problem requires a [Solver.Transient] section".into())
@@ -113,6 +113,13 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
             config.solver.order
         );
     }
+
+    log::info!("Solver configuration:");
+    log::info!("  Excitation frequency = {:.3e} Hz", td_cfg.excitation_freq);
+    log::info!("  Time step            = {:.3e} s", td_cfg.time_step);
+    log::info!("  Max time             = {:.3e} s", td_cfg.max_time);
+    log::info!("  Save step            = {}", td_cfg.save_step);
+    log::info!("");
 
     let domain_map = DomainMap::from_config(config)?;
     let eps_fn = |tag: u32| domain_map.get(tag).epsilon_abs();

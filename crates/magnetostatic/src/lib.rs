@@ -43,21 +43,20 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
         );
     }
     let mesh_path = Path::new(&config.model.mesh);
-    log::info!("Loading mesh: {}", mesh_path.display());
     let raw = read_msh_file(mesh_path)?;
     let mut mesh = RemMesh::from_raw(raw, config)?;
     mesh.set_comm(comm.rank(), comm.size());
     mesh.partition(comm);
-    log::info!(
-        "Mesh: {} nodes, {} volume elements (dim={})",
-        mesh.n_nodes(), mesh.n_volume_elements(), mesh.dim
-    );
+    log::info!("Mesh loaded:");
+    log::info!("  {} nodes", mesh.n_nodes());
+    log::info!("  {} volume elements", mesh.n_volume_elements());
+    log::info!("");
 
     if mesh.dim == 3 {
-        log::info!("=== Magnetostatic solver (3-D vector potential) ===");
+        log::info!("\n=== Magnetostatic solver (3-D vector potential) ===\n");
         return run_3d(config, mesh, comm);
     }
-    log::info!("=== Magnetostatic solver (2-D A_z) ===");
+    log::info!("\n=== Magnetostatic solver (2-D A_z scalar) ===\n");
     run_2d(config, mesh, comm)
 }
 

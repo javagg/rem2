@@ -35,18 +35,24 @@ pub fn run_with_mesh(
 ) -> RemResult<FebiResult> {
     use std::f64::consts::PI;
 
+    log::info!("\n=== FE-BI (Finite Element - Boundary Integral) solver ===\n");
+
     let freqs = build_freq_list(febi_cfg);
-    log::info!("FE-BI solver start — {} frequencies", freqs.len());
+    log::info!("Frequency sweep:");
+    log::info!("  {} frequencies", freqs.len());
+    log::info!("");
 
     let surf = hybrid_mesh::extract_radiation_boundary(mesh, &febi_cfg.radiation_boundary)?;
-    log::info!("Radiation boundary: {} triangles, {} RWG edges",
-        surf.faces.len(), surf.edges.len());
+    log::info!("Radiation boundary:");
+    log::info!("  {} triangular faces", surf.faces.len());
+    log::info!("  {} RWG basis functions", surf.edges.len());
+    log::info!("");
 
     let mut sparams_out = Vec::new();
 
     for &freq in &freqs {
         let omega = 2.0 * PI * freq;
-        log::info!("  f = {:.4e} Hz  (ω = {:.4e} rad/s)", freq, omega);
+        log::info!("  Computing f = {:.4e} Hz (ω = {:.4e} rad/s)...", freq, omega);
 
         // 1. 组装 Calderón BI 矩阵
         let z_bi = calderon::assemble_calderon(&surf, freq, febi_cfg.aca_tol)?;

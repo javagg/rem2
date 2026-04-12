@@ -88,6 +88,8 @@ pub fn run_with_mesh(
     sbr_cfg: &SbrSolverConfig,
     mesh: &rem_mesh::RemMesh,
 ) -> RemResult<SbrResult> {
+    log::info!("\n=== Shooting and Bouncing Rays (SBR) solver ===\n");
+
     // ── 1. Surface mesh + BVH ─────────────────────────────────────────────
     let pec_attrs: Vec<u32> = config.boundaries.pec
         .as_ref()
@@ -101,14 +103,17 @@ pub fn run_with_mesh(
     }
 
     let surf = Arc::new(SurfaceMesh::extract(mesh, &pec_attrs)?);
-    log::info!("SBR surface mesh: {} faces", surf.faces.len());
+    log::info!("Surface mesh (PEC scatterer):");
+    log::info!("  {} triangular faces", surf.faces.len());
 
     // Pre-compute boundary edges for PTD correction
     let ptd_edges = extract_boundary_edges(&surf);
-    log::info!("PTD: {} boundary edges found", ptd_edges.len());
+    log::info!("PTD boundary diffraction:");
+    log::info!("  {} boundary edges", ptd_edges.len());
 
     let bvh = Bvh::build(Arc::clone(&surf));
-    log::info!("BVH built with {} nodes", surf.faces.len());
+    log::info!("BVH acceleration structure built");
+    log::info!("");
 
     // ── 2. Output directory ───────────────────────────────────────────────
     let output_dir = std::path::Path::new(config.problem.output_dir());
