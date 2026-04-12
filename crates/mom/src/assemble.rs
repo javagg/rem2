@@ -7,7 +7,7 @@ use crate::singular::{zmn_self_duffy_pulse, zmn_singular_pulse, classify_pair, T
 use crate::basis::rwg::RwgBasis;
 use nalgebra::{DMatrix, DVector};
 use num_complex::Complex64;
-use rem_core::{RemError, RemResult, EPS0, MU0, C0};
+use rem_core::{RemError, RemResult, EPS0, MU0, C0, LinearOperator};
 use std::f64::consts::PI;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -380,6 +380,153 @@ pub fn lu_solve(z: &DMatrix<Complex64>, rhs: &[Complex64]) -> RemResult<Vec<Comp
 // GMRES solver (restarted, complex, for large Z matrices)
 // ---------------------------------------------------------------------------
 
+/// Solve A·x = b using restarted GMRES with generic LinearOperator<Complex64>.
+///
+/// This is the new interface accepting any matrix type that implements LinearOperator,
+/// enabling future support for sparse matrices and other backends.
+///
+/// # Parameters
+/// - `op`: Matrix-vector operation (matvec)
+/// - `b`: Right-hand side vector
+/// - `restart`: Restart parameter (default 30)
+/// - `tol`: Convergence tolerance (default 1e-8)
+/// - `max_iters`: Maximum total iterations (default 500)
+///
+/// # Returns
+/// Computed solution x where A·x ≈ b
+pub fn gmres_solve_generic(
+    op: &dyn LinearOperator<Complex64>,
+    b: &DVector<Complex64>,
+    restart: usize,
+    tol: f64,
+    max_iters: usize,
+) -> RemResult<DVector<Complex64>> {
+    let (n, n_cols) = op.size();
+    if n != n_cols {
+        return Err(RemError::Other(
+            format!("gmres requires square operator, got {}×{}", n, n_cols)
+        ));
+    }
+    if b.len() != n {
+        return Err(RemError::Other(
+            format!("gmres dimension mismatch: operator {}×{}, rhs len {}", n, n_cols, b.len())
+        ));
+    }
+
+    let max_outer = (max_iters + restart - 1) / restart;
+    let mut x = DVector::zeros(n);
+    let b_norm = b.norm();
+
+    if b_norm < f64::EPSILON {
+        return Ok(x);
+    }
+
+    for _outer in 0..max_outer {
+        // Compute residual r = b - A·x
+        let mut r = b.clone();
+        {
+            let mut ax = DVector::zeros(n);
+            op.matvec(&x, &mut ax).map_err(|e| RemError::Other(e))?;
+            r -= &ax;
+        }
+        let beta = r.norm();
+
+        if beta / b_norm < tol {
+            return Ok(x);
+        }
+
+        // Arnoldi basis V (n × (restart+1))
+        let mut v: Vec<DVector<Complex64>> = Vec::with_capacity(restart + 1);
+        v.push(&r * Complex64::new(1.0 / beta, 0.0));
+
+        // Upper Hessenberg H ((restart+1) × restart)
+        let mut h = vec![vec![Complex64::new(0.0, 0.0); restart]; restart + 1];
+
+        // Givens rotation cosines and sines
+        let mut cs = vec![0.0f64; restart];
+        let mut sn = vec![Complex64::new(0.0, 0.0); restart];
+        let mut g = vec![Complex64::new(0.0, 0.0); restart + 1];
+        g[0] = Complex64::new(beta, 0.0);
+
+        let mut j_end = restart;
+        for j in 0..restart {
+            // w = A · v[j]
+            let mut w = DVector::zeros(n);
+            op.matvec(&v[j], &mut w).map_err(|e| RemError::Other(e))?;
+
+            // Modified Gram-Schmidt orthogonalization
+            for i in 0..=j {
+                h[i][j] = v[i].dot(&w.map(|c| c.conj()));
+                w -= &v[i] * h[i][j];
+            }
+            h[j + 1][j] = Complex64::new(w.norm(), 0.0);
+
+            // Normalize to get next basis vector
+            let h_norm = h[j + 1][j].re;
+            if h_norm > f64::EPSILON {
+                v.push(&w * Complex64::new(1.0 / h_norm, 0.0));
+            } else {
+                v.push(DVector::zeros(n));
+            }
+
+            // Apply previous Givens rotations to new column
+            for i in 0..j {
+                let tmp = cs[i] * h[i][j] + sn[i].conj() * h[i + 1][j];
+                h[i + 1][j] = -sn[i] * h[i][j] + cs[i] * h[i + 1][j];
+                h[i][j] = tmp;
+            }
+
+            // Compute new Givens rotation to zero out h[j+1][j]
+            let (c, s) = givens_rotation(h[j][j], h[j + 1][j]);
+            cs[j] = c;
+            sn[j] = s;
+            h[j][j] = c * h[j][j] + s.conj() * h[j + 1][j];
+            h[j + 1][j] = Complex64::new(0.0, 0.0);
+
+            // Update residual estimate
+            g[j + 1] = -sn[j] * g[j];
+            g[j] = cs[j] * g[j];
+
+            if g[j + 1].norm() / b_norm < tol {
+                j_end = j + 1;
+                break;
+            }
+        }
+
+        // Back-substitution to get y (j_end × 1)
+        let m = j_end;
+        let mut y = vec![Complex64::new(0.0, 0.0); m];
+        for i in (0..m).rev() {
+            y[i] = g[i];
+            for k in (i + 1)..m {
+                let yk = y[k];
+                y[i] -= h[i][k] * yk;
+            }
+            if h[i][i].norm() < f64::EPSILON {
+                return Err(RemError::Other("gmres_solve: singular Hessenberg".to_string()));
+            }
+            y[i] /= h[i][i];
+        }
+
+        // Update solution x += V_m · y
+        for j in 0..m {
+            x += &v[j] * y[j];
+        }
+    }
+
+    Ok(x)
+}
+
+/// Solve A·x = b using restarted GMRES (convenience wrapper).
+///
+/// Uses default parameters: restart=30, tol=1e-8, max_iters=500
+pub fn gmres_solve_op(
+    op: &dyn LinearOperator<Complex64>,
+    b: &DVector<Complex64>,
+) -> RemResult<DVector<Complex64>> {
+    gmres_solve_generic(op, b, 30, 1e-8, 500)
+}
+
 /// Solve Z·I = V using restarted GMRES (restart=30, tol=1e-8, max 500 iters).
 ///
 /// Uses modified Gram-Schmidt Arnoldi process. Suitable when N > ~1000 where
@@ -728,6 +875,70 @@ mod tests {
             let err = (x[i] - rhs[i]).norm();
             assert!(err < 1e-10, "index {i}: got {}, expected {}, err={err:.2e}",
                 x[i], rhs[i]);
+        }
+    }
+
+    /// Verify gmres_solve_op (new LinearOperator interface) matches old gmres_solve.
+    #[test]
+    fn gmres_solve_op_matches_old() {
+        let n = 8usize;
+        let mut z = DMatrix::<Complex64>::zeros(n, n);
+        let mut rhs = vec![Complex64::new(0.0, 0.0); n];
+
+        // Same diagonally dominant complex matrix as gmres_matches_lu_small
+        for i in 0..n {
+            for j in 0..n {
+                if i == j {
+                    z[(i, j)] = Complex64::new(10.0 + i as f64, 1.0);
+                } else {
+                    z[(i, j)] = Complex64::new(0.5 / (1.0 + (i as f64 - j as f64).abs()), -0.2);
+                }
+            }
+            rhs[i] = Complex64::new(i as f64 + 1.0, -(i as f64));
+        }
+
+        // Solve with old interface
+        let x_old = gmres_solve(&z, &rhs).unwrap();
+
+        // Solve with new LinearOperator interface
+        let b_dvector = DVector::from_vec(rhs.clone());
+        let x_new = gmres_solve_op(&z, &b_dvector).unwrap();
+
+        // Verify results match (allow small numerical difference)
+        for i in 0..n {
+            let err = (x_old[i] - x_new[i]).norm();
+            assert!(err < 1e-7, "index {i}: old={} new={} err={err:.2e}",
+                x_old[i], x_new[i]);
+        }
+    }
+
+    /// Test gmres_solve_generic with custom LinearOperator struct.
+    #[test]
+    fn gmres_solve_generic_identity() {
+        let n = 4usize;
+        let z = DMatrix::<Complex64>::from_fn(n, n, |i, j| {
+            if i == j {
+                Complex64::new(2.0, 0.0)
+            } else {
+                Complex64::new(0.0, 0.0)
+            }
+        });
+
+        let b = DVector::from_vec(vec![
+            Complex64::new(1.0, 0.0),
+            Complex64::new(2.0, 0.0),
+            Complex64::new(3.0, 0.0),
+            Complex64::new(4.0, 0.0),
+        ]);
+
+        let x = gmres_solve_generic(&z, &b, 10, 1e-8, 100).unwrap();
+
+        // Expected: x ≈ [0.5, 1.0, 1.5, 2.0] since 2·x = b
+        for i in 0..n {
+            let expected = Complex64::new((i as f64 + 1.0) / 2.0, 0.0);
+            let err = (x[i] - expected).norm();
+            assert!(err < 1e-8, "index {i}: got {}, expected {}, err={err:.2e}",
+                x[i], expected);
         }
     }
 }
