@@ -9,6 +9,7 @@ rem-config    = { workspace = true }
 rem-mesh      = { workspace = true }
 rem-parallel  = { workspace = true }
 rem-touchstone = { workspace = true }
+rem-layered-green = { workspace = true }
 num-complex   = { workspace = true }
 nalgebra      = { workspace = true }
 thiserror     = { workspace = true }

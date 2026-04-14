@@ -12,6 +12,9 @@ pub use near_field::{NearFieldPoint, write_near_field_csv, read_near_field_csv, 
 pub use sparse::{CsrMatrix, CsrMatrixComplex, TripletMatrix, SolveResult, solve_pcg};
 pub use operator::{LinearOperator, LinearSolver};
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use sparse::{solve_bicgstab_operator, solve_cg_operator, solve_gmres_operator};
+
 // ---------------------------------------------------------------------------
 // Unified solver entry point
 // ---------------------------------------------------------------------------
@@ -48,4 +51,29 @@ pub fn solve_spd(
 
     // Fallback (WASM, MPI, or ILU(0) failure)
     solve_pcg(mat, b, tol, max_iter, comm)
+}
+
+/// Solve the symmetric positive-definite system A x = b using a matrix-free
+/// operator callback.
+///
+/// This is the operator counterpart to [`solve_spd`]. It currently requires a
+/// native, single-rank execution context because the backend is routed through
+/// fem-rs operator solvers.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn solve_spd_operator<F>(
+    nrows: usize,
+    ncols: usize,
+    apply: F,
+    b: &[f64],
+    tol: f64,
+    max_iter: usize,
+    comm: &dyn rem_parallel::Comm,
+) -> Result<SolveResult, String>
+where
+    F: Fn(&[f64], &mut [f64]),
+{
+    if comm.size() != 1 {
+        return Err("solve_spd_operator currently requires a single-rank communicator".to_string());
+    }
+    sparse::solve_cg_operator(nrows, ncols, apply, b, tol, max_iter)
 }

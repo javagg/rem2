@@ -946,6 +946,12 @@ pub struct MomSolverConfig {
     #[serde(rename = "RefImpedance", default = "default_ref_impedance")]
     pub ref_impedance: f64,
 
+    /// Stratified dielectric substrate for layered Green's function.
+    /// When present, enables Sommerfeld integral / DCIM-based layered Green's function.
+    /// When absent, free-space Green's function is used.
+    #[serde(rename = "Substrate", default)]
+    pub substrate: Option<SubstrateConfig>,
+
     /// Near-field source file path. When set, the RHS is built from the
     /// near-field CSV data instead of the plane-wave model.  The file
     /// contains spatially sampled E/H fields exported from a previous
@@ -983,6 +989,54 @@ pub struct MomPort {
     #[serde(rename = "Impedance", default)]
     pub impedance: Option<f64>,
 }
+
+// ---------------------------------------------------------------------------
+// MoM Substrate configuration (stratified dielectric layers)
+// ---------------------------------------------------------------------------
+
+/// Stratified dielectric substrate for layered Green's function in MoM.
+/// Defines a stack of horizontal dielectric layers, with the bottom being
+/// either PEC or transmission to semi-infinite space.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SubstrateConfig {
+    /// List of dielectric layers from bottom to top.
+    /// Typically the bottom layer is ground or substrate, top layer is air.
+    #[serde(rename = "Layers", default)]
+    pub layers: Vec<SubstrateLayerConfig>,
+
+    /// If true, bottom layer sits on a PEC ground plane.
+    /// If false, semi-infinite dielectric extends downward.
+    #[serde(rename = "BottomPec", default = "default_bottom_pec")]
+    pub bottom_pec: bool,
+}
+
+/// Single dielectric layer in the substrate stack.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SubstrateLayerConfig {
+    /// Relative permittivity (isotropic for now)
+    #[serde(rename = "Permittivity", default = "default_permittivity")]
+    pub permittivity: f64,
+
+    /// Loss tangent: tan(δ) for dissipation model
+    #[serde(rename = "LossTangent", default)]
+    pub loss_tangent: f64,
+
+    /// Relative permeability (isotropic)
+    #[serde(rename = "Permeability", default = "default_permeability")]
+    pub permeability: f64,
+
+    /// Layer thickness [m].  Use a very large value (1e10) for top (air) layer.
+    #[serde(rename = "Thickness")]
+    pub thickness: f64,
+
+    /// Optional name (e.g., "Silicon", "FR4") for documentation
+    #[serde(rename = "Name", default)]
+    pub name: String,
+}
+
+fn default_bottom_pec() -> bool { true }
+fn default_permittivity() -> f64 { 1.0 }
+fn default_permeability() -> f64 { 1.0 }
 
 // ---------------------------------------------------------------------------
 // SBR+ solver config (REM extension — ignored by Palace)

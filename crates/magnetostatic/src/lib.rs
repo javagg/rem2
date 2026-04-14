@@ -26,7 +26,7 @@ use rem_config::PalaceConfig;
 use rem_core::{RemResult, solve_spd};
 use rem_parallel::Comm;
 use rem_materials::DomainMap;
-use rem_mesh::{RemMesh, BoundaryTag, amr};
+use rem_mesh::{RemMesh, BoundaryTag, ElementKind, FemSubMesh2d, amr, extract_submesh_tri3};
 use rem_mesh::gmsh::read_msh_file;
 use rem_electrostatic::assemble::{self, assemble_stiffness_aniso};
 use rem_electrostatic::bc;
@@ -120,7 +120,7 @@ fn run_2d(config: &PalaceConfig, mesh: RemMesh, comm: &dyn Comm) -> RemResult<()
     log::info!("Magnetic energy: {:.6e} J/m", energy);
 
     // Write CSV + VTK
-    write_outputs(output_dir, &final_mesh, &az, &b_field, energy)?;
+    write_outputs(output_dir, &final_mesh, &domain_map, &az, &b_field, energy)?;
 
     Ok(())
 }
@@ -169,7 +169,7 @@ fn run_3d(config: &PalaceConfig, mesh: RemMesh, comm: &dyn Comm) -> RemResult<()
                + postprocess::electrostatic_energy(&az, &mesh, nu_fn);
     log::info!("3-D magnetic energy: {:.6e} J", energy);
 
-    write_outputs(output_dir, &mesh, &az, &b_field, energy)
+    write_outputs(output_dir, &mesh, &domain_map, &az, &b_field, energy)
 }
 
 /// Solve the 3-D vector potential: three decoupled scalar Poisson systems.
@@ -310,6 +310,7 @@ fn find_surface_current_tag(mesh: &RemMesh) -> Option<u32> {
 fn write_outputs(
     output_dir: &Path,
     mesh: &RemMesh,
+    domain_map: &DomainMap,
     az: &[f64],
     b_field: &[[f64; 3]],
     energy: f64,
@@ -330,6 +331,30 @@ fn write_outputs(
     writeln!(f, "0.000000e0,{:.6e},0.000000e0,{:.6e}", energy, energy)
         .map_err(RemError::Io)?;
     log::info!("Written: {}", path.display());
+
+    let domain_energies = domain_magnetic_energy_records(mesh, domain_map, az, energy);
+    if !domain_energies.is_empty() {
+        let path = dir.join("domain-B-by-tag.csv");
+        let mut f = std::fs::File::create(&path).map_err(RemError::Io)?;
+        writeln!(
+            f,
+            r#""Domain Tag","Material Index","Magnetic Field Energy (J)","Energy Fraction""#
+        )
+        .map_err(RemError::Io)?;
+        for record in &domain_energies {
+            let material_index = record.material_index.map(|idx| idx.to_string()).unwrap_or_default();
+            writeln!(
+                f,
+                "{},{},{:.6e},{:.6e}",
+                record.domain_tag,
+                material_index,
+                record.energy,
+                record.fraction
+            )
+            .map_err(RemError::Io)?;
+        }
+        log::info!("Written: {}", path.display());
+    }
 
     // VTK with A_z and B
     let vtk_dir = output_dir.join("paraview");
@@ -390,6 +415,86 @@ fn write_outputs(
     Ok(())
 }
 
+struct DomainMagneticEnergyRecord {
+    domain_tag: u32,
+    material_index: Option<usize>,
+    energy: f64,
+    fraction: f64,
+}
+
+fn domain_magnetic_energy_records(
+    mesh: &RemMesh,
+    domain_map: &DomainMap,
+    az: &[f64],
+    total_energy: f64,
+) -> Vec<DomainMagneticEnergyRecord> {
+    let mut domain_tags: Vec<u32> = mesh.domain_tags.keys().copied().collect();
+    domain_tags.sort_unstable();
+
+    if mesh.dim == 2
+        && mesh.volume_elements.iter().all(|element| element.kind == ElementKind::Tri3)
+        && mesh.boundary_elements.iter().all(|element| element.kind == ElementKind::Line2)
+    {
+        return domain_tags
+            .into_iter()
+            .map(|tag| {
+                let (material_index, _) = domain_map.get_indexed(tag);
+                let energy = extract_domain_submesh(mesh, tag)
+                    .map(|submesh| {
+                        let sub_az = submesh.transfer_from_parent(az);
+                        postprocess::electrostatic_energy(
+                            &sub_az,
+                            &submesh.mesh,
+                            |sub_tag| domain_map.get(sub_tag).reluctivity(),
+                        )
+                    })
+                    .unwrap_or(0.0);
+                DomainMagneticEnergyRecord {
+                    domain_tag: tag,
+                    material_index: (material_index != usize::MAX).then_some(material_index),
+                    energy,
+                    fraction: if total_energy.abs() > 1e-300 { energy / total_energy } else { 0.0 },
+                }
+            })
+            .collect();
+    }
+
+    domain_tags
+        .into_iter()
+        .map(|tag| {
+            let (material_index, _) = domain_map.get_indexed(tag);
+            let energy = postprocess::electrostatic_energy(az, mesh, |elem_tag| {
+                if elem_tag == tag {
+                    domain_map.get(elem_tag).reluctivity()
+                } else {
+                    0.0
+                }
+            });
+            DomainMagneticEnergyRecord {
+                domain_tag: tag,
+                material_index: (material_index != usize::MAX).then_some(material_index),
+                energy,
+                fraction: if total_energy.abs() > 1e-300 { energy / total_energy } else { 0.0 },
+            }
+        })
+        .collect()
+}
+
+fn extract_domain_submesh(mesh: &RemMesh, domain_tag: u32) -> Option<FemSubMesh2d> {
+    match extract_submesh_tri3(mesh, &[domain_tag]) {
+        Ok(submesh) if !submesh.mesh.volume_elements.is_empty() => Some(submesh),
+        Ok(_) => None,
+        Err(err) => {
+            log::warn!(
+                "fem-rs Tri3 bridge submesh extraction failed for magnetostatic domain tag {} ({})",
+                domain_tag,
+                err
+            );
+            None
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -398,6 +503,7 @@ fn write_outputs(
 mod tests {
     use super::*;
     use rem_config::{load_config_from_str, ConfigFormat};
+    use rem_materials::Material;
     use rem_mesh::{Node, Element, ElementKind};
     use rem_parallel::NoComm;
     use std::collections::HashMap;
@@ -495,6 +601,26 @@ mod tests {
             (energy - expected).abs() / expected < 1e-12,
             "energy={:.6e}, expected={:.6e}", energy, expected
         );
+    }
+
+    #[test]
+    fn domain_magnetic_energy_breakdown_matches_total() {
+        use rem_core::constants::MU0;
+
+        let mut mesh = unit_square_mesh_grounded();
+        mesh.volume_elements[1].tag = 2;
+        mesh.domain_tags = [(1u32, 0usize), (2u32, 0usize)].into_iter().collect();
+
+        let domain_map = DomainMap::from_materials(vec![Material::default()], [(1u32, 0usize)]);
+        let az: Vec<f64> = mesh.nodes.iter().map(|node| node.y).collect();
+        let total = postprocess::electrostatic_energy(&az, &mesh, |_| 1.0 / MU0);
+        let parts = domain_magnetic_energy_records(&mesh, &domain_map, &az, total);
+
+        assert_eq!(parts.len(), 2);
+        let summed: f64 = parts.iter().map(|record| record.energy).sum();
+        assert!((summed - total).abs() < 1e-24, "summed={summed:.6e}, total={total:.6e}");
+        assert_eq!(parts[0].material_index, Some(0));
+        assert_eq!(parts[1].material_index, None);
     }
 
     #[test]

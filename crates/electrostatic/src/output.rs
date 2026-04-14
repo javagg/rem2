@@ -35,6 +35,46 @@ pub fn write_domain_energy(output_dir: &Path, e_energy: f64) -> RemResult<()> {
     Ok(())
 }
 
+/// Write per-domain electrostatic diagnostics to `<output_dir>/postpro/domain-E-by-tag.csv`.
+pub fn write_domain_energy_by_tag<T>(output_dir: &Path, energies: &[T]) -> RemResult<()>
+where
+    T: DomainEnergyRow,
+{
+    let dir = output_dir.join("postpro");
+    std::fs::create_dir_all(&dir).map_err(RemError::Io)?;
+    let path = dir.join("domain-E-by-tag.csv");
+
+    let mut f = std::fs::File::create(&path).map_err(RemError::Io)?;
+    writeln!(
+        f,
+        r#""Domain Tag","Material Index","Electric Field Energy (J)","Energy Fraction""#
+    ).map_err(RemError::Io)?;
+    for energy in energies {
+        let material_index = energy
+            .material_index()
+            .map(|idx| idx.to_string())
+            .unwrap_or_default();
+        writeln!(
+            f,
+            "{},{},{:.6e},{:.6e}",
+            energy.domain_tag(),
+            material_index,
+            energy.energy(),
+            energy.fraction()
+        ).map_err(RemError::Io)?;
+    }
+
+    log::info!("Written: {}", path.display());
+    Ok(())
+}
+
+pub trait DomainEnergyRow {
+    fn domain_tag(&self) -> u32;
+    fn material_index(&self) -> Option<usize>;
+    fn energy(&self) -> f64;
+    fn fraction(&self) -> f64;
+}
+
 /// Write the capacitance matrix to `<output_dir>/postpro/terminal-C.csv`.
 ///
 /// Palace format (N ports):

@@ -17,6 +17,7 @@
 pub mod surface_mesh;
 pub mod quadrature;
 pub mod green;
+pub mod green_wrapper;
 pub mod singular;
 pub mod assemble;
 pub mod excitation;

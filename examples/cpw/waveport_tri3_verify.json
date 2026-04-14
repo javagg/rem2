@@ -1,0 +1,55 @@
+{
+  "Problem": {
+    "Type": "Driven",
+    "Verbose": 1,
+    "Output": "./output/waveport_tri3_verify"
+  },
+  "Model": {
+    "Mesh": "examples/cpw/mesh/wave_verify_tri3.msh",
+    "L0": 1.0
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [1],
+        "Permittivity": 1.0,
+        "Permeability": 1.0
+      },
+      {
+        "Attributes": [2],
+        "Permittivity": 2.5,
+        "Permeability": 1.0
+      }
+    ]
+  },
+  "Boundaries": {
+    "PEC": { "Attributes": [8, 9] },
+    "Absorbing": {
+      "Attributes": [10],
+      "Order": 1
+    },
+    "WavePort": [
+      {
+        "Index": 1,
+        "Attributes": [4],
+        "Excitation": true,
+        "Mode": 1,
+        "Offset": 0.0,
+        "MaxIts": 20,
+        "EigenTol": 1.0e-6,
+        "Verbose": 0
+      }
+    ]
+  },
+  "Solver": {
+    "Driven": {
+      "MinFreq": 3.0e8,
+      "MaxFreq": 3.0e8,
+      "FreqStep": 1.0e8
+    },
+    "Linear": {
+      "Tol": 1.0e-10,
+      "MaxIter": 200
+    }
+  }
+}

@@ -17,7 +17,7 @@
 //! For a rectangular waveguide of width W the first eigenvalue is
 //! λ₁ = (π/W)² and the eigenvector is sin(πx/W), matching TE₁₀.
 
-use rem_mesh::{RemMesh, BoundaryTag, ElementKind};
+use rem_mesh::{RemMesh, BoundaryTag, ElementKind, extract_submesh_by_element_ids_tri3};
 use rem_core::TripletMatrix;
 use nalgebra::DMatrix;
 use std::collections::HashMap;
@@ -39,6 +39,19 @@ pub struct PortMode {
     pub shape: HashMap<usize, f64>,
     /// TE or TM mode classification.
     pub mode_type: ModeType,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PortSupportRegionSummary {
+    pub port_index: u32,
+    pub n_volume_elements: usize,
+    pub n_nodes: usize,
+    pub domain_tags: Vec<u32>,
+    pub boundary_length: f64,
+    pub x_min: f64,
+    pub y_min: f64,
+    pub x_max: f64,
+    pub y_max: f64,
 }
 
 impl PortMode {
@@ -118,6 +131,8 @@ pub fn compute_wave_port_mode_n(mesh: &RemMesh, port_idx: u32, mode_n: u32) -> O
     if port_elems.is_empty() {
         return None;
     }
+
+    log_port_support_region(mesh, port_idx, &port_elems);
 
     // 3. Build a local node numbering (global id → local 0-based)
     let mut global_to_local: HashMap<usize, usize> = HashMap::new();
@@ -279,6 +294,118 @@ pub fn compute_wave_port_mode_n(mesh: &RemMesh, port_idx: u32, mode_n: u32) -> O
     Some(PortMode { kc, shape: shape_map, mode_type: ModeType::Te })
 }
 
+pub fn collect_port_support_region(mesh: &RemMesh, port_idx: u32) -> Option<PortSupportRegionSummary> {
+    let port_tag = mesh.boundary_tags.iter()
+        .find_map(|(&tag, bc)| match bc {
+            BoundaryTag::WavePort { index } if *index == port_idx => Some(tag),
+            _ => None,
+        })?;
+    let port_elems: Vec<_> = mesh.boundary_elements.iter()
+        .filter(|element| element.tag == port_tag && element.kind == ElementKind::Line2)
+        .collect();
+    summarize_port_support_region(mesh, port_idx, &port_elems)
+}
+
+fn log_port_support_region(mesh: &RemMesh, port_idx: u32, port_elems: &[&rem_mesh::Element]) {
+    if let Some(summary) = summarize_port_support_region(mesh, port_idx, port_elems) {
+        log::info!(
+            "WavePort {} support region: {} Tri3 elems, {} nodes, domain tags {:?}",
+            summary.port_index,
+            summary.n_volume_elements,
+            summary.n_nodes,
+            summary.domain_tags
+        );
+    }
+}
+
+fn summarize_port_support_region(
+    mesh: &RemMesh,
+    port_idx: u32,
+    port_elems: &[&rem_mesh::Element],
+) -> Option<PortSupportRegionSummary> {
+    if mesh.dim != 2
+        || !mesh.volume_elements.iter().all(|element| element.kind == ElementKind::Tri3)
+        || !mesh.boundary_elements.iter().all(|element| element.kind == ElementKind::Line2)
+    {
+        return None;
+    }
+
+    let mut adjacent_volume_ids = Vec::new();
+    for (elem_id, element) in mesh.volume_elements.iter().enumerate() {
+        if element.kind != ElementKind::Tri3 {
+            continue;
+        }
+        let contains_port_edge = port_elems.iter().any(|port_elem| {
+            let a = port_elem.node_ids[0];
+            let b = port_elem.node_ids[1];
+            triangle_has_edge(&element.node_ids, a, b)
+        });
+        if contains_port_edge {
+            adjacent_volume_ids.push(elem_id);
+        }
+    }
+
+    if adjacent_volume_ids.is_empty() {
+        return None;
+    }
+
+    match extract_submesh_by_element_ids_tri3(mesh, &adjacent_volume_ids) {
+        Ok(submesh) => {
+            let mut tags: Vec<u32> = adjacent_volume_ids
+                .iter()
+                .map(|&element_id| mesh.volume_elements[element_id].tag)
+                .collect();
+            tags.sort_unstable();
+            tags.dedup();
+            let boundary_length: f64 = port_elems.iter().map(|element| line_length(mesh, element)).sum();
+            let mut unique_nodes: Vec<usize> = port_elems
+                .iter()
+                .flat_map(|element| element.node_ids.iter().copied())
+                .collect();
+            unique_nodes.sort_unstable();
+            unique_nodes.dedup();
+            let x_min = unique_nodes.iter().map(|&node_id| mesh.nodes[node_id].x).fold(f64::INFINITY, f64::min);
+            let y_min = unique_nodes.iter().map(|&node_id| mesh.nodes[node_id].y).fold(f64::INFINITY, f64::min);
+            let x_max = unique_nodes.iter().map(|&node_id| mesh.nodes[node_id].x).fold(f64::NEG_INFINITY, f64::max);
+            let y_max = unique_nodes.iter().map(|&node_id| mesh.nodes[node_id].y).fold(f64::NEG_INFINITY, f64::max);
+            Some(PortSupportRegionSummary {
+                port_index: port_idx,
+                n_volume_elements: submesh.mesh.n_volume_elements(),
+                n_nodes: submesh.mesh.n_nodes(),
+                domain_tags: tags,
+                boundary_length,
+                x_min,
+                y_min,
+                x_max,
+                y_max,
+            })
+        }
+        Err(err) => {
+            log::warn!(
+                "WavePort {} support-region extraction via fem bridge failed ({})",
+                port_idx,
+                err
+            );
+            None
+        }
+    }
+}
+
+fn triangle_has_edge(node_ids: &[usize], a: usize, b: usize) -> bool {
+    let has_a = node_ids.contains(&a);
+    let has_b = node_ids.contains(&b);
+    has_a && has_b
+}
+
+fn line_length(mesh: &RemMesh, element: &rem_mesh::Element) -> f64 {
+    let a = &mesh.nodes[element.node_ids[0]];
+    let b = &mesh.nodes[element.node_ids[1]];
+    let dx = b.x - a.x;
+    let dy = b.y - a.y;
+    let dz = b.z - a.z;
+    (dx * dx + dy * dy + dz * dz).sqrt()
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -311,6 +438,36 @@ mod tests {
         RemMesh {
             nodes,
             volume_elements: vec![],
+            boundary_elements,
+            domain_tags: Default::default(),
+            boundary_tags,
+            dim: 2,
+            rank: 0,
+            size: 1,
+        }
+    }
+
+    fn tri3_support_mesh() -> RemMesh {
+        let nodes = vec![
+            Node { id: 0, x: 0.0, y: 0.0, z: 0.0 },
+            Node { id: 1, x: 1.0, y: 0.0, z: 0.0 },
+            Node { id: 2, x: 1.0, y: 1.0, z: 0.0 },
+            Node { id: 3, x: 0.0, y: 1.0, z: 0.0 },
+        ];
+        let volume_elements = vec![
+            Element { id: 1, kind: ElementKind::Tri3, tag: 7, node_ids: vec![0, 1, 2], rank: 0 },
+            Element { id: 2, kind: ElementKind::Tri3, tag: 8, node_ids: vec![0, 2, 3], rank: 0 },
+        ];
+        let boundary_elements = vec![
+            Element { id: 3, kind: ElementKind::Line2, tag: 10, node_ids: vec![0, 1], rank: 0 },
+            Element { id: 4, kind: ElementKind::Line2, tag: 11, node_ids: vec![2, 3], rank: 0 },
+        ];
+        let mut boundary_tags = HashMap::new();
+        boundary_tags.insert(10u32, BoundaryTag::WavePort { index: 1 });
+        boundary_tags.insert(11u32, BoundaryTag::Ground);
+        RemMesh {
+            nodes,
+            volume_elements,
             boundary_elements,
             domain_tags: Default::default(),
             boundary_tags,
@@ -379,5 +536,27 @@ mod tests {
         let fc = mode.kc * C0 / (2.0 * std::f64::consts::PI);
         let z = mode.te_impedance(0.5 * fc); // below cutoff → evanescent
         assert!(!z.is_finite(), "expected inf below cutoff, got {z}");
+    }
+
+    #[test]
+    fn support_region_logging_helper_handles_non_tri3_mesh() {
+        let mesh = rectangular_port_mesh(1.0, 4);
+        let port_elems: Vec<_> = mesh.boundary_elements.iter().collect();
+        log_port_support_region(&mesh, 1, &port_elems);
+    }
+
+    #[test]
+    fn collect_port_support_region_summarizes_adjacent_triangles() {
+        let mesh = tri3_support_mesh();
+        let summary = collect_port_support_region(&mesh, 1).expect("support-region summary should exist");
+        assert_eq!(summary.port_index, 1);
+        assert_eq!(summary.n_volume_elements, 1);
+        assert_eq!(summary.n_nodes, 3);
+        assert_eq!(summary.domain_tags, vec![7]);
+        assert!((summary.boundary_length - 1.0).abs() < 1e-12);
+        assert_eq!(summary.x_min, 0.0);
+        assert_eq!(summary.y_min, 0.0);
+        assert_eq!(summary.x_max, 1.0);
+        assert_eq!(summary.y_max, 0.0);
     }
 }

@@ -1,0 +1,13 @@
+[package]
+name = "rem-layered-green"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+num-complex = "0.4"
+nalgebra = { version = "0.32", features = ["serde-serialize"] }
+anyhow = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]
+approx = "0.5"

@@ -1,16 +1,66 @@
 use anyhow::Context;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use rem_config::{load_config, ProblemType};
+use rem_convert::{convert_project_to_rem, ProjectFormat, Sonnet19Overrides};
 use rem_parallel::{NoComm, WorldComm, Comm};
 use std::path::PathBuf;
 
 mod output;
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum CliProjectFormat {
+    Sonnet19,
+    Ansys,
+    Ads,
+}
+
+impl From<CliProjectFormat> for ProjectFormat {
+    fn from(value: CliProjectFormat) -> Self {
+        match value {
+            CliProjectFormat::Sonnet19 => ProjectFormat::Sonnet19,
+            CliProjectFormat::Ansys => ProjectFormat::Ansys,
+            CliProjectFormat::Ads => ProjectFormat::Ads,
+        }
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "rem", about = "Rust Electromagnetic Solver — Palace-compatible")]
 struct Args {
     /// Palace-format config file (.json or .yaml)
-    config: PathBuf,
+    config: Option<PathBuf>,
+
+    /// Generic project path for conversion (Sonnet19/Ansys/ADS).
+    #[arg(long)]
+    project: Option<PathBuf>,
+
+    /// Project format for --project.
+    #[arg(long, value_enum)]
+    format: Option<CliProjectFormat>,
+
+    /// Sonnet 19 XML project file (.xml) to convert into REM config + .msh
+    #[arg(long)]
+    sonnet19_xml: Option<PathBuf>,
+
+    /// Output REM config path (JSON). Used with --sonnet19-xml.
+    #[arg(long)]
+    out_config: Option<PathBuf>,
+
+    /// Output GMSH mesh path (.msh). Used with --sonnet19-xml.
+    #[arg(long)]
+    out_msh: Option<PathBuf>,
+
+    /// Override frequency start [Hz] in generated MoM config.
+    #[arg(long)]
+    freq_min: Option<f64>,
+
+    /// Override frequency end [Hz] in generated MoM config.
+    #[arg(long)]
+    freq_max: Option<f64>,
+
+    /// Override frequency step [Hz] in generated MoM config.
+    #[arg(long)]
+    freq_step: Option<f64>,
 
     /// Override output directory
     #[arg(short, long)]
@@ -41,8 +91,38 @@ fn main() -> anyhow::Result<()> {
         output::print_system_info(None, None);
     }
 
-    let mut config = load_config(&args.config)
-        .with_context(|| format!("reading config: {}", args.config.display()))?;
+    if let Some(project_path) = args.project.as_ref().or(args.sonnet19_xml.as_ref()) {
+        let format = match (args.format, args.sonnet19_xml.as_ref()) {
+            (Some(fmt), _) => fmt.into(),
+            (None, Some(_)) => ProjectFormat::Sonnet19,
+            (None, None) => {
+                anyhow::bail!("missing --format with --project; expected one of: sonnet19, ansys, ads")
+            }
+        };
+        let out_config = args.out_config.clone().unwrap_or_else(|| project_path.with_extension("json"));
+        let out_msh = args.out_msh.clone().unwrap_or_else(|| project_path.with_extension("msh"));
+
+        convert_project_to_rem(
+            format,
+            project_path,
+            &out_config,
+            &out_msh,
+            Sonnet19Overrides {
+                freq_min: args.freq_min,
+                freq_max: args.freq_max,
+                freq_step: args.freq_step,
+            },
+        )?;
+        return Ok(());
+    }
+
+    let config_path = args
+        .config
+        .as_ref()
+        .context("missing config path; use rem <config.json|yaml> or conversion mode: --project <file> --format <sonnet19|ansys|ads>")?;
+
+    let mut config = load_config(config_path)
+        .with_context(|| format!("reading config: {}", config_path.display()))?;
 
     if let Some(out) = args.output {
         config.problem.output = Some(out.to_string_lossy().into_owned());

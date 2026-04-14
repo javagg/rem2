@@ -35,12 +35,12 @@ use num_complex::Complex64;
 use rem_config::{PalaceConfig, CurrentDipoleSpec};
 use rem_core::{CsrMatrix, RemError, RemResult, TripletMatrix, report_peak_memory};
 use rem_eigenmode::assemble_mass::assemble_mass;
-use rem_electrostatic::{assemble::{assemble_stiffness, assemble_stiffness_aniso}, bc::{collect_dirichlet_dofs, apply_dirichlet}};
+use rem_electrostatic::{assemble::{assemble_stiffness, assemble_stiffness_aniso}, bc::{collect_dirichlet_dofs, apply_dirichlet}, postprocess};
 use rem_materials::DomainMap;
-use rem_mesh::{RemMesh, BoundaryTag, amr};
+use rem_mesh::{RemMesh, BoundaryTag, ElementKind, FemSubMesh2d, amr, extract_submesh_tri3};
 use rem_mesh::gmsh::read_msh_file;
 use rem_parallel::Comm;
-use port_modal::{PortMode, compute_wave_port_mode};
+use port_modal::{PortMode, PortSupportRegionSummary, collect_port_support_region, compute_wave_port_mode};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -343,8 +343,12 @@ fn run_frequency_sweep(
     let n_ports = all_ports.len();
     // Pre-compute wave-port modes for all wave ports
     let mut wave_modes: HashMap<u32, PortMode> = HashMap::new();
+    let mut wave_port_support_regions: Vec<PortSupportRegionSummary> = Vec::new();
     for (pidx, kind) in &all_ports {
         if let PortKind::Wave(idx) = kind {
+            if let Some(summary) = collect_port_support_region(mesh, *idx) {
+                wave_port_support_regions.push(summary);
+            }
             if let Some(m) = compute_wave_port_mode(mesh, *idx) {
                 log::info!("WavePort {idx}: k_c={:.4e} rad/m", m.kc);
                 wave_modes.insert(*pidx, m);
@@ -821,6 +825,18 @@ fn run_frequency_sweep(
 
     #[cfg(not(target_arch = "wasm32"))]
     output::write_s_params(out_dir, &freq_results)?;
+    #[cfg(not(target_arch = "wasm32"))]
+    if !wave_port_support_regions.is_empty() {
+        output::write_wave_port_support_regions(out_dir, &wave_port_support_regions)?;
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    if !peak_phi.is_empty() {
+        let peak_energy = postprocess::electrostatic_energy(&peak_phi, mesh, |tag| domain_map.get(tag).epsilon_abs());
+        let domain_energies = peak_domain_energy_records(mesh, domain_map, &peak_phi, peak_energy);
+        if !domain_energies.is_empty() {
+            output::write_peak_domain_energy(out_dir, peak_freq_hz, &domain_energies)?;
+        }
+    }
 
     // Near-to-far-field transform (if configured)
     let mut far_field_pattern: Vec<far_field::FarFieldPoint> = Vec::new();
@@ -1509,4 +1525,135 @@ fn nearest_node(mesh: &RemMesh, dipole: &CurrentDipoleSpec) -> usize {
         })
         .map(|(i, _)| i)
         .unwrap_or(0)
+}
+
+fn peak_domain_energy_records(
+    mesh: &RemMesh,
+    domain_map: &DomainMap,
+    phi: &[f64],
+    total_energy: f64,
+) -> Vec<output::DomainEnergyRecord> {
+    let mut domain_tags: Vec<u32> = mesh.domain_tags.keys().copied().collect();
+    domain_tags.sort_unstable();
+
+    if mesh.dim == 2
+        && mesh.volume_elements.iter().all(|element| element.kind == ElementKind::Tri3)
+        && mesh.boundary_elements.iter().all(|element| element.kind == ElementKind::Line2)
+    {
+        return domain_tags
+            .into_iter()
+            .map(|tag| {
+                let (material_index, _) = domain_map.get_indexed(tag);
+                let energy = extract_domain_submesh(mesh, tag)
+                    .map(|submesh| {
+                        let sub_phi = submesh.transfer_from_parent(phi);
+                        postprocess::electrostatic_energy(
+                            &sub_phi,
+                            &submesh.mesh,
+                            |sub_tag| domain_map.get(sub_tag).epsilon_abs(),
+                        )
+                    })
+                    .unwrap_or(0.0);
+                output::DomainEnergyRecord {
+                    domain_tag: tag,
+                    material_index: (material_index != usize::MAX).then_some(material_index),
+                    energy,
+                    fraction: if total_energy.abs() > 1e-300 { energy / total_energy } else { 0.0 },
+                }
+            })
+            .collect();
+    }
+
+    domain_tags
+        .into_iter()
+        .map(|tag| {
+            let (material_index, _) = domain_map.get_indexed(tag);
+            let energy = postprocess::electrostatic_energy(phi, mesh, |elem_tag| {
+                if elem_tag == tag {
+                    domain_map.get(elem_tag).epsilon_abs()
+                } else {
+                    0.0
+                }
+            });
+            output::DomainEnergyRecord {
+                domain_tag: tag,
+                material_index: (material_index != usize::MAX).then_some(material_index),
+                energy,
+                fraction: if total_energy.abs() > 1e-300 { energy / total_energy } else { 0.0 },
+            }
+        })
+        .collect()
+}
+
+fn extract_domain_submesh(mesh: &RemMesh, domain_tag: u32) -> Option<FemSubMesh2d> {
+    match extract_submesh_tri3(mesh, &[domain_tag]) {
+        Ok(submesh) if !submesh.mesh.volume_elements.is_empty() => Some(submesh),
+        Ok(_) => None,
+        Err(err) => {
+            log::warn!(
+                "fem-rs Tri3 bridge submesh extraction failed for driven domain tag {} ({})",
+                domain_tag,
+                err
+            );
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rem_materials::Material;
+    use rem_mesh::{Element, Node};
+
+    fn unit_square_mesh() -> RemMesh {
+        let nodes = vec![
+            Node { id: 0, x: 0.0, y: 0.0, z: 0.0 },
+            Node { id: 1, x: 1.0, y: 0.0, z: 0.0 },
+            Node { id: 2, x: 1.0, y: 1.0, z: 0.0 },
+            Node { id: 3, x: 0.0, y: 1.0, z: 0.0 },
+        ];
+        let volume_elements = vec![
+            Element { id: 1, kind: ElementKind::Tri3, tag: 1, node_ids: vec![0, 1, 2], rank: 0 },
+            Element { id: 2, kind: ElementKind::Tri3, tag: 2, node_ids: vec![0, 2, 3], rank: 0 },
+        ];
+        let boundary_elements = vec![
+            Element { id: 3, kind: ElementKind::Line2, tag: 10, node_ids: vec![0, 1], rank: 0 },
+            Element { id: 4, kind: ElementKind::Line2, tag: 11, node_ids: vec![1, 2], rank: 0 },
+            Element { id: 5, kind: ElementKind::Line2, tag: 12, node_ids: vec![2, 3], rank: 0 },
+            Element { id: 6, kind: ElementKind::Line2, tag: 13, node_ids: vec![3, 0], rank: 0 },
+        ];
+        RemMesh {
+            nodes,
+            volume_elements,
+            boundary_elements,
+            domain_tags: [(1u32, 0usize), (2u32, 0usize)].into_iter().collect(),
+            boundary_tags: [
+                (10u32, BoundaryTag::Ground),
+                (11u32, BoundaryTag::Ground),
+                (12u32, BoundaryTag::Ground),
+                (13u32, BoundaryTag::Ground),
+            ].into_iter().collect(),
+            dim: 2,
+            rank: 0,
+            size: 1,
+        }
+    }
+
+    #[test]
+    fn peak_domain_energy_breakdown_matches_total() {
+        use rem_core::constants::EPS0;
+
+        let mesh = unit_square_mesh();
+        let domain_map = DomainMap::from_materials(vec![Material::default()], [(1u32, 0usize)]);
+        let phi: Vec<f64> = mesh.nodes.iter().map(|node| node.y).collect();
+        let total = postprocess::electrostatic_energy(&phi, &mesh, |_| EPS0);
+        let parts = peak_domain_energy_records(&mesh, &domain_map, &phi, total);
+
+        assert_eq!(parts.len(), 2);
+        let summed: f64 = parts.iter().map(|record| record.energy).sum();
+        assert!((summed - total).abs() < 1e-30, "summed={summed:.6e}, total={total:.6e}");
+        assert_eq!(parts[0].material_index, Some(0));
+        assert_eq!(parts[1].material_index, None);
+    }
 }

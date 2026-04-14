@@ -1,0 +1,204 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<SonnetProject Version="20" Type="GEO" xmlns="https://www.sonnetsoftware.com/schema/project" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="https://www.sonnetsoftware.com/schema/project https://www.sonnetsoftware.com/schema/project/sonnet_project_file-1.0.xsd">
+    <GlobalTemperature Tnom="25.000"/>
+    <Header>
+        <Created Program="gds" Version="18.52">
+            <Date>04/07/2026 09:41:48</Date>
+        </Created>
+        <Modified Program="sonnet" Version="19.52.2025">
+            <License>No License</License>
+            <Date>04/10/2026 14:24:07</Date>
+            <Change Importance="MEDIUM">
+                <Date>04/07/2026 09:49:22</Date>
+            </Change>
+            <Change Importance="HIGH">
+                <Date>04/07/2026 09:49:22</Date>
+            </Change>
+        </Modified>
+    </Header>
+    <Units>
+        <Angle>DEG</Angle>
+        <Capacitance>PF</Capacitance>
+        <Conductance>/OH</Conductance>
+        <Conductivity>SM</Conductivity>
+        <Frequency>GHZ</Frequency>
+        <Inductance>NH</Inductance>
+        <Length>UM</Length>
+        <Roughness>UM</Roughness>
+        <Resistance>OH</Resistance>
+        <Resistivity>OHCM</Resistivity>
+        <SheetRes>OHSQ</SheetRes>
+    </Units>
+    <Control>
+        <SweepType>VARSWP</SweepType>
+        <DeEmbed On="TRUE"/>
+        <Precision>DOUBLE</Precision>
+        <SpeedControl>MAX_ACCURACY</SpeedControl>
+        <ABSCacheLevel>MULTI_SWEEP</ABSCacheLevel>
+        <EdgeCheck Type="LEVELS">2</EdgeCheck>
+    </Control>
+    <Geometry YDirection="Negative">
+        <Dielectric MacroID="dielectricA" Name="Air" LossType="CONDUCTIVITY" Anisotropic="FALSE">
+            <FrequencyModel ModelType="None" RefFreq="0.0" ValidRef="FALSE"/>
+            <Conductivity Value="0.0"/>
+            <Eps Value="1.0"/>
+            <Tan Value="0.0"/>
+            <MuRel Value="1.0"/>
+            <MagLossTan Value="0.0"/>
+        </Dielectric>
+        <Dielectric MacroID="dielectricB" Name="Silicon" LossType="CONDUCTIVITY" Anisotropic="FALSE">
+            <FrequencyModel ModelType="None" RefFreq="0.0" ValidRef="FALSE"/>
+            <Conductivity Value="0.0"/>
+            <Eps Value="11.45"/>
+            <Tan Value="0.0"/>
+            <MuRel Value="1.0"/>
+            <MagLossTan Value="0.0"/>
+        </Dielectric>
+        <Conductor MacroID="conductorA" Name="Perfect Conductor" Conductivity="INF" LossType="CONDUCTIVITY"/>
+        <Box>
+            <BoxCover MacroID="top_cover" Type="TOP" MaterialType="PERFECT_CONDUCTOR" Roughness="0.0" Thickness="0.0"/>
+            <BoxCover MacroID="bot_cover" Type="BOTTOM" MaterialType="PERFECT_CONDUCTOR" Roughness="0.0" Thickness="0.0"/>
+            <Size X="400" Y="400" Z="1010"/>
+            <NumCells X="800" Y="800"/>
+            <LocalOrigin X="0" Y="400"/>
+            <Symmetry On="FALSE"/>
+        </Box>
+        <Level MacroID="diel_layerA" MaterialName="Silicon" Number="0">
+            <DielectricMaterialModel Thickness="500.0"/>
+            <Objects>
+                <PlanarTechLayer MacroID="planarTLA" Name="Stream1:0" MaterialName="Perfect Conductor">
+                    <ImportExportMapping GDSStreamDataTypes="1:0"/>
+                    <ColorPattern Color="#b03060" Pattern="updiag"/>
+                    <PlanarMaterialModel CurrentRatio="0.5" ModelType="THIN_METAL" Thickness="0.0"/>
+                    <RoughnessModel RoughnessOn="FALSE"/>
+                    <PlanarMeshing EnableMesh="TRUE" FillType="RECTANGULAR"/>
+                    <SubsectionMeshing XMin="1" XMax="100" YMin="1" YMax="100" EdgeMeshed="TRUE" DiagonalEdges="FALSE" AnisotropicType="X_AND_Y"/>
+                    <GLGMeshing GLG="FALSE"/>
+                    <Objects>
+                        <PlanarPolygon MacroID="polygonA" Id="1">
+                            <Points>(140,248) (140,208) (195,208) (195,202) (198,202)</Points>
+                            <Points>(198,204) (197,204) (197,208) (203,208) (203,204)</Points>
+                            <Points>(202,204) (202,202) (205,202) (205,208) (260,208)</Points>
+                            <Points>(260,248)</Points>
+                            <Objects>
+                                <Port MacroID="portA" Number="-1" Vertex="3">
+                                    <Type Type="COUPLED" AutoGroupName="A">
+                                        <GndRef Type="BOX" Direction="AUTO"/>
+                                        <TerminalWidth Type="CUST" Width="2"/>
+                                    </Type>
+                                    <Impedance Resistance="50" Reactance="0" Inductance="0" Capacitance="0"/>
+                                    <Center>(196.5,202)</Center>
+                                </Port>
+                                <Port MacroID="portB" Number="-1" Vertex="11">
+                                    <Type Type="COUPLED" AutoGroupName="A">
+                                        <GndRef Type="BOX" Direction="AUTO"/>
+                                        <TerminalWidth Type="CUST" Width="2"/>
+                                    </Type>
+                                    <Impedance Resistance="50" Reactance="0" Inductance="0" Capacitance="0"/>
+                                    <Center>(203.5,202)</Center>
+                                </Port>
+                            </Objects>
+                        </PlanarPolygon>
+                        <PlanarPolygon MacroID="polygonB" Id="2">
+                            <Points>(192,200) (192,198) (193,198) (193,192) (140,192)</Points>
+                            <Points>(140,152) (260,152) (260,192) (207,192) (207,198)</Points>
+                            <Points>(208,198) (208,200) (205,200) (205,192) (195,192)</Points>
+                            <Points>(195,200)</Points>
+                            <Objects>
+                                <Port MacroID="portC" Number="1" Vertex="15">
+                                    <Type Type="COUPLED" AutoGroupName="A">
+                                        <GndRef Type="BOX" Direction="AUTO"/>
+                                        <TerminalWidth Type="CUST" Width="2"/>
+                                    </Type>
+                                    <Impedance Resistance="50" Reactance="0" Inductance="0" Capacitance="0"/>
+                                    <Center>(193.5,200)</Center>
+                                </Port>
+                                <Port MacroID="portD" Number="1" Vertex="11">
+                                    <Type Type="COUPLED" AutoGroupName="A">
+                                        <GndRef Type="BOX" Direction="AUTO"/>
+                                        <TerminalWidth Type="CUST" Width="2"/>
+                                    </Type>
+                                    <Impedance Resistance="50" Reactance="0" Inductance="0" Capacitance="0"/>
+                                    <Center>(206.5,200)</Center>
+                                </Port>
+                            </Objects>
+                        </PlanarPolygon>
+                        <PlanarPolygon MacroID="polygonC" Id="3">
+                            <Points>(0,400) (0,120) (120.001,120) (120.001,280) (280,280)</Points>
+                            <Points>(280,120) (0,120) (0,0) (400,0) (400,400)</Points>
+                        </PlanarPolygon>
+                    </Objects>
+                </PlanarTechLayer>
+            </Objects>
+        </Level>
+        <Level MacroID="diel_layerB" MaterialName="Air" Number="1">
+            <DielectricMaterialModel Thickness="10.0"/>
+            <Objects>
+                <PlanarTechLayer MacroID="planarTLB" Name="Stream2:0" MaterialName="Perfect Conductor">
+                    <ImportExportMapping GDSStreamDataTypes="2:0"/>
+                    <ColorPattern Color="#b03060" Pattern="updiag"/>
+                    <PlanarMaterialModel CurrentRatio="0.5" ModelType="THIN_METAL" Thickness="0.0"/>
+                    <RoughnessModel RoughnessOn="FALSE"/>
+                    <PlanarMeshing EnableMesh="TRUE" FillType="RECTANGULAR"/>
+                    <SubsectionMeshing XMin="1" XMax="100" YMin="1" YMax="100" EdgeMeshed="TRUE" DiagonalEdges="FALSE" AnisotropicType="X_AND_Y"/>
+                    <GLGMeshing GLG="FALSE"/>
+                    <Objects>
+                        <PlanarPolygon MacroID="polygonD" Id="4">
+                            <Points>(0,400) (400,400) (400,201) (210,201) (209.913,201.004)</Points>
+                            <Points>(209.826,201.015) (209.741,201.034) (209.658,201.06) (209.577,201.094) (209.5,201.134)</Points>
+                            <Points>(209.426,201.181) (209.357,201.234) (209.293,201.293) (206.586,204) (190.414,204)</Points>
+                            <Points>(189,202.586) (189,197.414) (190.414,196) (206.586,196) (209.293,198.707)</Points>
+                            <Points>(209.357,198.766) (209.426,198.819) (209.5,198.866) (209.577,198.906) (209.658,198.94)</Points>
+                            <Points>(209.741,198.966) (209.826,198.985) (209.913,198.996) (210,199) (400,199)</Points>
+                            <Points>(400,197) (210.414,197) (207.707,194.293) (207.643,194.234) (207.574,194.181)</Points>
+                            <Points>(207.5,194.134) (207.423,194.094) (207.342,194.06) (207.259,194.034) (207.174,194.015)</Points>
+                            <Points>(207.087,194.004) (207,194) (190,194) (189.913,194.004) (189.826,194.015)</Points>
+                            <Points>(189.741,194.034) (189.658,194.06) (189.577,194.094) (189.5,194.134) (189.426,194.181)</Points>
+                            <Points>(189.357,194.234) (189.293,194.293) (187.293,196.293) (187.234,196.357) (187.181,196.426)</Points>
+                            <Points>(187.134,196.5) (187.094,196.577) (187.06,196.658) (187.034,196.741) (187.015,196.826)</Points>
+                            <Points>(187.004,196.913) (187,197) (187,203) (187.004,203.087) (187.015,203.174)</Points>
+                            <Points>(187.034,203.259) (187.06,203.342) (187.094,203.423) (187.134,203.5) (187.181,203.574)</Points>
+                            <Points>(187.234,203.643) (187.293,203.707) (189.293,205.707) (189.357,205.766) (189.426,205.819)</Points>
+                            <Points>(189.5,205.866) (189.577,205.906) (189.658,205.94) (189.741,205.966) (189.826,205.985)</Points>
+                            <Points>(189.913,205.996) (190,206) (207,206) (207.087,205.996) (207.174,205.985)</Points>
+                            <Points>(207.259,205.966) (207.342,205.94) (207.423,205.906) (207.5,205.866) (207.574,205.819)</Points>
+                            <Points>(207.643,205.766) (207.707,205.707) (210.414,203) (228.5,203) (228.5,204.5)</Points>
+                            <Points>(211.035,204.5) (208.768,206.768) (208.607,206.915) (208.434,207.048) (208.25,207.165)</Points>
+                            <Points>(208.057,207.266) (207.855,207.349) (207.647,207.415) (207.434,207.462) (207.218,207.491)</Points>
+                            <Points>(207,207.5) (190,207.5) (189.782,207.491) (189.566,207.462) (189.353,207.415)</Points>
+                            <Points>(189.145,207.349) (188.943,207.266) (188.75,207.165) (188.566,207.048) (188.393,206.915)</Points>
+                            <Points>(188.232,206.768) (186.232,204.768) (186.085,204.607) (185.952,204.434) (185.835,204.25)</Points>
+                            <Points>(185.734,204.057) (185.651,203.855) (185.585,203.647) (185.538,203.434) (185.509,203.218)</Points>
+                            <Points>(185.5,203) (185.5,197) (185.509,196.782) (185.538,196.566) (185.585,196.353)</Points>
+                            <Points>(185.651,196.145) (185.734,195.943) (185.835,195.75) (185.952,195.566) (186.085,195.393)</Points>
+                            <Points>(186.232,195.232) (188.232,193.232) (188.393,193.085) (188.566,192.952) (188.75,192.835)</Points>
+                            <Points>(188.943,192.734) (189.145,192.651) (189.353,192.585) (189.566,192.538) (189.782,192.509)</Points>
+                            <Points>(190,192.5) (207,192.5) (207.218,192.509) (207.434,192.538) (207.647,192.585)</Points>
+                            <Points>(207.855,192.651) (208.057,192.734) (208.25,192.835) (208.434,192.952) (208.607,193.085)</Points>
+                            <Points>(208.768,193.232) (211.035,195.5) (400,195.5) (400,0) (0,0)</Points>
+                            <Objects>
+                                <Port MacroID="portE" Number="2" Vertex="29">
+                                    <Type Type="BOX"/>
+                                    <Impedance Resistance="50" Reactance="0" Inductance="0" Capacitance="0"/>
+                                    <Center>(400,198)</Center>
+                                </Port>
+                            </Objects>
+                        </PlanarPolygon>
+                    </Objects>
+                </PlanarTechLayer>
+            </Objects>
+        </Level>
+        <Level MacroID="diel_layerC" MaterialName="Silicon" Number="2">
+            <DielectricMaterialModel Thickness="500.0"/>
+        </Level>
+        <CoupledGroup Name="A"/>
+    </Geometry>
+    <Sweeps SweepVariables="FALSE">
+        <Set MacroID="sweepsetA" On="TRUE">
+            <Frequencies>
+                <Sweep MacroID="freq_sweepA" Type="ABS_ENTRY" On="TRUE" Adaptive="TRUE" Start="4" Stop="8" Target="10000"/>
+            </Frequencies>
+        </Set>
+    </Sweeps>
+    <OutputFiles Folder=""/>
+</SonnetProject>

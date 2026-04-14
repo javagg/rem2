@@ -5,6 +5,83 @@ use rem_mesh::RemMesh;
 use std::path::Path;
 use std::io::Write;
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DomainEnergyRecord {
+    pub domain_tag: u32,
+    pub material_index: Option<usize>,
+    pub energy: f64,
+    pub fraction: f64,
+}
+
+pub(crate) fn write_wave_port_support_regions(
+    out_dir: &str,
+    summaries: &[super::port_modal::PortSupportRegionSummary],
+) -> RemResult<()> {
+    let dir = Path::new(out_dir).join("postpro");
+    std::fs::create_dir_all(&dir).map_err(RemError::Io)?;
+    let path = dir.join("wave-port-support.csv");
+    let mut f = std::fs::File::create(&path).map_err(RemError::Io)?;
+
+    writeln!(
+        f,
+        "Port Index,Tri3 Elements,Nodes,Boundary Length,X Min,Y Min,X Max,Y Max,Domain Tags"
+    )
+    .map_err(RemError::Io)?;
+    for summary in summaries {
+        let tags = summary.domain_tags.iter().map(u32::to_string).collect::<Vec<_>>().join(";");
+        writeln!(
+            f,
+            "{},{},{},{:.6e},{:.6e},{:.6e},{:.6e},{:.6e},{}",
+            summary.port_index,
+            summary.n_volume_elements,
+            summary.n_nodes,
+            summary.boundary_length,
+            summary.x_min,
+            summary.y_min,
+            summary.x_max,
+            summary.y_max,
+            tags
+        )
+        .map_err(RemError::Io)?;
+    }
+
+    log::info!("Wrote wave-port support regions to {}", path.display());
+    Ok(())
+}
+
+pub(crate) fn write_peak_domain_energy(
+    out_dir: &str,
+    peak_freq_hz: f64,
+    energies: &[DomainEnergyRecord],
+) -> RemResult<()> {
+    let dir = Path::new(out_dir).join("postpro");
+    std::fs::create_dir_all(&dir).map_err(RemError::Io)?;
+    let path = dir.join("domain-E-peak-by-tag.csv");
+    let mut f = std::fs::File::create(&path).map_err(RemError::Io)?;
+
+    writeln!(
+        f,
+        "Peak Frequency (Hz),Domain Tag,Material Index,Electric Field Energy (J),Energy Fraction"
+    )
+    .map_err(RemError::Io)?;
+    for record in energies {
+        let material_index = record.material_index.map(|idx| idx.to_string()).unwrap_or_default();
+        writeln!(
+            f,
+            "{:.6e},{},{},{:.6e},{:.6e}",
+            peak_freq_hz,
+            record.domain_tag,
+            material_index,
+            record.energy,
+            record.fraction
+        )
+        .map_err(RemError::Io)?;
+    }
+
+    log::info!("Wrote peak domain electric energy to {}", path.display());
+    Ok(())
+}
+
 /// Write S-parameter CSV in Palace format.
 ///
 /// For a single port: `f (Hz), Re(S[1][1]), Im(S[1][1]), |S[1][1]| (dB)`

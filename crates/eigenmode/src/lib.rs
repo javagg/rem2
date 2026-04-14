@@ -24,7 +24,7 @@ use rem_config::PalaceConfig;
 use rem_core::{CsrMatrix, RemError, RemResult, TripletMatrix, report_peak_memory, solve_pcg};
 use rem_electrostatic::{assemble::assemble_stiffness, bc::{collect_dirichlet_dofs, apply_dirichlet, collect_periodic_node_pairs, apply_periodic}};
 use rem_materials::DomainMap;
-use rem_mesh::{RemMesh, amr};
+use rem_mesh::{RemMesh, ElementKind, amr, refine_marked_tri3};
 use rem_mesh::gmsh::read_msh_file;
 use rem_parallel::Comm;
 use nalgebra::DMatrix;
@@ -96,7 +96,7 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
                     break;
                 }
 
-                let (fine_mesh, _midpoints) = amr::refine_marked(&cur_mesh, &marked);
+                let (fine_mesh, _midpoints) = refine_amr_mesh(&cur_mesh, &marked);
                 result = solve(config, &fine_mesh, &domain_map, comm)?;
                 cur_mesh = fine_mesh;
 
@@ -147,6 +147,31 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
     log::info!("  {} modes saved to output/", save_n);
     report_peak_memory("Eigenmode solver");
     Ok(())
+}
+
+fn refine_amr_mesh(
+    mesh: &RemMesh,
+    marked: &[usize],
+) -> (RemMesh, std::collections::HashMap<(usize, usize), usize>) {
+    if mesh.dim == 2
+        && mesh.volume_elements.iter().all(|element| element.kind == ElementKind::Tri3)
+        && mesh.boundary_elements.iter().all(|element| element.kind == ElementKind::Line2)
+    {
+        match refine_marked_tri3(mesh, marked) {
+            Ok((fine_mesh, midpoint_map)) => {
+                log::info!("AMR refine backend: fem-rs Tri3 bridge");
+                return (fine_mesh, midpoint_map);
+            }
+            Err(err) => {
+                log::warn!(
+                    "fem-rs Tri3 bridge refinement failed ({}); falling back to legacy AMR",
+                    err
+                );
+            }
+        }
+    }
+
+    amr::refine_marked(mesh, marked)
 }
 
 /// Result of an eigenmode solve.
@@ -417,7 +442,7 @@ pub fn solve(
     Ok(EigenResult {
         frequencies_hz: eigenpairs.iter().map(|(f, _)| *f).collect(),
         eigenvectors:   {
-            let mut vecs: Vec<Vec<f64>> = eigenpairs.into_iter().map(|(_, mut v)| {
+            let vecs: Vec<Vec<f64>> = eigenpairs.into_iter().map(|(_, mut v)| {
                 if !periodic_pairs.is_empty() {
                     rem_electrostatic::bc::propagate_periodic(&mut v, &periodic_pairs);
                 }
@@ -499,8 +524,8 @@ fn boundary_element_grad_and_area(
             let phi0 = phi.get(node_ids[0]).copied().unwrap_or(0.0);
             let phi1 = phi.get(node_ids[1]).copied().unwrap_or(0.0);
             let phi2 = phi.get(node_ids[2]).copied().unwrap_or(0.0);
-            let a11 = v1[0]; let a12 = v1[1]; let a13 = v1[2];
-            let a21 = v2[0]; let a22 = v2[1]; let a23 = v2[2];
+            let a11 = v1[0]; let a12 = v1[1];
+            let a21 = v2[0]; let a22 = v2[1];
             // Solve 2×2 system for (s, t) such that grad_φ ≈ (phi1-phi0)*grad_s + (phi2-phi0)*grad_t
             // Simplified: use barycentric gradient directly
             let det = a11*a22 - a12*a21;

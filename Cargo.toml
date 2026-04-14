@@ -12,6 +12,7 @@ members = [
     "crates/driven",
     "crates/transient",
     "crates/result",
+    "crates/convert",
     "crates/cli",
     "crates/parallel",
     "crates/wasm",
@@ -23,6 +24,7 @@ members = [
     "crates/febi",
     "crates/ddm",
     "crates/planar",
+    "crates/layered_green",
     "vendor/rmetis",
 ]
 
@@ -40,6 +42,7 @@ rem-mesh      = { path = "crates/mesh" }
 rem-materials = { path = "crates/materials" }
 rem-bc            = { path = "crates/bc" }
 rem-result        = { path = "crates/result" }
+rem-convert       = { path = "crates/convert" }
 rem-electrostatic = { path = "crates/electrostatic" }
 rem-magnetostatic = { path = "crates/magnetostatic" }
 rem-eigenmode     = { path = "crates/eigenmode" }
@@ -50,6 +53,7 @@ rem-mom           = { path = "crates/mom" }
 rem-febi          = { path = "crates/febi" }
 rem-ddm           = { path = "crates/ddm" }
 rem-planar        = { path = "crates/planar" }
+rem-layered-green = { path = "crates/layered_green" }
 rem-touchstone    = { path = "crates/touchstone" }
 rem-sbr           = { path = "crates/sbr" }
 rem-wasm          = { path = "crates/wasm" }

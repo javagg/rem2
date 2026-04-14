@@ -37,7 +37,8 @@
 | `cpw/cpw_lumped_uniform.json` | cpw | Driven | `cpw_lumped_0.msh` | palace/examples/cpw | Pending |
 | `cpw/cpw_lumped_eigen.json` | cpw | Eigenmode | `cpw_lumped_0.msh` | palace/examples/cpw | Pending |
 | `cpw/cpw_wave_adaptive.json` | cpw | Driven | `cpw_wave_0.msh` | palace/examples/cpw | Pending |
-| `cpw/cpw_wave_uniform.json` | cpw | Driven | `cpw_wave_0.msh` | palace/examples/cpw | Pending |
+| `cpw/cpw_wave_uniform.json` | cpw | Driven | `cpw_wave_0.msh` | palace/examples/cpw | Diverged |
+| `cpw/waveport_tri3_verify.json` | cpw | Driven | `wave_verify_tri3.msh` | — | REM Only |
 | `cpw/cpw_wave_eigen.json` | cpw | Eigenmode | `cpw_wave_0.msh` | palace/examples/cpw | Pending |
 | `cylinder/cavity_pec.json` | cylinder | Eigenmode | `cylinder_hex.msh` | palace/examples/cylinder | Pending |
 | `cylinder/cavity_impedance.json` | cylinder | Eigenmode | `cylinder_prism.msh` | palace/examples/cylinder | Pending |
@@ -121,10 +122,15 @@ Transient 三例均使用 `ModulatedGaussian` 激励，f=10 GHz，MaxTime=1 ns�
 | `cpw_lumped_uniform.json` | Driven | `cpw_lumped_0.msh` | 2–32 GHz, Step=6 GHz | 均匀扫频 |
 | `cpw_lumped_eigen.json` | Eigenmode | `cpw_lumped_0.msh` | Target=16 GHz | N=1 |
 | `cpw_wave_adaptive.json` | Driven | `cpw_wave_0.msh` | 2–32 GHz | 自适应，AdaptiveTol=1e-3 |
-| `cpw_wave_uniform.json` | Driven | `cpw_wave_0.msh` | 2–32 GHz, Step=6 GHz | Sapphire 各向异性，含 Probe/Energy/Dielectric 后处理 |
+| `cpw_wave_uniform.json` | Driven | `cpw_wave_0.msh` | 2–32 GHz, Step=6 GHz | Sapphire 各向异性，含 Probe/Energy/Dielectric 后处理；配置字段已修正，但当前网格仍需清理 |
 | `cpw_wave_eigen.json` | Eigenmode | `cpw_wave_0.msh` | Target=10 GHz | N=1 |
+| `waveport_tri3_verify.json` | Driven | `wave_verify_tri3.msh` | 300 MHz | 最小 Tri3 WavePort 验证，用于检查 `wave-port-support.csv` 与 `domain-E-peak-by-tag.csv` |
 
-`cpw_wave_uniform` 为最完整配置：材质各向异性（蓝宝石），含 `SurfaceFlux`、`Dielectric`（SA/MS/MA 界面损耗）与 `Probe` 后处理。
+`cpw_wave_uniform` 仍是字段最完整的 CPW WavePort 配置：材质各向异性（蓝宝石），含 `SurfaceFlux`、`Dielectric`（SA/MS/MA 界面损耗）与 `Probe` 后处理；但当前 `cpw_wave_0.msh` 在 REM 路径下会触发退化 Tri3，需要单独整理网格后再恢复为直接验证入口。
+
+`waveport_tri3_verify` 是当前最小可运行的 WavePort 回归用例，已经实测生成 `wave-port-support.csv` 和非零的 `domain-E-peak-by-tag.csv`。
+
+可用根目录脚本 `python verify_examples.py waveport-smoke` 自动运行该用例，并检查这两个 CSV 是否生成且峰值域能量为非零。
 
 ---
 

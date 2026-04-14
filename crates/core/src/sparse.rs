@@ -501,6 +501,103 @@ pub fn solve_cholesky(mat: &CsrMatrix, b: &[f64]) -> Result<SolveResult, String>
     }
 }
 
+/// Solve A x = b using fem-rs Conjugate Gradient with a matrix-free operator.
+///
+/// The `apply` callback computes `y <- A * x`.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn solve_cg_operator<F>(
+    nrows: usize,
+    ncols: usize,
+    apply: F,
+    b: &[f64],
+    tol: f64,
+    max_iter: usize,
+) -> Result<SolveResult, String>
+where
+    F: Fn(&[f64], &mut [f64]),
+{
+    let cfg = fem_solver::SolverConfig {
+        rtol: tol,
+        max_iter,
+        ..fem_solver::SolverConfig::default()
+    };
+    let mut x = vec![0.0f64; ncols];
+    match fem_solver::solve_cg_operator(nrows, ncols, apply, b, &mut x, &cfg) {
+        Ok(r) => Ok(SolveResult {
+            solution: x,
+            iterations: r.iterations,
+            residual_norm: r.final_residual,
+            converged: r.converged,
+        }),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Solve A x = b using fem-rs restarted GMRES with a matrix-free operator.
+///
+/// The `apply` callback computes `y <- A * x`.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn solve_gmres_operator<F>(
+    nrows: usize,
+    ncols: usize,
+    apply: F,
+    b: &[f64],
+    restart: usize,
+    tol: f64,
+    max_iter: usize,
+) -> Result<SolveResult, String>
+where
+    F: Fn(&[f64], &mut [f64]),
+{
+    let cfg = fem_solver::SolverConfig {
+        rtol: tol,
+        max_iter,
+        ..fem_solver::SolverConfig::default()
+    };
+    let mut x = vec![0.0f64; ncols];
+    match fem_solver::solve_gmres_operator(nrows, ncols, apply, b, &mut x, restart, &cfg) {
+        Ok(r) => Ok(SolveResult {
+            solution: x,
+            iterations: r.iterations,
+            residual_norm: r.final_residual,
+            converged: r.converged,
+        }),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Solve A x = b using fem-rs BiCGSTAB with a matrix-free operator.
+///
+/// The `apply` callback computes `y <- A * x`.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn solve_bicgstab_operator<F>(
+    nrows: usize,
+    ncols: usize,
+    apply: F,
+    b: &[f64],
+    tol: f64,
+    max_iter: usize,
+) -> Result<SolveResult, String>
+where
+    F: Fn(&[f64], &mut [f64]),
+{
+    let cfg = fem_solver::SolverConfig {
+        rtol: tol,
+        max_iter,
+        ..fem_solver::SolverConfig::default()
+    };
+    let mut x = vec![0.0f64; ncols];
+    match fem_solver::solve_bicgstab_operator(nrows, ncols, apply, b, &mut x, &cfg) {
+        Ok(r) => Ok(SolveResult {
+            solution: x,
+            iterations: r.iterations,
+            residual_norm: r.final_residual,
+            converged: r.converged,
+        }),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -600,6 +697,51 @@ mod tests {
         let csr = t.to_csr();
         assert_eq!(csr.row_ptr, vec![0, 1, 1, 1, 2]);
         assert_eq!(csr.col_idx, vec![0, 3]);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn laplacian_apply(x: &[f64], y: &mut [f64]) {
+        assert_eq!(x.len(), 3);
+        assert_eq!(y.len(), 3);
+        y[0] = 2.0 * x[0] - x[1];
+        y[1] = -x[0] + 2.0 * x[1] - x[2];
+        y[2] = -x[1] + 2.0 * x[2];
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn cg_operator_solves_laplacian() {
+        let b = vec![0.0, 1.0, 0.0];
+        let res = solve_cg_operator(3, 3, laplacian_apply, &b, 1e-12, 100)
+            .expect("CG operator solve should succeed");
+        assert!(res.converged);
+        assert!((res.solution[0] - 0.5).abs() < 1e-10);
+        assert!((res.solution[1] - 1.0).abs() < 1e-10);
+        assert!((res.solution[2] - 0.5).abs() < 1e-10);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn gmres_operator_solves_laplacian() {
+        let b = vec![0.0, 1.0, 0.0];
+        let res = solve_gmres_operator(3, 3, laplacian_apply, &b, 8, 1e-12, 100)
+            .expect("GMRES operator solve should succeed");
+        assert!(res.converged);
+        assert!((res.solution[0] - 0.5).abs() < 1e-10);
+        assert!((res.solution[1] - 1.0).abs() < 1e-10);
+        assert!((res.solution[2] - 0.5).abs() < 1e-10);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn bicgstab_operator_solves_laplacian() {
+        let b = vec![0.0, 1.0, 0.0];
+        let res = solve_bicgstab_operator(3, 3, laplacian_apply, &b, 1e-12, 100)
+            .expect("BiCGSTAB operator solve should succeed");
+        assert!(res.converged);
+        assert!((res.solution[0] - 0.5).abs() < 1e-10);
+        assert!((res.solution[1] - 1.0).abs() < 1e-10);
+        assert!((res.solution[2] - 0.5).abs() < 1e-10);
     }
 }
 

@@ -21,7 +21,7 @@ use rem_config::PalaceConfig;
 use rem_core::{RemResult, solve_spd, report_peak_memory};
 use rem_parallel::Comm;
 use rem_materials::DomainMap;
-use rem_mesh::{RemMesh, BoundaryTag, amr};
+use rem_mesh::{RemMesh, BoundaryTag, ElementKind, FemSubMesh2d, amr, extract_submesh_tri3, refine_marked_tri3};
 use rem_mesh::gmsh::read_msh_file;
 use std::path::Path;
 
@@ -81,7 +81,7 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
                 break;
             }
 
-            let (fine_mesh, midpoints) = amr::refine_marked(&cur_mesh, &marked);
+            let (fine_mesh, midpoints) = refine_amr_mesh(&cur_mesh, &marked);
             // Prolongate solution as initial guess (not used for linear Poisson — re-solve)
             let _ = amr::prolongate_p1(&phi, fine_mesh.n_nodes(), &midpoints);
 
@@ -110,6 +110,31 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
 
     report_peak_memory("Electrostatic solver");
     Ok(())
+}
+
+fn refine_amr_mesh(
+    mesh: &RemMesh,
+    marked: &[usize],
+) -> (RemMesh, std::collections::HashMap<(usize, usize), usize>) {
+    if mesh.dim == 2
+        && mesh.volume_elements.iter().all(|element| element.kind == ElementKind::Tri3)
+        && mesh.boundary_elements.iter().all(|element| element.kind == ElementKind::Line2)
+    {
+        match refine_marked_tri3(mesh, marked) {
+            Ok((fine_mesh, midpoint_map)) => {
+                log::info!("AMR refine backend: fem-rs Tri3 bridge");
+                return (fine_mesh, midpoint_map);
+            }
+            Err(err) => {
+                log::warn!(
+                    "fem-rs Tri3 bridge refinement failed ({}); falling back to legacy AMR",
+                    err
+                );
+            }
+        }
+    }
+
+    amr::refine_marked(mesh, marked)
 }
 
 /// Solve a single electrostatic problem with one conductor excited.
@@ -203,9 +228,20 @@ fn finalize(
     // Electrostatic energy
     let energy = postprocess::electrostatic_energy(phi, mesh, eps_fn);
     log::info!("Electrostatic energy: {:.6e} J", energy);
+    let domain_energies = domain_energy_records(mesh, domain_map, phi, energy);
+    for record in &domain_energies {
+        log::info!(
+            "Electrostatic energy [domain tag {}, mat {}]: {:.6e} J ({:.2}%)",
+            record.domain_tag,
+            record.material_index.unwrap_or(usize::MAX),
+            record.energy,
+            100.0 * record.fraction
+        );
+    }
 
     // CSV outputs
     output::write_domain_energy(output_dir, energy)?;
+    output::write_domain_energy_by_tag(output_dir, &domain_energies)?;
     if let Some(c) = c_matrix {
         output::write_capacitance_matrix(output_dir, c)?;
     }
@@ -214,6 +250,117 @@ fn finalize(
     output::write_vtk(output_dir, mesh, phi, &e_field)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+fn domain_energy_breakdown(mesh: &RemMesh, domain_map: &DomainMap, phi: &[f64]) -> Vec<(u32, f64)> {
+    domain_energy_records(mesh, domain_map, phi, 0.0)
+        .into_iter()
+        .map(|record| (record.domain_tag, record.energy))
+        .collect()
+}
+
+struct DomainEnergyRecord {
+    domain_tag: u32,
+    material_index: Option<usize>,
+    energy: f64,
+    fraction: f64,
+}
+
+fn domain_energy_records(
+    mesh: &RemMesh,
+    domain_map: &DomainMap,
+    phi: &[f64],
+    total_energy: f64,
+) -> Vec<DomainEnergyRecord> {
+    let mut domain_tags: Vec<u32> = mesh.domain_tags.keys().copied().collect();
+    domain_tags.sort_unstable();
+
+    if mesh.dim == 2
+        && mesh.volume_elements.iter().all(|element| element.kind == ElementKind::Tri3)
+        && mesh.boundary_elements.iter().all(|element| element.kind == ElementKind::Line2)
+    {
+        let mut energies = Vec::new();
+        for tag in domain_tags {
+            let (material_index, _) = domain_map.get_indexed(tag);
+            match extract_domain_submesh(mesh, tag) {
+                Some(submesh) => {
+                    let sub_phi = submesh.transfer_from_parent(phi);
+                    let energy = postprocess::electrostatic_energy(
+                        &sub_phi,
+                        &submesh.mesh,
+                        |sub_tag| domain_map.get(sub_tag).epsilon_abs(),
+                    );
+                    energies.push(DomainEnergyRecord {
+                        domain_tag: tag,
+                        material_index: (material_index != usize::MAX).then_some(material_index),
+                        energy,
+                        fraction: if total_energy.abs() > 1e-300 { energy / total_energy } else { 0.0 },
+                    });
+                }
+                None => energies.push(DomainEnergyRecord {
+                    domain_tag: tag,
+                    material_index: (material_index != usize::MAX).then_some(material_index),
+                    energy: 0.0,
+                    fraction: 0.0,
+                }),
+            }
+        }
+        return energies;
+    }
+
+    domain_tags
+        .into_iter()
+        .map(|tag| {
+            let (material_index, _) = domain_map.get_indexed(tag);
+            let energy = postprocess::electrostatic_energy(phi, mesh, |elem_tag| {
+                if elem_tag == tag {
+                    domain_map.get(elem_tag).epsilon_abs()
+                } else {
+                    0.0
+                }
+            });
+            DomainEnergyRecord {
+                domain_tag: tag,
+                material_index: (material_index != usize::MAX).then_some(material_index),
+                energy,
+                fraction: if total_energy.abs() > 1e-300 { energy / total_energy } else { 0.0 },
+            }
+        })
+        .collect()
+}
+
+impl output::DomainEnergyRow for DomainEnergyRecord {
+    fn domain_tag(&self) -> u32 {
+        self.domain_tag
+    }
+
+    fn material_index(&self) -> Option<usize> {
+        self.material_index
+    }
+
+    fn energy(&self) -> f64 {
+        self.energy
+    }
+
+    fn fraction(&self) -> f64 {
+        self.fraction
+    }
+}
+
+fn extract_domain_submesh(mesh: &RemMesh, domain_tag: u32) -> Option<FemSubMesh2d> {
+    match extract_submesh_tri3(mesh, &[domain_tag]) {
+        Ok(submesh) if !submesh.mesh.volume_elements.is_empty() => Some(submesh),
+        Ok(_) => None,
+        Err(err) => {
+            log::warn!(
+                "fem-rs Tri3 bridge submesh extraction failed for domain tag {} ({})",
+                domain_tag,
+                err
+            );
+            None
+        }
+    }
 }
 
 /// Return the INDEX of the first Terminal, LumpedPort, or WavePort boundary.
@@ -237,6 +384,7 @@ fn find_excited_port(mesh: &RemMesh) -> Option<u32> {
 mod tests {
     use super::*;
     use rem_config::{load_config_from_str, ConfigFormat};
+    use rem_materials::Material;
     use rem_mesh::{Node, Element, ElementKind};
     use rem_parallel::NoComm;
     use std::collections::HashMap;
@@ -360,7 +508,7 @@ mod tests {
 
         // Mark all elements explicitly (simulate AMR trigger)
         let all_marked: Vec<usize> = (0..mesh.volume_elements.len()).collect();
-        let (fine, midpoints) = amr::refine_marked(&mesh, &all_marked);
+        let (fine, midpoints) = refine_amr_mesh(&mesh, &all_marked);
         assert!(fine.n_nodes() > mesh.n_nodes(),
             "red refinement should add midpoint nodes");
         assert!(fine.volume_elements.len() >= 4 * mesh.volume_elements.len(),
@@ -381,5 +529,44 @@ mod tests {
             assert!((phi_prolonged[i] - node.y).abs() < 1e-12,
                 "prolongated node {i}: expected y={:.3}, got {:.6}", node.y, phi_prolonged[i]);
         }
+    }
+
+    #[test]
+    fn amr_helper_uses_tri3_bridge_path() {
+        let mesh = unit_square_mesh();
+        let all_marked: Vec<usize> = (0..mesh.volume_elements.len()).collect();
+
+        let (fine, midpoints) = refine_amr_mesh(&mesh, &all_marked);
+
+        assert_eq!(fine.dim, 2);
+        assert!(fine.volume_elements.iter().all(|element| element.kind == ElementKind::Tri3));
+        assert!(fine.boundary_elements.iter().all(|element| element.kind == ElementKind::Line2));
+        assert_eq!(midpoints.len(), 5, "unit square split should expose five coarse-edge midpoints");
+    }
+
+    #[test]
+    fn domain_submesh_energy_breakdown_matches_total() {
+        use rem_core::constants::EPS0;
+
+        let mut mesh = unit_square_mesh();
+        mesh.volume_elements[1].tag = 2;
+        mesh.domain_tags = [(1u32, 0usize), (2u32, 0usize)].into_iter().collect();
+
+        let domain_map = DomainMap::from_materials(vec![Material::default()], [(1u32, 0usize)]);
+        let phi: Vec<f64> = mesh.nodes.iter().map(|n| n.y).collect();
+
+        let total = postprocess::electrostatic_energy(&phi, &mesh, |_| EPS0);
+        let simple_parts = domain_energy_breakdown(&mesh, &domain_map, &phi);
+        let parts = domain_energy_records(&mesh, &domain_map, &phi, total);
+
+        assert_eq!(parts.len(), 2);
+        assert_eq!(simple_parts.len(), 2);
+        let summed: f64 = parts.iter().map(|record| record.energy).sum();
+        assert!((summed - total).abs() < 1e-30, "summed={summed:.6e}, total={total:.6e}");
+        assert_eq!(parts[0].material_index, Some(0));
+        assert_eq!(parts[1].material_index, None);
+
+        let submesh = extract_domain_submesh(&mesh, 2).expect("domain 2 submesh should exist");
+        assert!(submesh.mesh.volume_elements.iter().all(|element| element.tag == 2));
     }
 }
