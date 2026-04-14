@@ -1,6 +1,7 @@
 [submodule "vendor/rmetis"]
 	path = vendor/rmetis
 	url = https://github.com/rem-rs/rmetis.git
+	branch = main
 [submodule "vendor/rmsh"]
 	path = vendor/rmsh
 	url = https://github.com/rust-msh/rmsh.git
