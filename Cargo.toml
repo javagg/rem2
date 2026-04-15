@@ -72,6 +72,7 @@ fem-io       = { path = "vendor/fem-rs/crates/io" }
 
 wasm-bindgen      = "0.2"
 console_error_panic_hook = "0.1"
+jsmpi             = "0.1"
 
 # serialization
 serde       = { version = "1", features = ["derive"] }
