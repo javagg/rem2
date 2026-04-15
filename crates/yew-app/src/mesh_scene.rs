@@ -62,6 +62,13 @@ fn compute_bounds(points: &[[f32; 3]]) -> ([f32; 3], f32) {
     (center, diag)
 }
 
+fn is_fullscreen_active() -> bool {
+    web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.fullscreen_element())
+        .is_some()
+}
+
 fn draw_mesh(
     canvas: &HtmlCanvasElement,
     ctx: &CanvasRenderingContext2d,
@@ -209,6 +216,7 @@ fn draw_mesh(
 
 #[function_component(MeshScene)]
 pub fn mesh_scene(props: &MeshSceneProps) -> Html {
+    let scene_wrap_ref = use_node_ref();
     let canvas_ref = use_node_ref();
     let geom = use_state(|| None::<PreviewGeometry>);
     let status = use_state(|| "Preparing mesh preview...".to_string());
@@ -217,6 +225,7 @@ pub fn mesh_scene(props: &MeshSceneProps) -> Html {
     let show_faces = use_state(|| true);
     let show_edges = use_state(|| true);
     let show_axes = use_state(|| true);
+    let fullscreen = use_state(is_fullscreen_active);
 
     let camera_ref = use_mut_ref(|| {
         let mut cam = OrbitCamera::new();
@@ -435,8 +444,38 @@ pub fn mesh_scene(props: &MeshSceneProps) -> Html {
         })
     };
 
+    let on_toggle_fullscreen = {
+        let scene_wrap_ref = scene_wrap_ref.clone();
+        let fullscreen = fullscreen.clone();
+        Callback::from(move |_e: MouseEvent| {
+            if let Some(document) = web_sys::window().and_then(|w| w.document()) {
+                if document.fullscreen_element().is_some() {
+                    let _ = document.exit_fullscreen();
+                    fullscreen.set(false);
+                } else if let Some(el) = scene_wrap_ref.cast::<web_sys::Element>() {
+                    let _ = el.request_fullscreen();
+                    fullscreen.set(true);
+                }
+            }
+        })
+    };
+
+    let fullscreen_btn = if *fullscreen {
+        html! {
+            <svg class="mesh-btn-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M6 9V6h3M15 6h3v3M18 15v3h-3M9 18H6v-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+        }
+    } else {
+        html! {
+            <svg class="mesh-btn-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M9 6H6v3M15 6h3v3M18 15v3h-3M9 18H6v-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+        }
+    };
+
     html! {
-        <div class="mesh-scene-wrap">
+        <div class="mesh-scene-wrap" ref={scene_wrap_ref}>
             <div class="mesh-scene-toolbar">
                 <label class="mesh-scene-toggle">
                     <input type="checkbox" checked={*color_by_topology} onchange={on_toggle_topology_color} />
@@ -454,7 +493,24 @@ pub fn mesh_scene(props: &MeshSceneProps) -> Html {
                     <input type="checkbox" checked={*show_axes} onchange={on_toggle_axes} />
                     {"Axes"}
                 </label>
-                <button type="button" class="collapse-btn" onclick={on_reset_view}>{"Reset View"}</button>
+                <button
+                    type="button"
+                    class="collapse-btn mesh-action-btn mesh-icon-only-btn mesh-fullscreen-btn"
+                    onclick={on_toggle_fullscreen}
+                    title={if *fullscreen { "Exit fullscreen" } else { "Enter fullscreen" }}
+                    aria-label={if *fullscreen { "Exit fullscreen" } else { "Enter fullscreen" }}>
+                    {fullscreen_btn}
+                </button>
+                <button
+                    type="button"
+                    class="collapse-btn mesh-action-btn mesh-icon-only-btn"
+                    onclick={on_reset_view}
+                    title="Reset view"
+                    aria-label="Reset view">
+                    <svg class="mesh-btn-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M4 4v6h6M20 20v-6h-6M20 10A8 8 0 0 0 6.4 5.3M4 14a8 8 0 0 0 13.6 4.7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </button>
             </div>
             <canvas
                 class="mesh-canvas"

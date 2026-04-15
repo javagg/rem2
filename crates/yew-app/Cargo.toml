@@ -7,7 +7,7 @@ edition = "2021"
 yew          = { version = "0.21", features = ["csr"] }
 wasm-bindgen = { workspace = true }
 wasm-bindgen-futures = "0.4"
-web-sys      = { version = "0.3", features = ["HtmlSelectElement", "HtmlInputElement", "HtmlCanvasElement", "CanvasRenderingContext2d", "CanvasGradient", "MouseEvent", "WheelEvent"] }
+web-sys      = { version = "0.3", features = ["Document", "Element", "HtmlSelectElement", "HtmlInputElement", "HtmlCanvasElement", "CanvasRenderingContext2d", "CanvasGradient", "MouseEvent", "WheelEvent"] }
 gloo         = { version = "0.11", features = ["futures"] }
 jsmpi        = "0.1"
 js-sys       = "0.3"

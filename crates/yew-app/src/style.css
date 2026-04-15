@@ -134,6 +134,19 @@ h1 {
     min-height: 0;
 }
 
+.mesh-scene-wrap:fullscreen {
+    width: 100vw;
+    height: 100vh;
+    padding: 12px;
+    box-sizing: border-box;
+    gap: 10px;
+    background: #0f141a;
+}
+
+.mesh-scene-wrap:fullscreen .mesh-scene-toolbar {
+    justify-content: flex-start;
+}
+
 .mesh-scene-toolbar {
     display: flex;
     align-items: center;
@@ -148,6 +161,30 @@ h1 {
     gap: 4px;
     color: #c9d4df;
     font-size: 12px;
+}
+
+.mesh-action-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.mesh-btn-icon {
+    width: 14px;
+    height: 14px;
+    flex: 0 0 auto;
+}
+
+.mesh-icon-only-btn {
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    justify-content: center;
+}
+
+.mesh-fullscreen-btn .mesh-btn-icon {
+    width: 18px;
+    height: 18px;
 }
 
 .mesh-canvas {
