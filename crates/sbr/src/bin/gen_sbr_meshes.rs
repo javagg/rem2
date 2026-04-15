@@ -8,7 +8,7 @@ fn main() {
 
     // PEC sphere: radius 0.5 m, 24 lat × 48 lon, tag=1
     let msh = pec_sphere_msh(0.5, 24, 48, 1);
-    let out = "examples/sbr_sphere/mesh/sphere.msh";
+    let out = "examples/rem/sbr_sphere/mesh/sphere.msh";
     std::fs::write(out, &msh).expect("failed to write sphere.msh");
     println!("Wrote {} ({} bytes)", out, msh.len());
 }

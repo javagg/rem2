@@ -1,5 +1,3 @@
-use rem_mesh::gen::{annular_msh, rect_bimaterial_msh};
-
 #[derive(Clone, Copy, PartialEq)]
 pub enum ExampleStatus {
     Ready,
@@ -79,6 +77,160 @@ pub const EXAMPLES: &[ExampleMeta] = &[
   "Solver": { "Order": 1, "Linear": { "Type": "GMRES", "Tol": 1.0e-10, "MaxIter": 500 } }
 }"#,
         source_code: "// Electrostatic parallel plate example",
+    },
+
+    ExampleMeta {
+        key: "rem_es_fast",
+        label: "REM Quick Check / Parallel Plate (Electrostatic)",
+        problem_type: "Electrostatic",
+        status: ExampleStatus::Ready,
+        config_json: r#"{
+  "Problem": { "Type": "Electrostatic", "Verbose": 1, "Output": "./output/rem_es_parallel_plate_fast" },
+  "Model": { "Mesh": "plate_2d.msh", "L0": 1.0e-3 },
+  "Domains": {
+    "Materials": [{ "Attributes": [10], "Permittivity": 1.0 }]
+  },
+  "Boundaries": {
+    "Ground": { "Attributes": [1] },
+    "Terminal": [{ "Index": 1, "Attributes": [2] }]
+  },
+  "Solver": { "Order": 1, "Linear": { "Type": "GMRES", "Tol": 1.0e-10, "MaxIter": 200 } }
+}"#,
+        source_code: "// Fast electrostatic sanity check: small mesh + closed-form C = eps0*A/d",
+    },
+
+    ExampleMeta {
+        key: "rem_ms_fast",
+        label: "REM Quick Check / Surface Current Strip (Magnetostatic)",
+        problem_type: "Magnetostatic",
+        status: ExampleStatus::Ready,
+        config_json: r#"{
+  "Problem": { "Type": "Magnetostatic", "Verbose": 1, "Output": "./output/rem_ms_parallel_plate_fast" },
+  "Model": { "Mesh": "plate_2d.msh", "L0": 1.0e-3 },
+  "Domains": {
+    "Materials": [{ "Attributes": [10], "Permeability": 1.0 }]
+  },
+  "Boundaries": {
+    "Ground": { "Attributes": [1] },
+    "SurfaceCurrent": [{ "Index": 1, "Attributes": [2], "Direction": "+Y" }]
+  },
+  "Solver": { "Order": 1, "Linear": { "Type": "GMRES", "Tol": 1.0e-10, "MaxIter": 200 } }
+}"#,
+        source_code: "// Fast magnetostatic sanity check: tiny mesh + one current boundary",
+    },
+
+    ExampleMeta {
+        key: "rem_driven_fast",
+        label: "REM Quick Check / CPW Single-Port (Driven)",
+        problem_type: "Driven",
+        status: ExampleStatus::Ready,
+        config_json: r#"{
+  "Problem": { "Type": "Driven", "Verbose": 1, "Output": "./output/rem_driven_cpw_fast" },
+  "Model": { "Mesh": "cpw_coax.msh", "L0": 1.0e-6 },
+  "Domains": { "Materials": [{ "Attributes": [1], "Permittivity": 11.7 }] },
+  "Boundaries": {
+    "PEC": { "Attributes": [2] },
+    "LumpedPort": [{ "Index": 1, "Attributes": [3], "R": 50.0, "Excitation": true }]
+  },
+  "Solver": {
+    "Order": 1,
+    "Driven": { "MinFreq": 6.0e9, "MaxFreq": 6.2e9, "FreqStep": 0.2e9, "SaveStep": 1 }
+  }
+}"#,
+        source_code: "// Fast driven sanity check: single lumped port + 2-point sweep",
+    },
+
+    ExampleMeta {
+        key: "rem_eigen_fast",
+        label: "REM Quick Check / Cylinder (Eigenmode)",
+        problem_type: "Eigenmode",
+        status: ExampleStatus::Ready,
+        config_json: r#"{
+  "Problem": { "Type": "Eigenmode", "Verbose": 1, "Output": "./output/rem_eigen_cylinder_fast" },
+  "Model": { "Mesh": "cylinder_tet.msh", "L0": 1.0e-2 },
+  "Domains": {
+    "Materials": [{ "Attributes": [1], "Permeability": 1.0, "Permittivity": 2.08, "LossTan": 4.0e-4 }]
+  },
+  "Boundaries": { "PEC": { "Attributes": [4] } },
+  "Solver": {
+    "Order": 2,
+    "Eigenmode": { "N": 2, "Tol": 1.0e-8, "Target": 2.0e9, "Save": 1 },
+    "Linear": { "Tol": 1.0e-8, "MaxIter": 80 }
+  }
+}"#,
+        source_code: "// Fast eigenmode sanity check: 2 modes on tet cylinder mesh",
+    },
+
+    ExampleMeta {
+        key: "rem_transient_fast",
+        label: "REM Quick Check / Coaxial Pulse (Transient)",
+        problem_type: "Transient",
+        status: ExampleStatus::Ready,
+        config_json: r#"{
+  "Problem": { "Type": "Transient", "Verbose": 1, "Output": "./output/rem_transient_coax_fast" },
+  "Model": { "Mesh": "coaxial.msh", "L0": 1.0e-3 },
+  "Domains": {
+    "Materials": [{ "Attributes": [1], "Permeability": 1.0, "Permittivity": 2.08, "Conductivity": 4.629e-2 }]
+  },
+  "Boundaries": {
+    "PEC": { "Attributes": [2] },
+    "LumpedPort": [
+      { "Index": 1, "Attributes": [3], "R": 50.0, "Direction": "+R", "Excitation": true },
+      { "Index": 2, "Attributes": [4], "R": 50.0, "Direction": "+R" }
+    ]
+  },
+  "Solver": {
+    "Order": 2,
+    "Transient": {
+      "Type": "GeneralizedAlpha", "Excitation": "GaussianPulse",
+      "ExcitationWidth": 0.03, "MaxTime": 0.20, "TimeStep": 0.01, "SaveStep": 5
+    },
+    "Linear": { "Tol": 1.0e-8, "MaxIter": 80 }
+  }
+}"#,
+        source_code: "// Fast transient sanity check: short Gaussian pulse in matched coax",
+    },
+
+    ExampleMeta {
+        key: "rem_mom_fast",
+        label: "REM Quick Check / PEC Sphere (MoM)",
+        problem_type: "MoM",
+        status: ExampleStatus::Ready,
+        config_json: r#"{
+  "Problem": { "Type": "MoM", "Verbose": 1, "Output": "./output/rem_mom_sphere_fast" },
+  "Model": { "Mesh": "sphere.msh", "L0": 1.0 },
+  "Boundaries": { "PEC": { "Attributes": [1] } },
+  "Solver": {
+    "MoM": {
+      "Equation": "CFIE", "Basis": "RWG",
+      "FreqMin": 1.0e9, "FreqMax": 1.0e9, "FreqStep": 1.0,
+      "Alpha": 0.5, "SingularTol": 1.0e-5, "FastSolver": "Direct",
+      "ThetaInc": 0.0, "PhiInc": 0.0, "Polarization": "theta"
+    }
+  }
+}"#,
+        source_code: "// Fast MoM sanity check: single-frequency PEC sphere",
+    },
+
+    ExampleMeta {
+        key: "rem_sbr_fast",
+        label: "REM Quick Check / PEC Sphere (SBR)",
+        problem_type: "SBR",
+        status: ExampleStatus::Ready,
+        config_json: r#"{
+  "Problem": { "Type": "SBR", "Verbose": 1, "Output": "./output/rem_sbr_sphere_fast" },
+  "Model": { "Mesh": "sphere.msh", "L0": 1.0 },
+  "Boundaries": { "PEC": { "Attributes": [1] } },
+  "Solver": {
+    "SBR": {
+      "FreqMin": 3.0e9, "FreqMax": 3.0e9, "FreqStep": 0.0,
+      "RayDensity": 1200.0, "MaxBounces": 1, "WeightThresh": 1.0e-3,
+      "TargetType": "PEC", "ThetaInc": 0.0, "PhiInc": 0.0, "Polarization": "theta"
+    }
+  },
+  "Postprocessing": { "RCS": { "ThetaDeg": "0:10:180", "PhiDeg": [0.0] } }
+}"#,
+        source_code: "// Fast SBR sanity check: low ray density + 1 bounce",
     },
 
     ExampleMeta {
@@ -272,7 +424,7 @@ pub const EXAMPLES: &[ExampleMeta] = &[
     "Linear": { "Tol": 1.0e-8, "MaxIter": 100 }
   }
 }"#,
-        source_code: "// Coaxial open: PMC at far end → full reflection",
+        source_code: "// Coaxial open: PMC at far end �?full reflection",
     },
 
     ExampleMeta {
@@ -298,7 +450,7 @@ pub const EXAMPLES: &[ExampleMeta] = &[
     "Linear": { "Tol": 1.0e-8, "MaxIter": 100 }
   }
 }"#,
-        source_code: "// Coaxial short: PEC at far end → phase-reversed reflection",
+        source_code: "// Coaxial short: PEC at far end �?phase-reversed reflection",
     },
 
     // ── Palace 对齐示例：cpw ─────────────────────────────────────────────────
@@ -333,7 +485,7 @@ pub const EXAMPLES: &[ExampleMeta] = &[
     "Linear": { "Tol": 1.0e-8, "MaxIter": 200 }
   }
 }"#,
-        source_code: "// CPW coax port, adaptive frequency sweep 2–30 GHz, R=56.02Ω",
+        source_code: "// CPW coax port, adaptive frequency sweep 2�?0 GHz, R=56.02Ω",
     },
 
     ExampleMeta {
@@ -366,7 +518,7 @@ pub const EXAMPLES: &[ExampleMeta] = &[
     "Linear": { "Tol": 1.0e-8, "MaxIter": 200 }
   }
 }"#,
-        source_code: "// CPW coax port, uniform frequency sweep 2–30 GHz step 2 GHz",
+        source_code: "// CPW coax port, uniform frequency sweep 2�?0 GHz step 2 GHz",
     },
 
     ExampleMeta {
@@ -399,7 +551,7 @@ pub const EXAMPLES: &[ExampleMeta] = &[
     "Linear": { "Tol": 1.0e-8, "MaxIter": 200 }
   }
 }"#,
-        source_code: "// CPW lumped port +Y, adaptive sweep 2–32 GHz",
+        source_code: "// CPW lumped port +Y, adaptive sweep 2�?2 GHz",
     },
 
     ExampleMeta {
@@ -432,7 +584,7 @@ pub const EXAMPLES: &[ExampleMeta] = &[
     "Linear": { "Tol": 1.0e-8, "MaxIter": 200 }
   }
 }"#,
-        source_code: "// CPW lumped port +Y, uniform sweep 2–32 GHz step 6 GHz",
+        source_code: "// CPW lumped port +Y, uniform sweep 2�?2 GHz step 6 GHz",
     },
 
     ExampleMeta {
@@ -498,7 +650,7 @@ pub const EXAMPLES: &[ExampleMeta] = &[
     "Linear": { "Tol": 1.0e-8, "MaxIter": 200 }
   }
 }"#,
-        source_code: "// CPW WavePort mode 1, adaptive sweep 2–32 GHz",
+        source_code: "// CPW WavePort mode 1, adaptive sweep 2�?2 GHz",
     },
 
     ExampleMeta {
@@ -634,7 +786,7 @@ pub const EXAMPLES: &[ExampleMeta] = &[
     "Linear": { "Tol": 1.0e-9, "MaxIter": 100 }
   }
 }"#,
-        source_code: "// Cylindrical waveguide driven by WavePort mode 1, 2.5–5 GHz",
+        source_code: "// Cylindrical waveguide driven by WavePort mode 1, 2.5�? GHz",
     },
 
     ExampleMeta {
@@ -712,7 +864,7 @@ pub const EXAMPLES: &[ExampleMeta] = &[
   },
   "Solver": { "Order": 2, "Driven": { "MinFreq": 4.0e9, "MaxFreq": 8.0e9, "FreqStep": 0.1e9 } }
 }"#,
-        source_code: "// REM CPW baseline: single LumpedPort, Silicon ε=11.7, 4–8 GHz",
+        source_code: "// REM CPW baseline: single LumpedPort, Silicon ε=11.7, 4�? GHz",
     },
 
     // ── Palace 对齐示例：transmon ─────────────────────────────────────────────
@@ -804,44 +956,51 @@ pub fn find_example(key: &str) -> Option<&'static ExampleMeta> {
 pub fn get_config_json(key: &str) -> &'static str {
   match key {
     // REM + Palace-aligned example config files
-    "spheres" => include_str!("../../../examples/spheres/spheres.json"),
-    "rings" => include_str!("../../../examples/rings/rings.json"),
-    "parallel_plate" => include_str!("../../../examples/parallel_plate/parallel_plate.json"),
+    "spheres" => include_str!("../../../examples/palace/spheres/spheres.json"),
+    "rings" => include_str!("../../../examples/palace/rings/rings.json"),
+    "parallel_plate" => include_str!("../../../examples/rem/parallel_plate/parallel_plate.json"),
+    "rem_es_fast" => include_str!("../../../examples/rem/es_parallel_plate_fast/es_parallel_plate_fast.json"),
+    "rem_ms_fast" => include_str!("../../../examples/rem/ms_parallel_plate_fast/ms_parallel_plate_fast.json"),
+    "rem_driven_fast" => include_str!("../../../examples/rem/driven_cpw_fast/driven_cpw_fast.json"),
+    "rem_eigen_fast" => include_str!("../../../examples/rem/eigen_cylinder_fast/eigen_cylinder_fast.json"),
+    "rem_transient_fast" => include_str!("../../../examples/rem/transient_coax_fast/transient_coax_fast.json"),
+    "rem_mom_fast" => include_str!("../../../examples/rem/mom_sphere_fast/mom_sphere_fast.json"),
+    "rem_sbr_fast" => include_str!("../../../examples/rem/sbr_sphere_fast/sbr_sphere_fast.json"),
 
-    "adapter" => include_str!("../../../examples/adapter/hybrid.json"),
+    "adapter" => include_str!("../../../examples/palace/adapter/hybrid.json"),
 
     "antenna_halfwave_dipole" => {
-      include_str!("../../../examples/antenna/antenna_halfwave_dipole.json")
+      include_str!("../../../examples/palace/antenna/antenna_halfwave_dipole.json")
     }
-    "antenna_short_dipole" => include_str!("../../../examples/antenna/antenna_short_dipole.json"),
+    "antenna_short_dipole" => include_str!("../../../examples/palace/antenna/antenna_short_dipole.json"),
 
-    "coaxial" => include_str!("../../../examples/coaxial/coaxial.json"),
-    "coaxial_matched" => include_str!("../../../examples/coaxial/coaxial_matched.json"),
-    "coaxial_open" => include_str!("../../../examples/coaxial/coaxial_open.json"),
-    "coaxial_short" => include_str!("../../../examples/coaxial/coaxial_short.json"),
+    "coaxial" => include_str!("../../../examples/palace/coaxial/coaxial.json"),
+    "coaxial_matched" => include_str!("../../../examples/palace/coaxial/coaxial_matched.json"),
+    "coaxial_open" => include_str!("../../../examples/palace/coaxial/coaxial_open.json"),
+    "coaxial_short" => include_str!("../../../examples/palace/coaxial/coaxial_short.json"),
 
-    "cpw" => include_str!("../../../examples/cpw/cpw.json"),
-    "cpw_coax_adaptive" => include_str!("../../../examples/cpw/cpw_coax_adaptive.json"),
-    "cpw_coax_uniform" => include_str!("../../../examples/cpw/cpw_coax_uniform.json"),
-    "cpw_lumped_adaptive" => include_str!("../../../examples/cpw/cpw_lumped_adaptive.json"),
-    "cpw_lumped_uniform" => include_str!("../../../examples/cpw/cpw_lumped_uniform.json"),
-    "cpw_lumped_eigen" => include_str!("../../../examples/cpw/cpw_lumped_eigen.json"),
-    "cpw_wave_adaptive" => include_str!("../../../examples/cpw/cpw_wave_adaptive.json"),
-    "cpw_wave_uniform" => include_str!("../../../examples/cpw/cpw_wave_uniform.json"),
-    "cpw_wave_eigen" => include_str!("../../../examples/cpw/cpw_wave_eigen.json"),
+    "cpw" => include_str!("../../../examples/palace/cpw/cpw.json"),
+    "cpw_coax_adaptive" => include_str!("../../../examples/palace/cpw/cpw_coax_adaptive.json"),
+    "cpw_coax_uniform" => include_str!("../../../examples/palace/cpw/cpw_coax_uniform.json"),
+    "cpw_lumped_adaptive" => include_str!("../../../examples/palace/cpw/cpw_lumped_adaptive.json"),
+    "cpw_lumped_uniform" => include_str!("../../../examples/palace/cpw/cpw_lumped_uniform.json"),
+    "cpw_lumped_eigen" => include_str!("../../../examples/palace/cpw/cpw_lumped_eigen.json"),
+    "cpw_wave_adaptive" => include_str!("../../../examples/palace/cpw/cpw_wave_adaptive.json"),
+    "cpw_wave_uniform" => include_str!("../../../examples/palace/cpw/cpw_wave_uniform.json"),
+    "cpw_wave_eigen" => include_str!("../../../examples/palace/cpw/cpw_wave_eigen.json"),
 
-    "cavity_pec" => include_str!("../../../examples/cylinder/cavity_pec.json"),
-    "cavity_impedance" => include_str!("../../../examples/cylinder/cavity_impedance.json"),
-    "driven_wave" => include_str!("../../../examples/cylinder/driven_wave.json"),
-    "waveguide" => include_str!("../../../examples/cylinder/waveguide.json"),
-    "floquet" => include_str!("../../../examples/cylinder/floquet.json"),
-    "cylinder" => include_str!("../../../examples/cylinder/cylinder.json"),
+    "cavity_pec" => include_str!("../../../examples/palace/cylinder/cavity_pec.json"),
+    "cavity_impedance" => include_str!("../../../examples/palace/cylinder/cavity_impedance.json"),
+    "driven_wave" => include_str!("../../../examples/palace/cylinder/driven_wave.json"),
+    "waveguide" => include_str!("../../../examples/palace/cylinder/waveguide.json"),
+    "floquet" => include_str!("../../../examples/palace/cylinder/floquet.json"),
+    "cylinder" => include_str!("../../../examples/palace/cylinder/cylinder.json"),
 
-    "sbr_sphere" => include_str!("../../../examples/sbr_sphere/sbr_sphere.json"),
+    "sbr_sphere" => find_example(key).map(|e| e.config_json).unwrap_or("{}"),
 
-    "transmon" => include_str!("../../../examples/transmon/transmon.json"),
-    "transmon_coarse" => include_str!("../../../examples/transmon/transmon_coarse.json"),
-    "transmon_amr" => include_str!("../../../examples/transmon/transmon_amr.json"),
+    "transmon" => include_str!("../../../examples/palace/transmon/transmon.json"),
+    "transmon_coarse" => include_str!("../../../examples/palace/transmon/transmon_coarse.json"),
+    "transmon_amr" => include_str!("../../../examples/palace/transmon/transmon_amr.json"),
 
     // No dedicated file currently; keep embedded demo config.
     "mom_sphere" => find_example(key).map(|e| e.config_json).unwrap_or("{}"),
@@ -852,59 +1011,60 @@ pub fn get_config_json(key: &str) -> &'static str {
 
 pub fn get_mesh_bytes(key: &str) -> Vec<u8> {
     match key {
-        // REM 生成网格
-        "spheres" => annular_msh(1.0, 4.0, 10, 32, 1, 2, 10).into_bytes(),
-        "rings"   => rect_bimaterial_msh(1.0, 1.0, 20, 20, 1, 2, 10, 20).into_bytes(),
+    // Palace-aligned meshes
+    "spheres" => include_bytes!("../../../examples/palace/spheres/mesh/spheres.msh").to_vec(),
+    "rings"   => include_bytes!("../../../examples/palace/rings/mesh/rings.msh").to_vec(),
 
         // Palace: adapter
-        "adapter" => include_bytes!("../../../examples/adapter/mesh/adapter.msh").to_vec(),
+        "adapter" => include_bytes!("../../../examples/palace/adapter/mesh/adapter.msh").to_vec(),
 
         // Palace: antenna
         "antenna_halfwave_dipole" | "antenna_short_dipole"
-            => include_bytes!("../../../examples/antenna/mesh/antenna.msh").to_vec(),
+            => include_bytes!("../../../examples/palace/antenna/mesh/antenna.msh").to_vec(),
 
         // Palace: coaxial
-        "coaxial" | "coaxial_matched" | "coaxial_open" | "coaxial_short"
-            => include_bytes!("../../../examples/coaxial/mesh/coaxial.msh").to_vec(),
+        "coaxial" | "coaxial_matched" | "coaxial_open" | "coaxial_short" | "rem_transient_fast"
+            => include_bytes!("../../../examples/palace/coaxial/mesh/coaxial.msh").to_vec(),
 
-        // Palace: cpw — coax port variants
+        // Palace: cpw �?coax port variants
         "cpw_coax_adaptive" | "cpw_coax_uniform"
-            => include_bytes!("../../../examples/cpw/mesh/cpw_coax_0.msh").to_vec(),
+            => include_bytes!("../../../examples/palace/cpw/mesh/cpw_coax_0.msh").to_vec(),
 
-        // Palace: cpw — lumped port variants
+        // Palace: cpw �?lumped port variants
         "cpw_lumped_adaptive" | "cpw_lumped_uniform" | "cpw_lumped_eigen"
-            => include_bytes!("../../../examples/cpw/mesh/cpw_lumped_0.msh").to_vec(),
+            => include_bytes!("../../../examples/palace/cpw/mesh/cpw_lumped_0.msh").to_vec(),
 
-        // Palace: cpw — wave port variants
+        // Palace: cpw �?wave port variants
         "cpw_wave_adaptive" | "cpw_wave_uniform" | "cpw_wave_eigen"
-            => include_bytes!("../../../examples/cpw/mesh/cpw_wave_0.msh").to_vec(),
+            => include_bytes!("../../../examples/palace/cpw/mesh/cpw_wave_0.msh").to_vec(),
 
         // REM CPW baseline
-        "cpw" => include_bytes!("../../../examples/cpw/mesh/cpw_coax.msh").to_vec(),
+        "cpw" | "rem_driven_fast"
+          => include_bytes!("../../../examples/palace/cpw/mesh/cpw_coax.msh").to_vec(),
 
-        // Palace: cylinder — hex (cavity_pec, driven_wave, magnetostatic)
+        // Palace: cylinder �?hex (cavity_pec, driven_wave, magnetostatic)
         "cavity_pec" | "driven_wave" | "cylinder"
-            => include_bytes!("../../../examples/cylinder/mesh/cylinder_hex.msh").to_vec(),
+            => include_bytes!("../../../examples/palace/cylinder/mesh/cylinder_hex.msh").to_vec(),
 
-        // Palace: cylinder — prism (cavity_impedance)
+        // Palace: cylinder �?prism (cavity_impedance)
         "cavity_impedance"
-            => include_bytes!("../../../examples/cylinder/mesh/cylinder_prism.msh").to_vec(),
+            => include_bytes!("../../../examples/palace/cylinder/mesh/cylinder_prism.msh").to_vec(),
 
-        // Palace: cylinder — tet (waveguide, floquet)
-        "waveguide" | "floquet"
-            => include_bytes!("../../../examples/cylinder/mesh/cylinder_tet.msh").to_vec(),
+        // Palace: cylinder �?tet (waveguide, floquet)
+        "waveguide" | "floquet" | "rem_eigen_fast"
+            => include_bytes!("../../../examples/palace/cylinder/mesh/cylinder_tet.msh").to_vec(),
 
         // REM: parallel_plate
-        "parallel_plate"
-            => include_bytes!("../../../examples/parallel_plate/mesh/plate_2d.msh").to_vec(),
+        "parallel_plate" | "rem_es_fast" | "rem_ms_fast"
+            => include_bytes!("../../../examples/rem/parallel_plate/mesh/plate_2d.msh").to_vec(),
 
         // SBR / MoM
-        "sbr_sphere" | "mom_sphere"
-            => include_bytes!("../../../examples/sbr_sphere/mesh/sphere.msh").to_vec(),
+        "sbr_sphere" | "mom_sphere" | "rem_sbr_fast" | "rem_mom_fast"
+            => include_bytes!("../../../examples/rem/sbr_sphere/mesh/sphere.msh").to_vec(),
 
         // Palace: transmon
         "transmon" | "transmon_coarse" | "transmon_amr"
-            => include_bytes!("../../../examples/transmon/mesh/transmon.msh2").to_vec(),
+            => include_bytes!("../../../examples/palace/transmon/mesh/transmon.msh2").to_vec(),
 
         _ => vec![],
     }

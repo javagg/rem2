@@ -5,7 +5,7 @@
     "Output": "./output/transmon"
   },
   "Model": {
-    "Mesh": "examples/transmon/mesh/transmon.msh2",
+    "Mesh": "examples/palace/transmon/mesh/transmon.msh2",
     "L0": 1.0e-6
   },
   "Domains": {

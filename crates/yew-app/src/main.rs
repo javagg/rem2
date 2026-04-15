@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use examples::{ExampleStatus, EXAMPLES};
+use gloo::timers::callback::Timeout;
 use mesh_scene::MeshScene;
 use opfs::OpfsEntry;
 use solver::{SimResult, SimRun};
@@ -177,6 +178,7 @@ fn generate_rank_summary_csv(rank_logs: &std::collections::BTreeMap<u32, RankLog
 fn app() -> Html {
     let selected = use_state(|| "spheres".to_string());
     let selected_mode = use_state(|| 0usize); // eigenmode index (0-based)
+    let switching_example = use_state(|| false);
     let running = use_state(|| false);
     let mpi_enabled = use_state(|| false);
     let rank_count = use_state(|| 4u32);
@@ -207,15 +209,24 @@ fn app() -> Html {
         let selected = selected.clone();
         let result = result.clone();
         let selected_mode = selected_mode.clone();
+        let switching_example = switching_example.clone();
         let rank_logs = rank_logs.clone();
         let rank_logs_ref = rank_logs_ref.clone();
         Callback::from(move |e: Event| {
             let el: HtmlSelectElement = e.target_unchecked_into();
-            selected.set(el.value());
+            let key = el.value();
+            if key == *selected {
+                return;
+            }
+            switching_example.set(true);
+            selected.set(key);
             result.set(None);
             selected_mode.set(0);
             *rank_logs_ref.borrow_mut() = BTreeMap::new();
             rank_logs.set(BTreeMap::new());
+
+            let switching_example_done = switching_example.clone();
+            Timeout::new(650, move || switching_example_done.set(false)).forget();
         })
     };
 
@@ -586,6 +597,31 @@ fn app() -> Html {
 
     let code_text = examples::get_config_json(example.key);
     let mpi_is_enabled = *mpi_enabled;
+    let quick_order = [
+        "rem_es_fast",
+        "rem_ms_fast",
+        "rem_driven_fast",
+        "rem_eigen_fast",
+        "rem_transient_fast",
+        "rem_mom_fast",
+        "rem_sbr_fast",
+    ];
+
+    let mut quick_examples: Vec<_> = EXAMPLES
+        .iter()
+        .filter(|ex| quick_order.contains(&ex.key))
+        .collect();
+    quick_examples.sort_by_key(|ex| {
+        quick_order
+            .iter()
+            .position(|k| *k == ex.key)
+            .unwrap_or(usize::MAX)
+    });
+
+    let other_examples: Vec<_> = EXAMPLES
+        .iter()
+        .filter(|ex| !quick_order.contains(&ex.key))
+        .collect();
 
     html! {
         <div id="app">
@@ -599,18 +635,38 @@ fn app() -> Html {
                 <section class="controls-panel example-panel">
                     <div class="control-group">
                         <label for="example-select">{"Example:"}</label>
-                        <select id="example-select"
-                            onchange={on_select}
-                            disabled={*running || *mpi_running}>
-                            { for EXAMPLES.iter().map(|ex| {
-                                html! {
-                                    <option value={ex.key}
-                                        selected={ex.key == selected.as_str()}>
-                                        {ex.label}
-                                    </option>
-                                }
-                            })}
-                        </select>
+                        <div class="example-select-row">
+                            <select id="example-select"
+                                onchange={on_select}
+                                disabled={*running || *mpi_running || *switching_example}>
+                                <optgroup label="REM Quick Checks">
+                                    { for quick_examples.iter().map(|ex| {
+                                        html! {
+                                            <option value={ex.key}
+                                                selected={ex.key == selected.as_str()}>
+                                                {ex.label}
+                                            </option>
+                                        }
+                                    })}
+                                </optgroup>
+                                <optgroup label="All Other Examples">
+                                    { for other_examples.iter().map(|ex| {
+                                        html! {
+                                            <option value={ex.key}
+                                                selected={ex.key == selected.as_str()}>
+                                                {ex.label}
+                                            </option>
+                                        }
+                                    })}
+                                </optgroup>
+                            </select>
+                            if *switching_example {
+                                <span class="example-switch-indicator" role="status" aria-live="polite">
+                                    <span class="switch-spinner" aria-hidden="true"></span>
+                                    {"Switching example..."}
+                                </span>
+                            }
+                        </div>
                     </div>
 
                     <div class="control-group mpi-toggle-row">

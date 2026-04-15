@@ -1,0 +1,56 @@
+{
+  "Problem": {
+    "Type": "Transient",
+    "Verbose": 1,
+    "Output": "./output/rem_transient_coax_fast"
+  },
+  "Model": {
+    "Mesh": "examples/palace/coaxial/mesh/coaxial.msh",
+    "L0": 1.0e-3
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 2.08,
+        "Conductivity": 4.629e-2
+      }
+    ]
+  },
+  "Boundaries": {
+    "PEC": {
+      "Attributes": [2]
+    },
+    "LumpedPort": [
+      {
+        "Index": 1,
+        "Attributes": [3],
+        "R": 50.0,
+        "Direction": "+R",
+        "Excitation": true
+      },
+      {
+        "Index": 2,
+        "Attributes": [4],
+        "R": 50.0,
+        "Direction": "+R"
+      }
+    ]
+  },
+  "Solver": {
+    "Order": 2,
+    "Transient": {
+      "Type": "GeneralizedAlpha",
+      "Excitation": "GaussianPulse",
+      "ExcitationWidth": 0.03,
+      "MaxTime": 0.20,
+      "TimeStep": 0.01,
+      "SaveStep": 5
+    },
+    "Linear": {
+      "Tol": 1.0e-8,
+      "MaxIter": 80
+    }
+  }
+}

@@ -2,10 +2,10 @@
   "Problem": {
     "Type": "Electrostatic",
     "Verbose": 1,
-    "Output": "./output/parallel_plate"
+    "Output": "./output/rem_es_parallel_plate_fast"
   },
   "Model": {
-    "Mesh": "examples/parallel_plate/mesh/plate_2d.msh",
+    "Mesh": "examples/rem/parallel_plate/mesh/plate_2d.msh",
     "L0": 1.0e-3
   },
   "Domains": {
@@ -17,7 +17,9 @@
     ]
   },
   "Boundaries": {
-    "Ground": { "Attributes": [1] },
+    "Ground": {
+      "Attributes": [1]
+    },
     "Terminal": [
       {
         "Index": 1,
@@ -30,7 +32,7 @@
     "Linear": {
       "Type": "GMRES",
       "Tol": 1.0e-10,
-      "MaxIter": 500
+      "MaxIter": 200
     }
   }
 }

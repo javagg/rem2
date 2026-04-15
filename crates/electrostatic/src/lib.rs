@@ -18,7 +18,7 @@ pub mod postprocess;
 pub mod output;
 
 use rem_config::PalaceConfig;
-use rem_core::{RemResult, solve_spd, report_peak_memory};
+use rem_core::{RemResult, solve_spd, report_peak_memory, CsrMatrix, TripletMatrix};
 use rem_parallel::Comm;
 use rem_materials::DomainMap;
 use rem_mesh::{RemMesh, BoundaryTag, ElementKind, FemSubMesh2d, amr, extract_submesh_tri3, refine_marked_tri3};
@@ -146,45 +146,51 @@ pub fn solve_one(
     excitation_val: f64,
     comm: &dyn Comm,
 ) -> RemResult<Vec<f64>> {
-    let n = mesh.n_nodes();
-
     // Collect periodic node pairs (empty if no Periodic BCs configured)
     let periodic_pairs = bc::collect_periodic_node_pairs(mesh, config);
 
-    // Elect assembly backend:
-    //   - No periodic BCs → fem-assembly (Assembler + H1Space, future P2/P3 ready)
-    //   - Periodic BCs   → legacy COO path (requires node-index remapping in COO)
     let order     = if config.solver.order >= 2 { 2u8 } else { 1u8 };
     let quad_order = order * 2;
 
-    let mut mat = if periodic_pairs.is_empty() {
-        log::info!("Using fem-assembly backend (order=P{order}).");
-        if domain_map.any_anisotropic() {
-            log::info!("Anisotropic material(s) detected — tensor assembly.");
-            assemble_fem::assemble_stiffness_aniso_fem(mesh, domain_map, order, quad_order)
-        } else {
-            assemble_fem::assemble_stiffness_fem(mesh, domain_map, order, quad_order)
-        }
+    log::info!(
+        "Using fem-assembly backend (order=P{order}, dim={}, periodic_pairs={}).",
+        mesh.dim,
+        periodic_pairs.len()
+    );
+    let mut mat = if domain_map.any_anisotropic() {
+        log::info!("Anisotropic material(s) detected — tensor assembly.");
+        assemble_fem::assemble_stiffness_aniso_fem(mesh, domain_map, order, quad_order)
     } else {
-        // Periodic path: assemble in COO, remap, then convert to CSR
-        log::info!("Periodic BCs present — using legacy COO assembly.");
-        let mut triplet = if domain_map.any_anisotropic() {
-            log::info!("Anisotropic material(s) detected — using tensor stiffness assembly.");
-            let tensor_fn = |tag: u32| domain_map.get(tag).epsilon_tensor;
-            assemble::assemble_stiffness_aniso(mesh, tensor_fn)?
-        } else {
-            let eps_fn = |tag: u32| domain_map.get(tag).epsilon_abs();
-            assemble::assemble_stiffness(mesh, eps_fn)?
-        };
-        triplet.remap_periodic_nodes(&periodic_pairs);
-        triplet.to_csr()
+        assemble_fem::assemble_stiffness_fem(mesh, domain_map, order, quad_order)
     };
-    let mut rhs = vec![0.0f64; n];
+    if !periodic_pairs.is_empty() {
+        mat = remap_periodic_csr(&mat, &periodic_pairs);
+    }
+
+    let system_n = mat.nrows;
+    let mesh_n = mesh.n_nodes();
+    if system_n != mesh_n {
+        log::warn!(
+            "fem-assembly DOF count ({system_n}) differs from mesh node count ({mesh_n}); \
+             using system size for solve and padding output to mesh size"
+        );
+    }
+
+    let mut rhs = vec![0.0f64; system_n];
 
     // Apply Dirichlet BCs
     let mut dofs = bc::collect_dirichlet_dofs(mesh, excitation_tag, excitation_val);
     if !periodic_pairs.is_empty() {
         bc::apply_periodic(&mut dofs, &periodic_pairs);
+    }
+    let original_dof_count = dofs.len();
+    dofs.retain(|&idx, _| idx < system_n);
+    let dropped = original_dof_count.saturating_sub(dofs.len());
+    if dropped > 0 {
+        log::warn!(
+            "Dropped {dropped} Dirichlet DOFs outside assembled system range [0, {}).",
+            system_n
+        );
     }
     log::info!("Dirichlet DOFs: {}", dofs.len());
     bc::apply_dirichlet(&mut mat, &mut rhs, &dofs);
@@ -202,6 +208,12 @@ pub fn solve_one(
     }
 
     let mut phi = result.solution;
+    if phi.len() != mesh_n {
+        let mut phi_full = vec![0.0f64; mesh_n];
+        let copy_n = phi.len().min(mesh_n);
+        phi_full[..copy_n].copy_from_slice(&phi[..copy_n]);
+        phi = phi_full;
+    }
 
     // Propagate periodic DOF values: φ[recv] = φ[donor]
     if !periodic_pairs.is_empty() {
@@ -209,6 +221,21 @@ pub fn solve_one(
     }
 
     Ok(phi)
+}
+
+fn remap_periodic_csr(mat: &CsrMatrix, pairs: &[(usize, usize)]) -> CsrMatrix {
+    if pairs.is_empty() {
+        return mat.clone();
+    }
+
+    let mut triplet = TripletMatrix::with_capacity(mat.nrows, mat.ncols, mat.nnz());
+    for row in 0..mat.nrows {
+        for k in mat.row_ptr[row]..mat.row_ptr[row + 1] {
+            triplet.add(row, mat.col_idx[k], mat.values[k]);
+        }
+    }
+    triplet.remap_periodic_nodes(pairs);
+    triplet.to_csr()
 }
 
 /// Post-process and write output files.

@@ -5,7 +5,7 @@
     "Output": "./output/cylinder"
   },
   "Model": {
-    "Mesh": "examples/cylinder/mesh/cylinder_hex.msh",
+    "Mesh": "examples/palace/cylinder/mesh/cylinder_hex.msh",
     "L0": 1.0e-3
   },
   "Domains": {

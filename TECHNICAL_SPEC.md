@@ -769,12 +769,12 @@ REM v1.0 在 `Problem.Type` 中新增以下值，Palace 工作流完全不受影
 | `PhiInc` | float | `0.0` | 入射方位角 [°] |
 | `Polarization` | string | `"theta"` | `"theta"` \| `"phi"` \| `"x"` \| `"y"` \| `"z"` |
 
-**SBR+ 配置示例**（[examples/sbr_sphere/sbr_sphere.json](examples/sbr_sphere/sbr_sphere.json)）:
+**SBR+ 配置示例**（[examples/rem/sbr_sphere/sbr_sphere.json](examples/rem/sbr_sphere/sbr_sphere.json)）:
 
 ```json
 {
   "Problem": { "Type": "SBR", "Output": "output/sbr_sphere" },
-  "Model":   { "Mesh": "examples/sbr_sphere/mesh/sphere.msh", "L0": 1.0 },
+  "Model":   { "Mesh": "examples/rem/sbr_sphere/mesh/sphere.msh", "L0": 1.0 },
   "Boundaries": { "PEC": { "Attributes": [1] } },
   "Solver": {
     "SBR": {
@@ -819,15 +819,24 @@ REM v1.0 在 `Problem.Type` 中新增以下值，Palace 工作流完全不受影
 ### 7.4 兼容性测试基准
 
 **Level 1 — Palace 原生示例（必须通过）**:
-- `examples/rings/rings.json` — 静电场，电容矩阵误差 < 1%
-- `examples/coaxial/coaxial.json` — 同轴线静电，电容/长度误差 < 0.5%
-- `examples/cavity/cavity.json` — 谐振腔特征模，f₀ 误差 < 0.1%
-- `examples/cpw/cpw.json` — 共面波导频域驱动，S₁₁ 误差 < 0.5 dB
+- `examples/palace/rings/rings.json` — 磁静态双环，磁通/电感趋势一致
+- `examples/palace/coaxial/coaxial.json` — 同轴线静电，电容/长度误差 < 0.5%
+- `examples/palace/cylinder/cavity_pec.json` — 谐振腔特征模，f₀ 误差 < 0.1%
+- `examples/palace/cpw/cpw.json` — 共面波导频域驱动，S₁₁ 误差 < 0.5 dB
 
 **Level 2 — MoM/BEM/SBR+ 新增验证（已通过）**:
 - PEC 球体 MoM 散射 — RCS vs Mie 级数（kα≈3，误差 < 0.5 dB）✅
 - Laplace P0 BEM — 平行板电容与 FEM 结果误差 < 1% ✅
-- SBR+ PEC 球体单站 RCS @ 1 GHz（ka≈10.5）— vs Mie 误差 < 0.1 dB ✅
+- SBR+ PEC 球体单站 RCS @ 3 GHz（ka≈31.4）— vs Mie 误差 < 0.1 dB ✅
+
+**Level 3 — REM 快检示例（wasm/web 优先）**:
+- `examples/rem/es_parallel_plate_fast/es_parallel_plate_fast.json` — Electrostatic 快检
+- `examples/rem/ms_parallel_plate_fast/ms_parallel_plate_fast.json` — Magnetostatic 快检
+- `examples/rem/driven_cpw_fast/driven_cpw_fast.json` — Driven 快检
+- `examples/rem/eigen_cylinder_fast/eigen_cylinder_fast.json` — Eigenmode 快检
+- `examples/rem/transient_coax_fast/transient_coax_fast.json` — Transient 快检
+- `examples/rem/mom_sphere_fast/mom_sphere_fast.json` — MoM 快检
+- `examples/rem/sbr_sphere_fast/sbr_sphere_fast.json` — SBR 快检
 
 ---
 

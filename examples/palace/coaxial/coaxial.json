@@ -1,0 +1,31 @@
+{
+  "Problem": {
+    "Type": "Electrostatic",
+    "Verbose": 1,
+    "Output": "./output/coaxial"
+  },
+  "Model": {
+    "Mesh": "examples/palace/coaxial/mesh/coaxial_ascii.msh",
+    "L0": 1.0e-3
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [10],
+        "Permittivity": 2.1
+      }
+    ]
+  },
+  "Boundaries": {
+    "Ground": { "Attributes": [2] },
+    "Terminal": [
+      {
+        "Index": 1,
+        "Attributes": [1]
+      }
+    ]
+  },
+  "Solver": {
+    "Order": 1
+  }
+}

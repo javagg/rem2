@@ -523,17 +523,24 @@ REM 完全兼容 Palace JSON/YAML 配置文件格式（含 v0.16 新关键字）
 
 | 示例目录 | 问题类型 | 验证指标 | 结果 |
 |---------|---------|---------|------|
-| `examples/parallel_plate/` | Electrostatic | C = ε₀A/d，误差 < 1e-12 | ✅ |
-| `examples/coaxial/` | Electrostatic | C/L = 2πε₀/ln(b/a)，误差 < 0.5% | ✅ |
-| `examples/rings/` | Magnetostatic | ν 界面跳变，A_z = y 线性解 | ✅ |
-| `examples/transmon/` | Eigenmode | 谐振腔特征频率 | ✅ |
-| `examples/cpw/` | Driven | S₁₁ 频率扫描 | ✅ |
-| `examples/antenna/` | Driven/MoM | 半波/短偶极子 | ✅ |
-| `examples/spheres/` | MoM | PEC 球 RCS vs Mie（误差 < 0.5 dB）| ✅ |
-| `examples/sbr_sphere/` | SBR | PEC 球 RCS @ 1/3 GHz（误差 < 0.1 dB）| ✅ |
+| `examples/rem/parallel_plate/` | Electrostatic | C = ε₀A/d，误差 < 1e-12 | ✅ |
+| `examples/palace/coaxial/` | Electrostatic/Transient | C/L = 2πε₀/ln(b/a)，传输反射行为正确 | ✅ |
+| `examples/palace/rings/` | Magnetostatic | 自感/互感与磁通后处理一致 | ✅ |
+| `examples/palace/transmon/` | Eigenmode | 谐振腔特征频率 | ✅ |
+| `examples/palace/cpw/` | Driven | S₁₁ 频率扫描 | ✅ |
+| `examples/palace/antenna/` | Driven/MoM | 半波/短偶极子 | ✅ |
+| `examples/palace/spheres/` | Electrostatic | 双球电容矩阵趋势正确 | ✅ |
+| `examples/rem/sbr_sphere/` | SBR | PEC 球 RCS @ 3 GHz（误差 < 0.1 dB）| ✅ |
 | `examples/near_field/` | MoM/Driven | 近场导出/导入耦合 | ✅ |
-| `examples/cylinder/` | Eigenmode/Driven/Mag | 腔体/波导/Floquet | ✅ |
-| `examples/adapter/` | Eigenmode | 混合端口（WavePort×2）| ✅ |
+| `examples/palace/cylinder/` | Eigenmode/Driven/Mag | 腔体/波导/Floquet | ✅ |
+| `examples/palace/adapter/` | Eigenmode | 混合端口（WavePort×2）| ✅ |
+| `examples/rem/es_parallel_plate_fast/` | Electrostatic | wasm 快检，低开销快速收敛 | ✅ |
+| `examples/rem/ms_parallel_plate_fast/` | Magnetostatic | wasm 快检，单电流边界 | ✅ |
+| `examples/rem/driven_cpw_fast/` | Driven | wasm 快检，2 点频扫 | ✅ |
+| `examples/rem/eigen_cylinder_fast/` | Eigenmode | wasm 快检，2 模本征值 | ✅ |
+| `examples/rem/transient_coax_fast/` | Transient | wasm 快检，短时域脉冲 | ✅ |
+| `examples/rem/mom_sphere_fast/` | MoM | wasm 快检，单频 PEC 球散射 | ✅ |
+| `examples/rem/sbr_sphere_fast/` | SBR | wasm 快检，低射线密度单站 RCS | ✅ |
 
 ---
 

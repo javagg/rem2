@@ -5,7 +5,7 @@
     "Output": "./output/waveport_tri3_verify"
   },
   "Model": {
-    "Mesh": "examples/cpw/mesh/wave_verify_tri3.msh",
+    "Mesh": "examples/palace/cpw/mesh/wave_verify_tri3.msh",
     "L0": 1.0
   },
   "Domains": {

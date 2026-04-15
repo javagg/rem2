@@ -15,10 +15,10 @@ cd /tmp/palace-src && find examples -name "*.json" | sort
 
 ## Current REM Examples (complete Palace coverage)
 
-All Palace JSON files are present in `examples/` with identical directory
+All Palace JSON files are present in `examples/palace/` with aligned directory
 structure and filenames, adapted for REM's config schema.
 
-| Subdirectory | Files | Solver Type | REM Status |
+| Subdirectory (`examples/palace/`) | Files | Solver Type | REM Status |
 |-------------|-------|-------------|-----------|
 | `adapter/` | `hybrid.json` | Driven | ✅ |
 | `antenna/` | `antenna_halfwave_dipole.json`, `antenna_short_dipole.json` | Driven | ✅ |
@@ -26,8 +26,22 @@ structure and filenames, adapted for REM's config schema.
 | `cpw/` | 8 files | Driven/Eigenmode | ✅ |
 | `cylinder/` | `cavity_impedance.json`, `cavity_pec.json`, `driven_wave.json`, `floquet.json`, `waveguide.json` | Eigenmode/Driven | ✅ |
 | `rings/` | `rings.json` | Magnetostatic | ✅ |
-| `spheres/` | `spheres.json` | MoM | ✅ |
+| `spheres/` | `spheres.json` | Electrostatic | ✅ |
 | `transmon/` | `transmon_amr.json`, `transmon_coarse.json` | Eigenmode | ✅ |
+
+## REM Quick Examples (web/wasm)
+
+Quick-check examples are under `examples/rem/` and wired to the Yew demo.
+
+| Yew Key | Config Path | Problem Type | Mesh Source |
+|---------|-------------|--------------|-------------|
+| `rem_es_fast` | `examples/rem/es_parallel_plate_fast/es_parallel_plate_fast.json` | Electrostatic | `examples/rem/parallel_plate/mesh/plate_2d.msh` |
+| `rem_ms_fast` | `examples/rem/ms_parallel_plate_fast/ms_parallel_plate_fast.json` | Magnetostatic | `examples/rem/parallel_plate/mesh/plate_2d.msh` |
+| `rem_driven_fast` | `examples/rem/driven_cpw_fast/driven_cpw_fast.json` | Driven | `examples/palace/cpw/mesh/cpw_coax.msh` |
+| `rem_eigen_fast` | `examples/rem/eigen_cylinder_fast/eigen_cylinder_fast.json` | Eigenmode | `examples/palace/cylinder/mesh/cylinder_tet.msh` |
+| `rem_transient_fast` | `examples/rem/transient_coax_fast/transient_coax_fast.json` | Transient | `examples/palace/coaxial/mesh/coaxial.msh` |
+| `rem_mom_fast` | `examples/rem/mom_sphere_fast/mom_sphere_fast.json` | MoM | `examples/rem/sbr_sphere/mesh/sphere.msh` |
+| `rem_sbr_fast` | `examples/rem/sbr_sphere_fast/sbr_sphere_fast.json` | SBR | `examples/rem/sbr_sphere/mesh/sphere.msh` |
 
 ## Adaptation Rules (Palace → REM)
 
@@ -72,15 +86,15 @@ These fields are deserialized and logged as warnings; they do NOT need to be rem
 None — REM now accepts all known Palace fields.
 
 ### Mesh files
-Ensure corresponding `.msh` files exist in `examples/<category>/mesh/`. Check:
+Ensure corresponding `.msh` files exist in `examples/palace/<category>/mesh/`
+or `examples/rem/<category>/mesh/`. Check:
 ```
 find examples -name "*.msh" | sort
 ```
 Known mesh files: `coaxial.msh`, `cpw_coax_0.msh`, `cpw_lumped_0.msh`,
 `cpw_wave_0.msh`, `cylinder_hex.msh`, `cylinder_prism.msh`,
 `cylinder_tet.msh`, `transmon.msh2`, `antenna.msh`, `rings.msh`,
-`spheres.msh`, `adapter.msh`, `plate_2d.msh`, `slab_2d.msh`,
-`coaxial_2d.msh`, `sphere.msh`
+`spheres.msh`, `adapter.msh`, `plate_2d.msh`, `sphere.msh`
 
 ## Sync Checklist
 

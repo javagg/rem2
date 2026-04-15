@@ -10,7 +10,6 @@
 /// `rem_core::CsrMatrix` via `CsrMatrix::from_fem_csr()`.
 ///
 /// # Limitations
-/// - Does **not** support periodic node remapping (use `assemble.rs` for that).
 /// - Anisotropic case uses a custom `TensorDiffusionIntegrator`; requires
 ///   the material tensor to be uniform per element (piecewise constant).
 

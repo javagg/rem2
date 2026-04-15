@@ -2,30 +2,35 @@
   "Problem": {
     "Type": "Electrostatic",
     "Verbose": 1,
-    "Output": "./output/coaxial"
+    "Output": "./output/parallel_plate"
   },
   "Model": {
-    "Mesh": "examples/coaxial/mesh/coaxial_ascii.msh",
+    "Mesh": "examples/rem/parallel_plate/mesh/plate_2d.msh",
     "L0": 1.0e-3
   },
   "Domains": {
     "Materials": [
       {
         "Attributes": [10],
-        "Permittivity": 2.1
+        "Permittivity": 1.0
       }
     ]
   },
   "Boundaries": {
-    "Ground": { "Attributes": [2] },
+    "Ground": { "Attributes": [1] },
     "Terminal": [
       {
         "Index": 1,
-        "Attributes": [1]
+        "Attributes": [2]
       }
     ]
   },
   "Solver": {
-    "Order": 1
+    "Order": 1,
+    "Linear": {
+      "Type": "GMRES",
+      "Tol": 1.0e-10,
+      "MaxIter": 500
+    }
   }
 }

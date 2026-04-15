@@ -1,4 +1,5 @@
 use wasm_bindgen::prelude::*;
+use std::any::Any;
 use rem_config::{load_config_from_str, ConfigFormat, ProblemType};
 use rem_mesh::{load_mesh_from_bytes, gen::{annular_msh, rect_bimaterial_msh}};
 use rem_materials::DomainMap;
@@ -98,24 +99,25 @@ pub struct SimulationResult {
 
 #[wasm_bindgen]
 pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, JsError> {
-    let cfg = load_config_from_str(config_json, ConfigFormat::Json)
-        .map_err(|e| JsError::new(&format!("Config error: {}", e)))?;
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let cfg = load_config_from_str(config_json, ConfigFormat::Json)
+            .map_err(|e| JsError::new(&format!("Config error: {}", e)))?;
 
-    let comm = WorldComm::new();
+        let comm = WorldComm::new();
 
-    let mesh = load_mesh_from_bytes(&cfg, mesh_bytes, &comm)
-        .map_err(|e| JsError::new(&format!("Mesh error: {}", e)))?;
+        let mesh = load_mesh_from_bytes(&cfg, mesh_bytes, &comm)
+            .map_err(|e| JsError::new(&format!("Mesh error: {}", e)))?;
 
-    let dm = DomainMap::from_config(&cfg)
-        .map_err(|e| JsError::new(&format!("Domain error: {}", e)))?;
+        let dm = DomainMap::from_config(&cfg)
+            .map_err(|e| JsError::new(&format!("Domain error: {}", e)))?;
 
-    let base_info = SolverInfo {
-        n_nodes: mesh.n_nodes(),
-        n_elements: mesh.n_volume_elements(),
-        ..Default::default()
-    };
+        let base_info = SolverInfo {
+            n_nodes: mesh.n_nodes(),
+            n_elements: mesh.n_volume_elements(),
+            ..Default::default()
+        };
 
-    match cfg.problem.problem_type {
+        match cfg.problem.problem_type {
         ProblemType::Electrostatic => {
             let n_dirichlet = collect_dirichlet_dofs(&mesh, Some(1), 1.0).len();
             let phi = solve_es(&cfg, &mesh, &dm, Some(1), 1.0, &comm)
@@ -309,7 +311,23 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
-        _ => Err(JsError::new("Unsupported problem type")),
+            _ => Err(JsError::new("Unsupported problem type")),
+        }
+    })).map_err(|panic| {
+        JsError::new(&format!(
+            "Internal panic in run_simulation: {}",
+            panic_payload_to_string(&panic)
+        ))
+    })?
+}
+
+fn panic_payload_to_string(payload: &Box<dyn Any + Send>) -> String {
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        (*s).to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "non-string panic payload".to_string()
     }
 }
 
@@ -325,35 +343,35 @@ pub fn get_rings_mesh() -> Vec<u8> {
 
 #[wasm_bindgen]
 pub fn get_adapter_mesh() -> Vec<u8> {
-    include_bytes!("../../../examples/adapter/mesh/adapter.msh").to_vec()
+    include_bytes!("../../../examples/palace/adapter/mesh/adapter.msh").to_vec()
 }
 
 #[wasm_bindgen]
 pub fn get_antenna_mesh() -> Vec<u8> {
-    include_bytes!("../../../examples/antenna/mesh/antenna.msh").to_vec()
+    include_bytes!("../../../examples/palace/antenna/mesh/antenna.msh").to_vec()
 }
 
 #[wasm_bindgen]
 pub fn get_coaxial_mesh() -> Vec<u8> {
-    include_bytes!("../../../examples/coaxial/mesh/coaxial.msh").to_vec()
+    include_bytes!("../../../examples/palace/coaxial/mesh/coaxial.msh").to_vec()
 }
 
 #[wasm_bindgen]
 pub fn get_cpw_mesh() -> Vec<u8> {
-    include_bytes!("../../../examples/cpw/mesh/cpw_coax.msh").to_vec()
+    include_bytes!("../../../examples/palace/cpw/mesh/cpw_coax.msh").to_vec()
 }
 
 #[wasm_bindgen]
 pub fn get_cylinder_mesh() -> Vec<u8> {
-    include_bytes!("../../../examples/cylinder/mesh/cylinder_hex.msh").to_vec()
+    include_bytes!("../../../examples/palace/cylinder/mesh/cylinder_hex.msh").to_vec()
 }
 
 #[wasm_bindgen]
 pub fn get_transmon_mesh() -> Vec<u8> {
-    include_bytes!("../../../examples/transmon/mesh/transmon.msh2").to_vec()
+    include_bytes!("../../../examples/palace/transmon/mesh/transmon.msh2").to_vec()
 }
 
 #[wasm_bindgen]
 pub fn get_spheres_mesh_v2() -> Vec<u8> {
-    include_bytes!("../../../examples/spheres/mesh/spheres.msh").to_vec()
+    include_bytes!("../../../examples/palace/spheres/mesh/spheres.msh").to_vec()
 }
