@@ -33,6 +33,12 @@ h1 {
     gap: 14px;
 }
 
+.row-top > *,
+.row-middle > *,
+.row-ranks > * {
+    min-height: 0;
+}
+
 .row-top {
     grid-template-columns: 1fr 1fr;
 }
@@ -54,6 +60,7 @@ h1 {
     border: 1px solid #ddd;
     border-radius: 8px;
     background: #f8f9fa;
+    max-height: 460px;
     overflow-y: auto;
 }
 
@@ -66,6 +73,9 @@ h1 {
     border-radius: 8px;
     background: #f8f9fa;
     padding: 10px;
+    max-height: 460px;
+    display: flex;
+    flex-direction: column;
 }
 
 .top-log-panel h3 {
@@ -78,17 +88,21 @@ h1 {
     padding: 8px;
     font-size: 12px;
     border-radius: 4px;
+    flex: 1;
+    min-height: 0;
     overflow-y: auto;
     margin: 0;
     white-space: pre-wrap;
 }
 
 .scene-panel {
+    display: flex;
+    flex-direction: column;
     border: 1px solid #333;
     border-radius: 8px;
     background: #1d2228;
     color: #dbe6f1;
-    min-height: 460px;
+    height: 460px;
     overflow: hidden;
 }
 
@@ -104,9 +118,51 @@ h1 {
 }
 
 .scene-panel-body {
+    flex: 1;
+    min-height: 0;
     padding: 12px;
     font-size: 13px;
     line-height: 1.6;
+    overflow: auto;
+}
+
+.mesh-scene-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    height: 100%;
+    min-height: 0;
+}
+
+.mesh-scene-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.mesh-scene-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: #c9d4df;
+    font-size: 12px;
+}
+
+.mesh-canvas {
+    width: 100%;
+    flex: 1;
+    min-height: 0;
+    height: auto;
+    border: 1px solid #2f3740;
+    border-radius: 6px;
+    background: #0d1117;
+    cursor: grab;
+}
+
+.mesh-canvas:active {
+    cursor: grabbing;
 }
 
 .scene-panel-body ul {
@@ -115,7 +171,7 @@ h1 {
 }
 
 .config-panel {
-    min-height: 460px;
+    height: 460px;
 }
 
 .code-panel {
@@ -321,10 +377,12 @@ h1 {
 }
 
 .rank-logs-panel {
+    max-height: 420px;
     background: #eef8f3;
     border: 1px solid #b9dfce;
     border-radius: 4px;
     padding: 8px;
+    overflow: auto;
 }
 
 .rank-logs-panel h3 {

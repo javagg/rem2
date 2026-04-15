@@ -7,7 +7,7 @@ edition = "2021"
 yew          = { version = "0.21", features = ["csr"] }
 wasm-bindgen = { workspace = true }
 wasm-bindgen-futures = "0.4"
-web-sys      = { version = "0.3", features = ["HtmlSelectElement", "HtmlInputElement"] }
+web-sys      = { version = "0.3", features = ["HtmlSelectElement", "HtmlInputElement", "HtmlCanvasElement", "CanvasRenderingContext2d", "CanvasGradient", "MouseEvent", "WheelEvent"] }
 gloo         = { version = "0.11", features = ["futures"] }
 jsmpi        = "0.1"
 js-sys       = "0.3"
@@ -20,3 +20,7 @@ console_error_panic_hook = { workspace = true }
 rem-wasm          = { workspace = true }
 
 rem-mesh          = { workspace = true, features = ["metis-wasm"] }
+rmsh-io           = { workspace = true }
+rmsh-geo          = { workspace = true }
+rmsh-renderer     = { workspace = true }
+glam              = { workspace = true }

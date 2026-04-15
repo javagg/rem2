@@ -30,6 +30,7 @@ members = [
 
 [workspace.package]
 version = "0.17.1"
+edition = "2021"
 
 # fem-rs sub-workspaces cannot be listed as members (separate workspace roots),
 # but their crates are available as path dependencies below.
@@ -58,6 +59,12 @@ rem-touchstone    = { path = "crates/touchstone" }
 rem-sbr           = { path = "crates/sbr" }
 rem-wasm          = { path = "crates/wasm" }
 rmetis            = { path = "vendor/rmetis", default-features = false }
+rmsh-io           = { path = "vendor/rmsh/crates/io", default-features = false }
+rmsh-model        = { path = "vendor/rmsh/crates/model" }
+rmsh-geo          = { path = "vendor/rmsh/crates/geo" }
+rmsh-renderer     = { path = "vendor/rmsh/crates/renderer" }
+rcad-kernel       = { path = "vendor/rmsh/vendor/rcad/libs/rcad-kernel" }
+rcad-render       = { path = "vendor/rmsh/vendor/rcad/libs/rcad-render" }
 
 # fem-rs foundation crates (via vendor/fem-rs submodule)
 fem-core     = { path = "vendor/fem-rs/crates/core" }
@@ -89,6 +96,7 @@ num-traits  = "0.2"
 bytemuck    = { version = "1", features = ["derive"] }
 rayon       = "1.10"
 glam        = { version = "0.29", features = ["serde"] }
+wgpu        = "27"
 criterion   = { version = "0.5", features = ["html_reports"] }
 
 # error handling
@@ -107,3 +115,4 @@ lto = "thin"
 inherits  = "release"
 opt-level = "s"
 lto       = true
+

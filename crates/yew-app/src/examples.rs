@@ -801,6 +801,55 @@ pub fn find_example(key: &str) -> Option<&'static ExampleMeta> {
     EXAMPLES.iter().find(|e| e.key == key)
 }
 
+pub fn get_config_json(key: &str) -> &'static str {
+  match key {
+    // REM + Palace-aligned example config files
+    "spheres" => include_str!("../../../examples/spheres/spheres.json"),
+    "rings" => include_str!("../../../examples/rings/rings.json"),
+    "parallel_plate" => include_str!("../../../examples/parallel_plate/parallel_plate.json"),
+
+    "adapter" => include_str!("../../../examples/adapter/hybrid.json"),
+
+    "antenna_halfwave_dipole" => {
+      include_str!("../../../examples/antenna/antenna_halfwave_dipole.json")
+    }
+    "antenna_short_dipole" => include_str!("../../../examples/antenna/antenna_short_dipole.json"),
+
+    "coaxial" => include_str!("../../../examples/coaxial/coaxial.json"),
+    "coaxial_matched" => include_str!("../../../examples/coaxial/coaxial_matched.json"),
+    "coaxial_open" => include_str!("../../../examples/coaxial/coaxial_open.json"),
+    "coaxial_short" => include_str!("../../../examples/coaxial/coaxial_short.json"),
+
+    "cpw" => include_str!("../../../examples/cpw/cpw.json"),
+    "cpw_coax_adaptive" => include_str!("../../../examples/cpw/cpw_coax_adaptive.json"),
+    "cpw_coax_uniform" => include_str!("../../../examples/cpw/cpw_coax_uniform.json"),
+    "cpw_lumped_adaptive" => include_str!("../../../examples/cpw/cpw_lumped_adaptive.json"),
+    "cpw_lumped_uniform" => include_str!("../../../examples/cpw/cpw_lumped_uniform.json"),
+    "cpw_lumped_eigen" => include_str!("../../../examples/cpw/cpw_lumped_eigen.json"),
+    "cpw_wave_adaptive" => include_str!("../../../examples/cpw/cpw_wave_adaptive.json"),
+    "cpw_wave_uniform" => include_str!("../../../examples/cpw/cpw_wave_uniform.json"),
+    "cpw_wave_eigen" => include_str!("../../../examples/cpw/cpw_wave_eigen.json"),
+
+    "cavity_pec" => include_str!("../../../examples/cylinder/cavity_pec.json"),
+    "cavity_impedance" => include_str!("../../../examples/cylinder/cavity_impedance.json"),
+    "driven_wave" => include_str!("../../../examples/cylinder/driven_wave.json"),
+    "waveguide" => include_str!("../../../examples/cylinder/waveguide.json"),
+    "floquet" => include_str!("../../../examples/cylinder/floquet.json"),
+    "cylinder" => include_str!("../../../examples/cylinder/cylinder.json"),
+
+    "sbr_sphere" => include_str!("../../../examples/sbr_sphere/sbr_sphere.json"),
+
+    "transmon" => include_str!("../../../examples/transmon/transmon.json"),
+    "transmon_coarse" => include_str!("../../../examples/transmon/transmon_coarse.json"),
+    "transmon_amr" => include_str!("../../../examples/transmon/transmon_amr.json"),
+
+    // No dedicated file currently; keep embedded demo config.
+    "mom_sphere" => find_example(key).map(|e| e.config_json).unwrap_or("{}"),
+
+    _ => find_example(key).map(|e| e.config_json).unwrap_or("{}"),
+  }
+}
+
 pub fn get_mesh_bytes(key: &str) -> Vec<u8> {
     match key {
         // REM 生成网格

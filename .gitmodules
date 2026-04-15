@@ -2,9 +2,9 @@
 	path = vendor/rmetis
 	url = https://github.com/rem-rs/rmetis.git
 	branch = main
-[submodule "vendor/rmsh"]
-	path = vendor/rmsh
-	url = https://github.com/rust-msh/rmsh.git
 [submodule "vendor/fem-rs"]
 	path = vendor/fem-rs
 	url = https://github.com/rem-rs/fem-rs.git
+[submodule "vendor/rmsh"]
+	path = vendor/rmsh
+	url = https://github.com/rust-msh/rmsh.git

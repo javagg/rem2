@@ -1,4 +1,5 @@
 mod examples;
+mod mesh_scene;
 mod opfs;
 mod solver;
 
@@ -6,6 +7,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use examples::{ExampleStatus, EXAMPLES};
+use mesh_scene::MeshScene;
 use opfs::OpfsEntry;
 use solver::{SimResult, SimRun};
 use wasm_bindgen_futures::spawn_local;
@@ -17,13 +19,6 @@ type MpiJobHandle = Rc<jsmpi::launcher::Job>;
 
 #[cfg(not(target_arch = "wasm32"))]
 type MpiJobHandle = Rc<()>;
-
-#[derive(Clone, Copy, PartialEq)]
-enum Tab {
-    Config,
-    Source,
-    Mesh,
-}
 
 #[derive(Clone, PartialEq)]
 struct RankLog {
@@ -192,8 +187,6 @@ fn app() -> Html {
     let rank_logs_ref = use_mut_ref(BTreeMap::<u32, RankLog>::new);
     let log_text = use_state(|| String::new());
     let result = use_state(|| None::<SimResult>);
-    let active_tab = use_state(|| Tab::Config);
-    let code_panel_collapsed = use_state(|| true);
     let output_browser_open = use_state(|| false);
     let output_files = use_state(Vec::<OpfsEntry>::new);
     let selected_output_path = use_state(|| None::<String>);
@@ -575,26 +568,6 @@ fn app() -> Html {
         })
     };
 
-    let on_tab_config = {
-        let active_tab = active_tab.clone();
-        Callback::from(move |_: MouseEvent| active_tab.set(Tab::Config))
-    };
-
-    let on_tab_source = {
-        let active_tab = active_tab.clone();
-        Callback::from(move |_: MouseEvent| active_tab.set(Tab::Source))
-    };
-
-    let on_tab_mesh = {
-        let active_tab = active_tab.clone();
-        Callback::from(move |_: MouseEvent| active_tab.set(Tab::Mesh))
-    };
-
-    let on_toggle_code_panel = {
-        let code_panel_collapsed = code_panel_collapsed.clone();
-        Callback::from(move |_: MouseEvent| code_panel_collapsed.set(!*code_panel_collapsed))
-    };
-
     let is_unimplemented = example.status == ExampleStatus::Unimplemented;
     let btn_disabled = if *mpi_enabled {
         *mpi_running
@@ -611,11 +584,7 @@ fn app() -> Html {
         "Run Simulation"
     };
 
-    let code_text = match *active_tab {
-        Tab::Config => example.config_json,
-        Tab::Source => example.source_code,
-        Tab::Mesh => "3D mesh preview will be added in a later iteration.\n\nPlanned capabilities:\n- Rotate / pan / zoom\n- Boundary / domain coloring\n- Rank partition overlay in MPI mode\n- Probe point and field value tooltip",
-    };
+    let code_text = examples::get_config_json(example.key);
     let mpi_is_enabled = *mpi_enabled;
 
     html! {
@@ -854,56 +823,21 @@ fn app() -> Html {
                 <div class="row-middle">
                 <section class="scene-panel">
                     <header class="scene-panel-header">
-                        <h3>{"3D Mesh Scene (WGPU Planned)"}</h3>
+                        <h3>{"3D Mesh Scene (rmsh-render)"}</h3>
                     </header>
                     <div class="scene-panel-body">
-                        <p>{"这里预留给未来的 WGPU 3D 网格/场场景渲染。"}</p>
-                        <ul>
-                            <li>{"网格旋转 / 缩放 / 平移"}</li>
-                            <li>{"场量着色与切片"}</li>
-                            <li>{"MPI 分区覆盖显示"}</li>
-                        </ul>
+                        <MeshScene example_key={(*selected).clone()} />
                     </div>
                 </section>
 
                 <div class="code-panel config-panel">
                     <div class="code-panel-header">
                         <h3>{"Config & View"}</h3>
-                        <button type="button"
-                            class="collapse-btn"
-                            onclick={on_toggle_code_panel}>
-                            {if *code_panel_collapsed { "Expand" } else { "Collapse" }}
-                        </button>
                     </div>
 
-                    if !*code_panel_collapsed {
-                        <>
-                            <div class="tabs">
-                                <button type="button"
-                                    class={if *active_tab == Tab::Config { "active" } else { "" }}
-                                    onclick={on_tab_config}>
-                                    {"Palace Config"}
-                                </button>
-                                <button type="button"
-                                    class={if *active_tab == Tab::Source { "active" } else { "" }}
-                                    onclick={on_tab_source}>
-                                    {"Test Source (Rust)"}
-                                </button>
-                                <button type="button"
-                                    class={if *active_tab == Tab::Mesh { "active" } else { "" }}
-                                    onclick={on_tab_mesh}>
-                                    {"Mesh 3D (Soon)"}
-                                </button>
-                            </div>
-                            <div class="code-viewer">
-                                <pre>{code_text}</pre>
-                            </div>
-                        </>
-                    } else {
-                        <div class="collapsed-hint">
-                            {"Config panel is collapsed by default. Expand when you need to inspect JSON, source, or upcoming 3D mesh preview."}
-                        </div>
-                    }
+                    <div class="code-viewer">
+                        <pre>{code_text}</pre>
+                    </div>
                 </div>
                 </div>
 
