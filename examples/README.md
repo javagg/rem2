@@ -32,6 +32,20 @@ Optional: generate STEP and verify each expected STEP artifact exists and is non
 .\scripts\convert-sonnet-examples.ps1 -OutputStep -VerifyStep
 ```
 
+Run one-command Sonnet end-to-end smoke (convert + STEP + solver):
+
+```powershell
+.\scripts\sonnet-e2e-smoke.ps1
+```
+
+This command now verifies solver artifacts too (`postpro/port-S.csv` and `postpro/s_params.s*p`).
+
+Optional: choose a fixture and frequency:
+
+```powershell
+.\scripts\sonnet-e2e-smoke.ps1 -Fixture .\tests\fixtures\readout.sonx -FreqHz 5.0e9
+```
+
 ## Fast Demo Examples (REM)
 
 These examples are intended for web/wasm demo usage: small workload, typical setup, and quick correctness checks.
