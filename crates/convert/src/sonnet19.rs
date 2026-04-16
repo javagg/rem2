@@ -4,7 +4,7 @@ use quick_xml::Reader;
 use rmsh_io::{save_msh_v2_to_path, save_step_to_path};
 use rmsh_model::{Element, ElementType, Mesh, Node};
 use serde_json::{json, Value};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 const DEFAULT_FREQ_MIN: f64 = 1.0e9;
@@ -192,20 +192,23 @@ pub fn convert_xml_to_rem(
             .with_context(|| format!("writing debug STEP: {}", step_path.display()))?;
     }
 
+    let raw_port_count = hints.ports.len();
+    let canonical_ports = canonicalize_ports(&hints.ports);
+    let canonical_port_count = canonical_ports.len();
+
     let (mesh, port_tags, pec_tags) = generate_rect_msh_with_port_tags(
         width_m,
         height_m,
         cells_x,
         cells_y,
-        &hints.ports,
+        &canonical_ports,
         hints.y_direction_negative,
         hints.local_origin_y_m.unwrap_or(height_m),
     );
     save_msh_v2_to_path(out_msh, &mesh)
         .with_context(|| format!("writing mesh: {}", out_msh.display()))?;
 
-    let mut pending_ports: Vec<PendingPort> = hints
-        .ports
+    let mut pending_ports: Vec<PendingPort> = canonical_ports
         .iter()
         .enumerate()
         .map(|(i, p)| PendingPort {
@@ -319,7 +322,7 @@ pub fn convert_xml_to_rem(
         .with_context(|| format!("writing config: {}", out_config.display()))?;
 
     log::info!(
-        "Sonnet19 XML converted: {} -> config={}, mesh={} (w={:.6e} m, h={:.6e} m, nx={} (raw {}), ny={} (raw {}), fast_solver={}, singular_tol={:.1e})",
+        "Sonnet19 XML converted: {} -> config={}, mesh={} (w={:.6e} m, h={:.6e} m, nx={} (raw {}), ny={} (raw {}), ports={} -> {}, fast_solver={}, singular_tol={:.1e})",
         xml_path.display(),
         out_config.display(),
         out_msh.display(),
@@ -329,6 +332,8 @@ pub fn convert_xml_to_rem(
         cells_x_raw,
         cells_y,
         cells_y_raw,
+        raw_port_count,
+        canonical_port_count,
         fast_solver,
         singular_tol,
     );
@@ -471,6 +476,52 @@ fn infer_port_direction(center_xy_m: Option<(f64, f64)>, width_m: f64, height_m:
     }
 }
 
+fn canonicalize_ports(ports: &[SonnetPort]) -> Vec<SonnetPort> {
+    let mut numbered: BTreeMap<i32, SonnetPort> = BTreeMap::new();
+    let mut unnumbered: Vec<SonnetPort> = Vec::new();
+
+    for p in ports {
+        if let Some(n) = p.number {
+            if n != 0 {
+                let key = n.abs();
+                match numbered.get(&key) {
+                    Some(existing) => {
+                        if prefer_port_candidate(existing, p) {
+                            numbered.insert(key, p.clone());
+                        }
+                    }
+                    None => {
+                        numbered.insert(key, p.clone());
+                    }
+                }
+                continue;
+            }
+        }
+        unnumbered.push(p.clone());
+    }
+
+    let mut result: Vec<SonnetPort> = numbered.into_values().collect();
+    result.extend(unnumbered);
+    result
+}
+
+fn prefer_port_candidate(current: &SonnetPort, candidate: &SonnetPort) -> bool {
+    fn score(p: &SonnetPort) -> i32 {
+        let mut s = 0;
+        if p.number.unwrap_or(0) > 0 {
+            s += 4;
+        }
+        if p.center_xy_m.is_some() {
+            s += 2;
+        }
+        if p.vertex_1based.is_some() {
+            s += 1;
+        }
+        s
+    }
+    score(candidate) > score(current)
+}
+
 fn generate_rect_msh_with_port_tags(
     w: f64,
     h: f64,
@@ -506,6 +557,37 @@ fn generate_rect_msh_with_port_tags(
         if let Some((pi, _)) = best {
             col_tags[ix] = port_tags[pi];
         }
+    }
+
+    // Ensure every retained port owns at least one mesh column tag. Without this,
+    // overlapping center heuristics can leave a configured port with no tagged faces.
+    let mut used = vec![false; ports.len()];
+    for tag in &col_tags {
+        if *tag >= PORT_TAG_BASE {
+            let idx = (*tag - PORT_TAG_BASE) as usize;
+            if idx < used.len() {
+                used[idx] = true;
+            }
+        }
+    }
+    for (pi, p) in ports.iter().enumerate() {
+        if used[pi] {
+            continue;
+        }
+        let desired_ix = if let Some((px, _)) = p.center_xy_m {
+            ((px / dx).floor() as isize).clamp(0, (nx - 1) as isize) as usize
+        } else {
+            pi.min(nx - 1)
+        };
+        let fallback_ix = col_tags
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| **t == BASE_PEC_TAG)
+            .min_by_key(|(ix, _)| ix.abs_diff(desired_ix))
+            .map(|(ix, _)| ix)
+            .unwrap_or(desired_ix);
+        col_tags[fallback_ix] = port_tags[pi];
+        used[pi] = true;
     }
 
     let mut pec_set: BTreeSet<u32> = BTreeSet::new();
@@ -1465,5 +1547,53 @@ mod tests {
         let poly = vec![(0.0, 0.0), (10.0, 0.0), (10.0, 5.0), (0.0, 5.0)];
         let d = infer_direction_from_polygon_vertex(&poly, Some(2)).unwrap();
         assert!(d == "x" || d == "y");
+    }
+
+    #[test]
+    fn canonicalize_ports_merges_signed_numbers() {
+        let mut p_neg = SonnetPort::default();
+        p_neg.number = Some(-1);
+        p_neg.center_xy_m = Some((1.0, 1.0));
+
+        let mut p_pos = SonnetPort::default();
+        p_pos.number = Some(1);
+        p_pos.center_xy_m = Some((2.0, 2.0));
+
+        let mut p2 = SonnetPort::default();
+        p2.number = Some(2);
+
+        let out = canonicalize_ports(&[p_neg, p_pos, p2]);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].number, Some(1));
+        assert_eq!(out[1].number, Some(2));
+    }
+
+    #[test]
+    fn rect_mesh_assigns_every_port_tag() {
+        let mut p1 = SonnetPort::default();
+        p1.number = Some(1);
+        p1.center_xy_m = Some((0.10, 0.0));
+
+        let mut p2 = SonnetPort::default();
+        p2.number = Some(2);
+        p2.center_xy_m = Some((0.11, 0.0));
+
+        let mut p3 = SonnetPort::default();
+        p3.number = Some(3);
+        p3.center_xy_m = Some((0.12, 0.0));
+
+        let (_mesh, port_tags, pec_tags) = generate_rect_msh_with_port_tags(
+            1.0,
+            1.0,
+            8,
+            4,
+            &[p1, p2, p3],
+            false,
+            1.0,
+        );
+
+        for tag in port_tags {
+            assert!(pec_tags.contains(&tag));
+        }
     }
 }

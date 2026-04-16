@@ -40,6 +40,12 @@ Run one-command Sonnet end-to-end smoke (convert + STEP + solver):
 
 This command now verifies solver artifacts too (`postpro/port-S.csv` and `postpro/s_params.s*p`).
 
+Port mapping note for Sonnet conversion:
+
+- Sonnet ports with signed pairs (for example `1` and `-1`) are canonicalized to one REM port using `abs(Number)`.
+- When both signed entries exist, conversion prefers the more complete candidate (and generally keeps the positive-number definition).
+- Conversion logs report this as `ports=<raw_count> -> <canonical_count>`.
+
 Optional: choose a fixture and frequency:
 
 ```powershell
