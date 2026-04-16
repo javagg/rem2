@@ -26,6 +26,12 @@ Optional: include debug geometry STEP output during conversion:
 .\scripts\convert-sonnet-examples.ps1 -OutputStep
 ```
 
+Optional: generate STEP and verify each expected STEP artifact exists and is non-empty:
+
+```powershell
+.\scripts\convert-sonnet-examples.ps1 -OutputStep -VerifyStep
+```
+
 ## Fast Demo Examples (REM)
 
 These examples are intended for web/wasm demo usage: small workload, typical setup, and quick correctness checks.

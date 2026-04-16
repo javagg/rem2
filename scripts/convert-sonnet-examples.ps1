@@ -1,7 +1,8 @@
 param(
     [string]$SourceDir = ".\\testdata\\sonnet",
     [string]$OutputDir = ".\\examples\\sonnet",
-    [switch]$OutputStep
+    [switch]$OutputStep,
+    [switch]$VerifyStep
 )
 
 $ErrorActionPreference = "Stop"
@@ -19,6 +20,7 @@ if (-not $sonxFiles) {
 
 Write-Host "Converting $($sonxFiles.Count) Sonnet projects to $OutputDir ..."
 foreach ($file in $sonxFiles) {
+    $stem = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
     $args = @(
         "run", "-p", "rem-cli", "--",
         "--project", $file.FullName,
@@ -34,6 +36,20 @@ foreach ($file in $sonxFiles) {
     cargo @args | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw "Conversion failed for $($file.FullName)"
+    }
+
+    if ($VerifyStep) {
+        if (-not $OutputStep) {
+            throw "-VerifyStep requires -OutputStep"
+        }
+        $stepPath = Join-Path $OutputDir ("${stem}_geometry.step")
+        if (-not (Test-Path $stepPath)) {
+            throw "STEP output missing: $stepPath"
+        }
+        $stepItem = Get-Item $stepPath
+        if ($stepItem.Length -le 0) {
+            throw "STEP output is empty: $stepPath"
+        }
     }
 }
 
