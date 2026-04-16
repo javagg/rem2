@@ -52,6 +52,7 @@ struct SonnetHints {
     deembed_on: Option<bool>,
     subs_per_lambda: Option<f64>,
     ref_planes: Vec<SonnetRefPlane>,
+    conductor_polygons_m: Vec<Vec<(f64, f64)>>,
 }
 
 #[derive(Debug, Clone)]
@@ -128,6 +129,7 @@ impl SonnetHints {
             deembed_on: None,
             subs_per_lambda: None,
             ref_planes: Vec::new(),
+            conductor_polygons_m: Vec::new(),
         }
     }
 }
@@ -184,6 +186,7 @@ pub fn convert_xml_to_rem(
             height_m,
             hints.y_direction_negative,
             hints.local_origin_y_m.unwrap_or(height_m),
+            &hints.conductor_polygons_m,
         );
         save_step_to_path(step_path, &geom_mesh)
             .with_context(|| format!("writing debug STEP: {}", step_path.display()))?;
@@ -338,32 +341,65 @@ fn build_debug_geometry_surface_mesh(
     height_m: f64,
     y_direction_negative: bool,
     local_origin_y_m: f64,
+    conductor_polygons_m: &[Vec<(f64, f64)>],
 ) -> Mesh {
     let mut mesh = Mesh::new();
 
-    let y0 = if y_direction_negative {
-        local_origin_y_m
-    } else {
-        0.0
-    };
-    let y1 = if y_direction_negative {
-        local_origin_y_m - height_m
-    } else {
-        height_m
-    };
+    let mut next_node_id = 1u64;
+    let mut next_elem_id = 1u64;
 
-    mesh.add_node(Node::new(1, 0.0, y0, 0.0));
-    mesh.add_node(Node::new(2, width_m, y0, 0.0));
-    mesh.add_node(Node::new(3, width_m, y1, 0.0));
-    mesh.add_node(Node::new(4, 0.0, y1, 0.0));
+    for poly in conductor_polygons_m {
+        let mut nodes: Vec<u64> = Vec::new();
+        for &(x, y_raw) in poly {
+            let y = if y_direction_negative {
+                local_origin_y_m - y_raw
+            } else {
+                y_raw
+            };
+            let nid = next_node_id;
+            next_node_id += 1;
+            mesh.add_node(Node::new(nid, x, y, 0.0));
+            nodes.push(nid);
+        }
 
-    let mut t1 = Element::new(1, ElementType::Triangle3, vec![1, 2, 3]);
-    t1.physical_tag = Some(BASE_PEC_TAG as i32);
-    mesh.add_element(t1);
+        // Triangulate each polygon with a simple fan around the first vertex.
+        for tri_i in 1..nodes.len().saturating_sub(1) {
+            let mut tri = Element::new(
+                next_elem_id,
+                ElementType::Triangle3,
+                vec![nodes[0], nodes[tri_i], nodes[tri_i + 1]],
+            );
+            tri.physical_tag = Some(BASE_PEC_TAG as i32);
+            mesh.add_element(tri);
+            next_elem_id += 1;
+        }
+    }
 
-    let mut t2 = Element::new(2, ElementType::Triangle3, vec![1, 3, 4]);
-    t2.physical_tag = Some(BASE_PEC_TAG as i32);
-    mesh.add_element(t2);
+    if mesh.elements.is_empty() {
+        let y0 = if y_direction_negative {
+            local_origin_y_m
+        } else {
+            0.0
+        };
+        let y1 = if y_direction_negative {
+            local_origin_y_m - height_m
+        } else {
+            height_m
+        };
+
+        mesh.add_node(Node::new(1, 0.0, y0, 0.0));
+        mesh.add_node(Node::new(2, width_m, y0, 0.0));
+        mesh.add_node(Node::new(3, width_m, y1, 0.0));
+        mesh.add_node(Node::new(4, 0.0, y1, 0.0));
+
+        let mut t1 = Element::new(1, ElementType::Triangle3, vec![1, 2, 3]);
+        t1.physical_tag = Some(BASE_PEC_TAG as i32);
+        mesh.add_element(t1);
+
+        let mut t2 = Element::new(2, ElementType::Triangle3, vec![1, 3, 4]);
+        t2.physical_tag = Some(BASE_PEC_TAG as i32);
+        mesh.add_element(t2);
+    }
 
     mesh
 }
@@ -657,7 +693,11 @@ fn parse_sonnet_hints(xml: &str) -> anyhow::Result<SonnetHints> {
                         hints.ports.push(p);
                     }
                 } else if tag == "planarpolygon" {
-                    current_polygon = None;
+                    if let Some(poly) = current_polygon.take() {
+                        if poly.points_m.len() >= 3 {
+                            hints.conductor_polygons_m.push(poly.points_m);
+                        }
+                    }
                 } else if tag == "level" {
                     current_level_material = None;
                 }
@@ -1325,6 +1365,18 @@ mod tests {
         assert!((mgo.eps_r - 9.7).abs() < 1.0e-12);
         assert!((mgo.mu_r - 1.0).abs() < 1.0e-12);
         assert!((mgo.thickness_m - 0.507e-3).abs() < 1.0e-12);
+    }
+
+    #[test]
+    fn parse_supercond_conductor_polygons() {
+        let xml = include_str!("../../../testdata/sonnet/supercond_filter/supercond_filter_actualhousing.sonx");
+        let hints = parse_sonnet_hints(xml).unwrap();
+
+        assert!(!hints.conductor_polygons_m.is_empty());
+        assert!(hints
+            .conductor_polygons_m
+            .iter()
+            .any(|poly| poly.len() >= 4));
     }
 
         #[test]
