@@ -62,7 +62,11 @@ struct Args {
     #[arg(long)]
     freq_step: Option<f64>,
 
-    /// Override output directory
+    /// Conversion debug: export pre-meshing geometry STEP into the conversion output directory (Sonnet19 only)
+    #[arg(long, default_value_t = false)]
+    output_step: bool,
+
+    /// Solver output directory, or conversion output directory in conversion mode
     #[arg(short, long)]
     output: Option<PathBuf>,
 
@@ -99,8 +103,50 @@ fn main() -> anyhow::Result<()> {
                 anyhow::bail!("missing --format with --project; expected one of: sonnet19, ansys, ads")
             }
         };
-        let out_config = args.out_config.clone().unwrap_or_else(|| project_path.with_extension("json"));
-        let out_msh = args.out_msh.clone().unwrap_or_else(|| project_path.with_extension("msh"));
+        let default_out_config = project_path.with_extension("json");
+        let default_out_msh = project_path.with_extension("msh");
+
+        let out_config = if let Some(path) = args.out_config.clone() {
+            path
+        } else if let Some(out_dir) = args.output.clone() {
+            let name = default_out_config
+                .file_name()
+                .map(|n| n.to_owned())
+                .unwrap_or_else(|| "converted.json".into());
+            out_dir.join(name)
+        } else {
+            default_out_config
+        };
+
+        let out_msh = if let Some(path) = args.out_msh.clone() {
+            path
+        } else if let Some(out_dir) = args.output.clone() {
+            let name = default_out_msh
+                .file_name()
+                .map(|n| n.to_owned())
+                .unwrap_or_else(|| "converted.msh".into());
+            out_dir.join(name)
+        } else {
+            default_out_msh
+        };
+
+        let debug_step = if matches!(format, ProjectFormat::Sonnet19) && args.output_step {
+            let out_dir = if let Some(dir) = args.output.clone() {
+                dir
+            } else if let Some(parent) = out_config.parent() {
+                parent.to_path_buf()
+            } else {
+                std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+            };
+            let stem = out_config
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .filter(|s| !s.is_empty())
+                .unwrap_or("converted");
+            Some(out_dir.join(format!("{}_geometry.step", stem)))
+        } else {
+            None
+        };
 
         convert_project_to_rem(
             format,
@@ -111,6 +157,7 @@ fn main() -> anyhow::Result<()> {
                 freq_min: args.freq_min,
                 freq_max: args.freq_max,
                 freq_step: args.freq_step,
+                debug_step,
             },
         )?;
         return Ok(());

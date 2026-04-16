@@ -8,3 +8,5 @@ anyhow = { workspace = true }
 log = { workspace = true }
 serde_json = { workspace = true }
 quick-xml = "0.37"
+rmsh-io = { workspace = true }
+rmsh-model = { workspace = true }

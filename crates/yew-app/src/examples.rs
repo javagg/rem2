@@ -202,12 +202,13 @@ pub const EXAMPLES: &[ExampleMeta] = &[
   "Boundaries": { "PEC": { "Attributes": [1] } },
   "Solver": {
     "MoM": {
-      "Equation": "CFIE", "Basis": "RWG",
+      "Equation": "EFIE", "Basis": "Pulse",
       "FreqMin": 1.0e9, "FreqMax": 1.0e9, "FreqStep": 1.0,
-      "Alpha": 0.5, "SingularTol": 1.0e-5, "FastSolver": "Direct",
+      "Alpha": 0.5, "SingularTol": 5.0e-4, "FastSolver": "GMRES",
       "ThetaInc": 0.0, "PhiInc": 0.0, "Polarization": "theta"
     }
-  }
+  },
+  "Postprocessing": { "RCS": { "ThetaDeg": "0:30:180", "PhiDeg": [0.0] } }
 }"#,
         source_code: "// Fast MoM sanity check: single-frequency PEC sphere",
     },

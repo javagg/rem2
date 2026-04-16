@@ -1,0 +1,224 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<SonnetProject Version="20" Type="GEO" xmlns="https://www.sonnetsoftware.com/schema/project" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="https://www.sonnetsoftware.com/schema/project https://www.sonnetsoftware.com/schema/project/sonnet_project_file-1.0.xsd">
+    <GlobalTemperature Tnom="25.000"/>
+    <Header>
+        <Created Program="example" Version="19.52.2025">
+            <Date>11/08/2015 11:27:39</Date>
+        </Created>
+        <Modified Program="example" Version="19.52.2025">
+            <License>sonnetexample.0000</License>
+            <Date>03/13/2025 08:21:15</Date>
+            <Change Importance="MEDIUM">
+                <Date>08/21/2023 15:31:21</Date>
+            </Change>
+            <Change Importance="HIGH">
+                <Date>08/21/2023 15:31:21</Date>
+            </Change>
+        </Modified>
+    </Header>
+    <Units>
+        <Angle>DEG</Angle>
+        <Capacitance>PF</Capacitance>
+        <Conductance>/OH</Conductance>
+        <Conductivity>SM</Conductivity>
+        <Frequency>GHZ</Frequency>
+        <Inductance>NH</Inductance>
+        <Length>UM</Length>
+        <Roughness>UM</Roughness>
+        <Resistance>OH</Resistance>
+        <Resistivity>OHCM</Resistivity>
+        <SheetRes>OHSQ</SheetRes>
+    </Units>
+    <StartupGraphs>
+        <File>ThreeResonatorGraph.sgrx</File>
+    </StartupGraphs>
+    <Control>
+        <SweepType>VARSWP</SweepType>
+        <DeEmbed On="TRUE"/>
+        <Precision>QUAD</Precision>
+        <SpeedControl>MAX_ACCURACY</SpeedControl>
+        <ABSCacheLevel>MULTI_SWEEP</ABSCacheLevel>
+        <ResDet On="TRUE"/>
+        <UFFTControl>
+            <MatrixSolver>AUTO</MatrixSolver>
+            <Preconditioner>CLOUD_LARGE</Preconditioner>
+            <Precision CustomValue="5">MIN</Precision>
+            <CollectData On="TRUE"/>
+            <DisableLoopTree On="FALSE"/>
+        </UFFTControl>
+    </Control>
+    <Geometry YDirection="Negative">
+        <Dielectric Name="Air" LossType="CONDUCTIVITY" Anisotropic="FALSE">
+            <FrequencyModel ModelType="None" RefFreq="0.0" ValidRef="FALSE"/>
+            <Conductivity Value="0.0"/>
+            <Eps Value="1.0"/>
+            <Tan Value="0.0"/>
+            <MuRel Value="1.0"/>
+            <MagLossTan Value="0.0"/>
+        </Dielectric>
+        <Dielectric Name="Silicon Dioxide" LossType="CONDUCTIVITY" Anisotropic="FALSE">
+            <FrequencyModel ModelType="None" RefFreq="0.0" ValidRef="FALSE"/>
+            <Conductivity Value="0.0"/>
+            <Eps Value="3.9"/>
+            <Tan Value="1.0e-5"/>
+            <MuRel Value="1.0"/>
+            <MagLossTan Value="0.0"/>
+        </Dielectric>
+        <Conductor Name="Perfect Conductor" Conductivity="INF" LossType="CONDUCTIVITY"/>
+        <Conductor Name="Niobium" LossType="SURFACE_IMPEDANCE" Ls="0.11" Rdc="0.0" Rrf="0.0" Xdc="0.0"/>
+        <Box>
+            <BoxCover Type="TOP" MaterialType="PERFECT_CONDUCTOR" Roughness="0.0" Thickness="0.0"/>
+            <BoxCover Type="BOTTOM" MaterialName="Niobium" MaterialType="MATERIAL" Roughness="0.0" Thickness="0.0"/>
+            <Size X="5000" Y="5000" Z="10.75"/>
+            <NumCells X="5000" Y="5000"/>
+            <LocalOrigin X="0" Y="5000"/>
+            <Symmetry On="FALSE"/>
+            <RefPlane Type="NONE" Side="LEFT" CalLength="200"/>
+            <RefPlane Type="NONE" Side="RIGHT" CalLength="200"/>
+        </Box>
+        <Level MaterialName="Air" Number="0">
+            <DielectricMaterialModel Thickness="10.0"/>
+            <Objects>
+                <PlanarTechLayer Name="Niobium" MaterialName="Niobium">
+                    <ColorPattern Color="#da70d6" Pattern="ltgrey"/>
+                    <PlanarMaterialModel CurrentRatio="0.5" ModelType="THIN_METAL" Thickness="0.0"/>
+                    <RoughnessModel RoughnessOn="FALSE"/>
+                    <PlanarMeshing EnableMesh="TRUE" FillType="RECTANGULAR"/>
+                    <SubsectionMeshing XMin="1" XMax="100" YMin="1" YMax="100" EdgeMeshed="TRUE" DiagonalEdges="FALSE" AnisotropicType="X_AND_Y"/>
+                    <GLGMeshing GLG="FALSE"/>
+                    <Objects>
+                        <PlanarPolygon Id="13">
+                            <Points>(0,4700) (5000,4700) (5000,5000) (0,5000)</Points>
+                        </PlanarPolygon>
+                        <PlanarPolygon Id="14">
+                            <Points>(1479,1459.9999) (1481.1872,1459.9999) (1485.4952,1460.7595) (1489.6058,1462.2556) (1493.3942,1464.4429)</Points>
+                            <Points>(1496.7452,1467.2547) (1499.557,1470.6057) (1501.7442,1474.3941) (1503.2404,1478.5047) (1504,1482.8127)</Points>
+                            <Points>(1504,1484.9999) (1497,1484.9999) (1497,1483.4251) (1496.4531,1480.3233) (1495.3759,1477.3637)</Points>
+                            <Points>(1493.8011,1474.6361) (1491.7765,1472.2233) (1489.3638,1470.1988) (1486.6362,1468.624) (1483.6765,1467.5468)</Points>
+                            <Points>(1480.5748,1466.9999) (1479,1466.9999)</Points>
+                        </PlanarPolygon>
+                        <PlanarPolygon Id="15">
+                            <Points>(2479,1659.9999) (2481.1872,1659.9999) (2485.4952,1660.7595) (2489.6058,1662.2556) (2493.3942,1664.4429)</Points>
+                            <Points>(2496.7452,1667.2547) (2499.557,1670.6057) (2501.7442,1674.3941) (2503.2404,1678.5047) (2504,1682.8127)</Points>
+                            <Points>(2504,1684.9999) (2497,1684.9999) (2497,1683.4251) (2496.4531,1680.3233) (2495.3759,1677.3637)</Points>
+                            <Points>(2493.8011,1674.6361) (2491.7765,1672.2233) (2489.3638,1670.1988) (2486.6362,1668.624) (2483.6765,1667.5468)</Points>
+                            <Points>(2480.5748,1666.9999) (2479,1666.9999)</Points>
+                        </PlanarPolygon>
+                        <PlanarPolygon Id="16">
+                            <Points>(3479,1859.9999) (3481.1872,1859.9999) (3485.4952,1860.7595) (3489.6058,1862.2556) (3493.3942,1864.4429)</Points>
+                            <Points>(3496.7452,1867.2547) (3499.557,1870.6057) (3501.7442,1874.3941) (3503.2404,1878.5047) (3504,1882.8127)</Points>
+                            <Points>(3504,1884.9999) (3497,1884.9999) (3497,1883.4251) (3496.4531,1880.3233) (3495.3759,1877.3637)</Points>
+                            <Points>(3493.8011,1874.6361) (3491.7765,1872.2233) (3489.3638,1870.1988) (3486.6362,1868.624) (3483.6765,1867.5468)</Points>
+                            <Points>(3480.5748,1866.9999) (3479,1866.9999)</Points>
+                        </PlanarPolygon>
+                        <PlanarPolygon Id="17">
+                            <Points>(1479,1460) (897,1460) (897,1467) (1479,1467)</Points>
+                        </PlanarPolygon>
+                        <PlanarPolygon Id="18">
+                            <Points>(1504,1485) (1497,1485) (1497,4700) (1504,4700)</Points>
+                        </PlanarPolygon>
+                        <PlanarPolygon Id="19">
+                            <Points>(2479,1660) (1897,1660) (1897,1667) (2479,1667)</Points>
+                        </PlanarPolygon>
+                        <PlanarPolygon Id="20">
+                            <Points>(2504,1685) (2497,1685) (2497,4700) (2504,4700)</Points>
+                        </PlanarPolygon>
+                        <PlanarPolygon Id="21">
+                            <Points>(3479,1860) (2897,1860) (2897,1867) (3479,1867)</Points>
+                        </PlanarPolygon>
+                        <PlanarPolygon Id="22">
+                            <Points>(3504,1885) (3497,1885) (3497,4700) (3504,4700)</Points>
+                        </PlanarPolygon>
+                        <PlanarPolygon Id="23">
+                            <Points>(1479,1450.0002) (1482.0621,1450.0002) (1488.0933,1451.0636) (1493.8481,1453.1582) (1499.1519,1456.2203)</Points>
+                            <Points>(1503.8433,1460.1569) (1507.7798,1464.8483) (1510.8419,1470.152) (1512.9365,1475.9069) (1514,1481.9381)</Points>
+                            <Points>(1514,1485.0002) (1507,1485.0002) (1507,1482.5505) (1506.1492,1477.7256) (1504.4736,1473.1217)</Points>
+                            <Points>(1502.0239,1468.8787) (1498.8746,1465.1256) (1495.1215,1461.9763) (1490.8785,1459.5266) (1486.2746,1457.8509)</Points>
+                            <Points>(1481.4497,1457.0002) (1479,1457.0002)</Points>
+                        </PlanarPolygon>
+                        <PlanarPolygon Id="24">
+                            <Points>(2479,1650.0001) (2482.0621,1650.0001) (2488.0933,1651.0635) (2493.8481,1653.1581) (2499.1519,1656.2202)</Points>
+                            <Points>(2503.8433,1660.1568) (2507.7798,1664.8482) (2510.8419,1670.1519) (2512.9365,1675.9068) (2514,1681.938)</Points>
+                            <Points>(2514,1685.0001) (2507,1685.0001) (2507,1682.5504) (2506.1492,1677.7254) (2504.4736,1673.1215)</Points>
+                            <Points>(2502.0239,1668.8786) (2498.8746,1665.1254) (2495.1215,1661.9762) (2490.8785,1659.5265) (2486.2746,1657.8508)</Points>
+                            <Points>(2481.4497,1657.0001) (2479,1657.0001)</Points>
+                        </PlanarPolygon>
+                        <PlanarPolygon Id="25">
+                            <Points>(3479,1850) (3482.0621,1850) (3488.0933,1851.0635) (3493.8481,1853.1581) (3499.1519,1856.2202)</Points>
+                            <Points>(3503.8433,1860.1567) (3507.7798,1864.8481) (3510.8419,1870.1519) (3512.9365,1875.9067) (3514,1881.9379)</Points>
+                            <Points>(3514,1885) (3507,1885) (3507,1882.5503) (3506.1492,1877.7254) (3504.4736,1873.1215)</Points>
+                            <Points>(3502.0239,1868.8785) (3498.8746,1865.1254) (3495.1215,1861.9761) (3490.8785,1859.5264) (3486.2746,1857.8508)</Points>
+                            <Points>(3481.4497,1857) (3479,1857)</Points>
+                        </PlanarPolygon>
+                        <PlanarPolygon Id="26">
+                            <Points>(1479,1450) (0,1450) (0,1457) (1479,1457)</Points>
+                            <Objects>
+                                <Port Number="1" Vertex="1">
+                                    <Type Type="BOX"/>
+                                    <Impedance Resistance="20" Reactance="0" Inductance="0" Capacitance="0"/>
+                                    <Center>(0,1453.5)</Center>
+                                </Port>
+                            </Objects>
+                        </PlanarPolygon>
+                        <PlanarPolygon Id="28">
+                            <Points>(1542,1657.0001) (1538.9379,1657.0001) (1532.9067,1655.9367) (1527.1519,1653.8421) (1521.8481,1650.78)</Points>
+                            <Points>(1517.1567,1646.8434) (1513.2202,1642.152) (1510.1581,1636.8483) (1508.0635,1631.0934) (1507,1625.0622)</Points>
+                            <Points>(1507,1622.0001) (1514,1622.0001) (1514,1624.4498) (1514.8508,1629.2747) (1516.5264,1633.8786)</Points>
+                            <Points>(1518.9761,1638.1216) (1522.1254,1641.8748) (1525.8785,1645.024) (1530.1215,1647.4737) (1534.7254,1649.1494)</Points>
+                            <Points>(1539.5503,1650.0001) (1542,1650.0001)</Points>
+                        </PlanarPolygon>
+                        <PlanarPolygon Id="29">
+                            <Points>(2542,1857.0001) (2538.9379,1857.0001) (2532.9067,1855.9367) (2527.1519,1853.8421) (2521.8481,1850.78)</Points>
+                            <Points>(2517.1567,1846.8434) (2513.2202,1842.152) (2510.1581,1836.8483) (2508.0635,1831.0934) (2507,1825.0622)</Points>
+                            <Points>(2507,1822.0001) (2514,1822.0001) (2514,1824.4498) (2514.8508,1829.2747) (2516.5264,1833.8786)</Points>
+                            <Points>(2518.9761,1838.1216) (2522.1254,1841.8748) (2525.8785,1845.024) (2530.1215,1847.4737) (2534.7254,1849.1494)</Points>
+                            <Points>(2539.5503,1850.0001) (2542,1850.0001)</Points>
+                        </PlanarPolygon>
+                        <PlanarPolygon Id="30">
+                            <Points>(3542,2057.0001) (3538.9379,2057.0001) (3532.9067,2055.9367) (3527.1519,2053.8421) (3521.8481,2050.78)</Points>
+                            <Points>(3517.1567,2046.8434) (3513.2202,2042.152) (3510.1581,2036.8483) (3508.0635,2031.0934) (3507,2025.0622)</Points>
+                            <Points>(3507,2022.0001) (3514,2022.0001) (3514,2024.4498) (3514.8508,2029.2747) (3516.5264,2033.8786)</Points>
+                            <Points>(3518.9761,2038.1216) (3522.1254,2041.8748) (3525.8785,2045.024) (3530.1215,2047.4737) (3534.7254,2049.1494)</Points>
+                            <Points>(3539.5503,2050.0001) (3542,2050.0001)</Points>
+                        </PlanarPolygon>
+                        <PlanarPolygon Id="31">
+                            <Points>(1514,1485) (1507,1485) (1507,1622) (1514,1622)</Points>
+                        </PlanarPolygon>
+                        <PlanarPolygon Id="32">
+                            <Points>(2479,1650) (1542,1650) (1542,1657) (2479,1657)</Points>
+                        </PlanarPolygon>
+                        <PlanarPolygon Id="33">
+                            <Points>(2514,1685) (2507,1685) (2507,1822) (2514,1822)</Points>
+                        </PlanarPolygon>
+                        <PlanarPolygon Id="34">
+                            <Points>(3479,1850) (2542,1850) (2542,1857) (3479,1857)</Points>
+                        </PlanarPolygon>
+                        <PlanarPolygon Id="35">
+                            <Points>(3514,1885) (3507,1885) (3507,2022) (3514,2022)</Points>
+                        </PlanarPolygon>
+                        <PlanarPolygon Id="36">
+                            <Points>(5000,2050) (3542,2050) (3542,2057) (5000,2057)</Points>
+                            <Objects>
+                                <Port Number="2" Vertex="3">
+                                    <Type Type="BOX"/>
+                                    <Impedance Resistance="20" Reactance="0" Inductance="0" Capacitance="0"/>
+                                    <Center>(5000,2053.5)</Center>
+                                </Port>
+                            </Objects>
+                        </PlanarPolygon>
+                    </Objects>
+                </PlanarTechLayer>
+            </Objects>
+        </Level>
+        <Level MaterialName="Silicon Dioxide" Number="1">
+            <DielectricMaterialModel Thickness="0.75"/>
+        </Level>
+    </Geometry>
+    <Sweeps SweepVariables="FALSE">
+        <Set On="TRUE">
+            <Frequencies>
+                <Sweep Type="ABS_ENTRY" On="TRUE" Adaptive="TRUE" Start="9" Stop="11" Target="300"/>
+            </Frequencies>
+        </Set>
+    </Sweeps>
+</SonnetProject>

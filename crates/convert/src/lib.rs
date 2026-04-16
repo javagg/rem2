@@ -2,7 +2,7 @@ pub mod ads;
 pub mod ansys;
 pub mod sonnet19;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProjectFormat {
@@ -11,11 +11,12 @@ pub enum ProjectFormat {
 	Ads,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct Sonnet19Overrides {
 	pub freq_min: Option<f64>,
 	pub freq_max: Option<f64>,
 	pub freq_step: Option<f64>,
+	pub debug_step: Option<PathBuf>,
 }
 
 pub fn convert_project_to_rem(
@@ -33,6 +34,7 @@ pub fn convert_project_to_rem(
 			sonnet19_overrides.freq_min,
 			sonnet19_overrides.freq_max,
 			sonnet19_overrides.freq_step,
+			sonnet19_overrides.debug_step.as_deref(),
 		),
 		ProjectFormat::Ansys => ansys::convert_project_to_rem(project_path, out_config, out_msh),
 		ProjectFormat::Ads => ads::convert_project_to_rem(project_path, out_config, out_msh),

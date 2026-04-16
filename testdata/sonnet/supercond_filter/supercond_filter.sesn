@@ -1,0 +1,224 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<SessionFile VERSION="3" CreatedBy="sonnet 19.0.alpha" SavedBy="sonnet 19.0.alpha" Name="Session">
+    <Documents COUNT="5">
+        <Document ClassName="SGraphDoc" Module="emgraph" ID="2519294735584">
+            <Guts/>
+        </Document>
+        <Document ClassName="SEmstatusDoc" Module="emstatus" ID="2519324532512">
+            <Guts/>
+        </Document>
+        <Document ClassName="SSessionManagerDoc" Module="sonnet" ID="2519324522944">
+            <Guts/>
+        </Document>
+        <Document ClassName="SGeoDoc" Module="xgeom" ID="2519321798224">
+            <Guts Filename="supercond_filter_actualhousing.sonx"/>
+        </Document>
+        <Document ClassName="SGeoDoc" Module="xgeom" ID="2519293498416">
+            <Guts Filename="supercond_filter_smallhousing.sonx"/>
+        </Document>
+    </Documents>
+    <Desktop Screens="1" Width="1920" Height="1080" SWidth="1920" SHeight="1040"/>
+    <Shells COUNT="1">
+        <ShellWin ACTIVE="true" WinState="0">
+            <geometry>01d9d0cb00030000000001010000000a000005d30000037f0000010200000029000005d20000037e000000000000000007800000010200000029000005d20000037e</geometry>
+            <state>000000ff00000000fd00000000000004d10000033f00000004000000040000000800000008fc00000000</state>
+            <Tabs COUNT="4">
+                <Window ClassName="SSessionManagerWin" DocID="2519324522944" ShellIndex="0" TabIndex="0" ActiveView="false">
+                    <geometry>01d9d0cb00030000000000000000000000000360000002c0000000000000000000000360000002c000000000000000000780000000000000000000000360000002c0</geometry>
+                    <state>000000ff00000000fd0000000100000000000000940000037ffc0200000001fb0000000e00530065007300730069006f006e01000000460000037f0000005d00ffffff000006e40000037f00000004000000040000000800000008fc0000000100000002000000010000002200690074007300500072006f006a0065006300740054006f006f006c0042006100720100000000ffffffff0000000000000000</state>
+                    <Guts/>
+                </Window>
+                <Window ClassName="SGeo2dWin" DocID="2519321798224" ShellIndex="0" TabIndex="1" ActiveView="true">
+                    <geometry>01d9d0cb000300000000000000000000000004cc000003210000000000000000000004cc00000321000000000000000007800000000000000000000004cc00000321</geometry>
+                    <state>000000ff00000000fd0000000100000000000000c80000029bfc0200000003fb0000000e0052006500610064006f0075007402000001d0000000c4000000730000007efb0000001e0053007400610063006b007500700020004d0061006e006100670065007201000000640000010b0000005d00fffffffb0000000e00530065007300730069006f006e01000001730000018c0000005d00ffffff000003a60000029b00000004000000040000000800000008fc0000000a0000000100000000000000010000000000000001000000020000001a0049006e00730065007200740054006f006f006c0042006100720300000000ffffffff00000000000000000000002000450064006900740054006f006f006c00730054006f006f006c0042006100720300000143ffffffff0000000000000000000000020000000000000002000000000000000200000000000000020000000000000002000000060000001600460069006c00650054006f006f006c0042006100720100000000ffffffff00000000000000000000001600450064006900740054006f006f006c0042006100720100000078ffffffff00000000000000000000001600560069006500770054006f006f006c0042006100720100000141ffffffff00000000000000000000001a004c006500760065006c00730054006f006f006c004200610072010000027dffffffff00000000000000000000001c00430069007200630075006900740054006f006f006c0042006100720100000305ffffffff00000000000000000000001a004c00610075006e006300680054006f006f006c004200610072010000034300000266000000000000000000000002000000020000001a004f0062006a0065006300740054006f006f006c0042006100720100000000ffffffff000000000000000000000016004d006f006400650054006f006f006c006200610072010000005bffffffff00000000000000000000000300000000</state>
+                    <Guts>
+                        <Level SLevelNumber="0"/>
+                        <Zoom Scale="10.92" ZValue="100" HScroll="0" VScroll="0"/>
+                    </Guts>
+                </Window>
+                <Window ClassName="SGeo2dWin" DocID="2519293498416" ShellIndex="0" TabIndex="2" ActiveView="false">
+                    <geometry>01d9d0cb000300000000000000000000000004cc000003210000000000000000000004cc00000321000000000000000007800000000000000000000004cc00000321</geometry>
+                    <state>000000ff00000000fd0000000100000000000000c80000029bfc0200000003fb0000000e0052006500610064006f0075007402000001d0000000c4000000730000007efb0000001e0053007400610063006b007500700020004d0061006e006100670065007201000000640000010b0000005d00fffffffb0000000e00530065007300730069006f006e01000001730000018c0000005d00ffffff000003a60000029b00000004000000040000000800000008fc0000000a0000000100000000000000010000000000000001000000020000001a0049006e00730065007200740054006f006f006c0042006100720300000000ffffffff00000000000000000000002000450064006900740054006f006f006c00730054006f006f006c0042006100720300000143ffffffff0000000000000000000000020000000000000002000000000000000200000000000000020000000000000002000000060000001600460069006c00650054006f006f006c0042006100720100000000ffffffff00000000000000000000001600450064006900740054006f006f006c0042006100720100000078ffffffff00000000000000000000001600560069006500770054006f006f006c0042006100720100000141ffffffff00000000000000000000001a004c006500760065006c00730054006f006f006c004200610072010000027dffffffff00000000000000000000001c00430069007200630075006900740054006f006f006c0042006100720100000305ffffffff00000000000000000000001a004c00610075006e006300680054006f006f006c004200610072010000034300000266000000000000000000000002000000020000001a004f0062006a0065006300740054006f006f006c0042006100720100000000ffffffff000000000000000000000016004d006f006400650054006f006f006c006200610072010000005bffffffff00000000000000000000000300000000</state>
+                    <Guts>
+                        <Level SLevelNumber="0"/>
+                        <Zoom Scale="21.84" ZValue="100" HScroll="0" VScroll="0"/>
+                    </Guts>
+                </Window>
+                <Window ClassName="SGraphWin" DocID="2519294735584" ShellIndex="0" TabIndex="3" ActiveView="false">
+                    <geometry>01d9d0cb000300000000000000000000000004cc000003210000000000000000000004cc00000321000000000000000007800000000000000000000004cc00000321</geometry>
+                    <state>000000ff00000000fd0000000100000000000000c2000002d5fc0200000003fb0000000c004c006500670065006e006401000000310000010d0000005d00fffffffb00000018005400650072006d0069006e006100740069006f006e00730100000142000000b40000005d00fffffffb0000000e00530065007300730069006f006e01000001fa0000010c0000005d00ffffff00000407000002d500000004000000040000000800000008fc0000000100000002000000040000001600460069006c00650054006f006f006c0042006100720100000000ffffffff00000000000000000000001600560069006500770054006f006f006c0042006100720100000098ffffffff000000000000000000000018004700720061007000680054006f006f006c004200610072010000016fffffffff00000000000000000000001a004c00610075006e006300680054006f006f006c00420061007201000002b3000002ac0000000000000000</state>
+                    <Guts>
+                        <graph_info version="15" tab_label="Graph1">
+                            <window_specific/>
+                            <terminations>R 50.00000
+
+</terminations>
+                            <source_files>
+                                <source id="0">
+                                    <file>supercond_filter_actualhousing.sonx</file>
+                                </source>
+                                <source id="1">
+                                    <file>supercond_filter_smallhousing.sonx</file>
+                                </source>
+                                <source id="2">
+                                    <file>supercond_filter_measured_data.s2p</file>
+                                </source>
+                            </source_files>
+                            <plot type="SGraphWin" plotover="0" graph_title="Simulated (Actual and Small Housing) vs. Measurement Data">
+                                <graph_properties show_grid="1" show_symbols="1" grid_weight="1" axis_weight="1"/>
+                                <graph_units>
+                                    <length unit="mm"/>
+                                    <resistance unit="Ohms"/>
+                                    <inductance unit="nH"/>
+                                    <capacitance unit="pF"/>
+                                    <frequency unit="GHz"/>
+                                    <conductivity unit="S/m"/>
+                                    <resistivity unit="Ohm-cm"/>
+                                    <sheet_resistance unit="Ohms/sq"/>
+                                </graph_units>
+                                <axes>
+                                    <x_axis min="3.5" max="4.3" autoscale="1" enabled="1" interval="0" tick_labels="1" log="0" custom="0">
+                                        <title>Frequency (GHz)</title>
+                                    </x_axis>
+                                    <y_axis_left min="-70" max="0" autoscale="1" enabled="1" interval="0" tick_labels="1" log="0" custom="0">
+                                        <title>Magnitude (dB)</title>
+                                    </y_axis_left>
+                                    <y_axis_right min="0" max="1000" autoscale="1" enabled="0" interval="0" tick_labels="1" log="0" custom="0">
+                                        <title></title>
+                                    </y_axis_right>
+                                </axes>
+                                <curves>
+                                    <curve id="1" measurement_name="S-Parameters" measurement_id="0" plotover="0">
+                                        <Axis name="Axis" value="0"/>
+                                        <Format name="Format" value="0"/>
+                                        <Data_Source name="Data Source">
+                                            <File name="File" value="0"/>
+                                            <De-embedded name="De-embedded" value="0"/>
+                                        </Data_Source>
+                                        <Ports name="Ports">
+                                            <To_Port name="To Port" value="1"/>
+                                            <From_Port name="From Port" value="1"/>
+                                        </Ports>
+                                        <Style name="Style">
+                                            <Color name="Color" value="#d50000"/>
+                                            <Symbol name="Symbol" value="0"/>
+                                            <Line_Style name="Line Style" value="1"/>
+                                            <Line_Width name="Line Width" value="1"/>
+                                        </Style>
+                                    </curve>
+                                    <curve id="3" measurement_name="S-Parameters" measurement_id="0" plotover="0">
+                                        <Axis name="Axis" value="0"/>
+                                        <Format name="Format" value="0"/>
+                                        <Data_Source name="Data Source">
+                                            <File name="File" value="1"/>
+                                            <De-embedded name="De-embedded" value="0"/>
+                                        </Data_Source>
+                                        <Ports name="Ports">
+                                            <To_Port name="To Port" value="1"/>
+                                            <From_Port name="From Port" value="1"/>
+                                        </Ports>
+                                        <Style name="Style">
+                                            <Color name="Color" value="#000075"/>
+                                            <Symbol name="Symbol" value="0"/>
+                                            <Line_Style name="Line Style" value="1"/>
+                                            <Line_Width name="Line Width" value="1"/>
+                                        </Style>
+                                    </curve>
+                                    <curve id="5" measurement_name="S-Parameters" measurement_id="0" plotover="0">
+                                        <Axis name="Axis" value="0"/>
+                                        <Format name="Format" value="0"/>
+                                        <Data_Source name="Data Source">
+                                            <File name="File" value="0"/>
+                                            <De-embedded name="De-embedded" value="0"/>
+                                        </Data_Source>
+                                        <Ports name="Ports">
+                                            <To_Port name="To Port" value="2"/>
+                                            <From_Port name="From Port" value="1"/>
+                                        </Ports>
+                                        <Style name="Style">
+                                            <Color name="Color" value="#31953d"/>
+                                            <Symbol name="Symbol" value="0"/>
+                                            <Line_Style name="Line Style" value="1"/>
+                                            <Line_Width name="Line Width" value="1"/>
+                                        </Style>
+                                    </curve>
+                                    <curve id="7" measurement_name="S-Parameters" measurement_id="0" plotover="0">
+                                        <Axis name="Axis" value="0"/>
+                                        <Format name="Format" value="0"/>
+                                        <Data_Source name="Data Source">
+                                            <File name="File" value="1"/>
+                                            <De-embedded name="De-embedded" value="0"/>
+                                        </Data_Source>
+                                        <Ports name="Ports">
+                                            <To_Port name="To Port" value="2"/>
+                                            <From_Port name="From Port" value="1"/>
+                                        </Ports>
+                                        <Style name="Style">
+                                            <Color name="Color" value="#ff8533"/>
+                                            <Symbol name="Symbol" value="0"/>
+                                            <Line_Style name="Line Style" value="1"/>
+                                            <Line_Width name="Line Width" value="1"/>
+                                        </Style>
+                                    </curve>
+                                    <curve id="9" measurement_name="S-Parameters" measurement_id="0" plotover="0">
+                                        <Axis name="Axis" value="0"/>
+                                        <Format name="Format" value="0"/>
+                                        <Data_Source name="Data Source">
+                                            <File name="File" value="2"/>
+                                        </Data_Source>
+                                        <Ports name="Ports">
+                                            <To_Port name="To Port" value="1"/>
+                                            <From_Port name="From Port" value="1"/>
+                                        </Ports>
+                                        <Style name="Style">
+                                            <Color name="Color" value="#911eb4"/>
+                                            <Symbol name="Symbol" value="-1"/>
+                                            <Line_Style name="Line Style" value="1"/>
+                                            <Line_Width name="Line Width" value="1"/>
+                                        </Style>
+                                    </curve>
+                                    <curve id="11" measurement_name="S-Parameters" measurement_id="0" plotover="0">
+                                        <Axis name="Axis" value="0"/>
+                                        <Format name="Format" value="0"/>
+                                        <Data_Source name="Data Source">
+                                            <File name="File" value="2"/>
+                                        </Data_Source>
+                                        <Ports name="Ports">
+                                            <To_Port name="To Port" value="2"/>
+                                            <From_Port name="From Port" value="1"/>
+                                        </Ports>
+                                        <Style name="Style">
+                                            <Color name="Color" value="#00b7d3"/>
+                                            <Symbol name="Symbol" value="-1"/>
+                                            <Line_Style name="Line Style" value="1"/>
+                                            <Line_Width name="Line Width" value="1"/>
+                                        </Style>
+                                    </curve>
+                                </curves>
+                                <marker_properties>
+                                    <data_marker_properties color="#004c97" weight="12" symbol="2" display_annotation="1"/>
+                                    <curve_marker_properties color="#004c97" show_parameters="0" hide_label="0"/>
+                                    <note_marker_properties color="#004c97"/>
+                                    <delta_marker_properties color="#004c97"/>
+                                    <line_marker_properties color="#004c97" weight="2" style="2" display_annotation="1"/>
+                                    <line_segment_marker_properties color="#004c97" weight="2" style="2" symbol="0" symbol_size="12"/>
+                                    <general_properties text_size="10" label_precision="4"/>
+                                </marker_properties>
+                                <markers>
+                                    <data_markers/>
+                                    <curve_markers/>
+                                    <note_markers/>
+                                    <hline_markers/>
+                                    <vline_markers/>
+                                    <delta_markers/>
+                                    <line_segment_markers/>
+                                </markers>
+                                <zoom_rect valid="0" x1="-1" x2="-2" y1="-1" y2="-2"/>
+                            </plot>
+                        </graph_info>
+                    </Guts>
+                </Window>
+            </Tabs>
+        </ShellWin>
+    </Shells>
+</SessionFile>

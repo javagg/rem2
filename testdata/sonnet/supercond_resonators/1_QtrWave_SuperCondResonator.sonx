@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<SonnetProject Version="20" Type="GEO" xmlns="https://www.sonnetsoftware.com/schema/project" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="https://www.sonnetsoftware.com/schema/project https://www.sonnetsoftware.com/schema/project/sonnet_project_file-1.0.xsd">
+    <GlobalTemperature Tnom="25.000"/>
+    <Header>
+        <Created Program="example" Version="19.52.2025">
+            <Date>11/08/2015 11:27:39</Date>
+        </Created>
+        <Modified Program="example" Version="19.52.2025">
+            <License>sonnetexample.0000</License>
+            <Date>03/13/2025 08:21:10</Date>
+            <Change Importance="MEDIUM">
+                <Date>08/21/2023 12:19:05</Date>
+            </Change>
+            <Change Importance="HIGH">
+                <Date>08/21/2023 12:19:05</Date>
+            </Change>
+        </Modified>
+    </Header>
+    <Units>
+        <Angle>DEG</Angle>
+        <Capacitance>PF</Capacitance>
+        <Conductance>/OH</Conductance>
+        <Conductivity>SM</Conductivity>
+        <Frequency>GHZ</Frequency>
+        <Inductance>NH</Inductance>
+        <Length>UM</Length>
+        <Roughness>UM</Roughness>
+        <Resistance>OH</Resistance>
+        <Resistivity>OHCM</Resistivity>
+        <SheetRes>OHSQ</SheetRes>
+    </Units>
+    <Control>
+        <SweepType>VARSWP</SweepType>
+        <DeEmbed On="TRUE"/>
+        <Precision>QUAD</Precision>
+        <SpeedControl>MAX_ACCURACY</SpeedControl>
+        <ABSCacheLevel>MULTI_SWEEP</ABSCacheLevel>
+        <UFFTControl>
+            <MatrixSolver>AUTO</MatrixSolver>
+            <Preconditioner>CLOUD_LARGE</Preconditioner>
+            <Precision CustomValue="5">MIN</Precision>
+            <CollectData On="TRUE"/>
+            <DisableLoopTree On="FALSE"/>
+        </UFFTControl>
+    </Control>
+    <Geometry YDirection="Negative">
+        <Dielectric Name="Air" LossType="CONDUCTIVITY" Anisotropic="FALSE">
+            <FrequencyModel ModelType="None" RefFreq="0.0" ValidRef="FALSE"/>
+            <Conductivity Value="0.0"/>
+            <Eps Value="1.0"/>
+            <Tan Value="0.0"/>
+            <MuRel Value="1.0"/>
+            <MagLossTan Value="0.0"/>
+        </Dielectric>
+        <Dielectric Name="Silicon Dioxide" LossType="CONDUCTIVITY" Anisotropic="FALSE">
+            <FrequencyModel ModelType="None" RefFreq="0.0" ValidRef="FALSE"/>
+            <Conductivity Value="0.0"/>
+            <Eps Value="3.9"/>
+            <Tan Value="1.0e-5"/>
+            <MuRel Value="1.0"/>
+            <MagLossTan Value="0.0"/>
+        </Dielectric>
+        <Conductor Name="Perfect Conductor" Conductivity="INF" LossType="CONDUCTIVITY"/>
+        <Conductor Name="Niobium" LossType="SURFACE_IMPEDANCE" Ls="0.11" Rdc="0.0" Rrf="0.0" Xdc="0.0"/>
+        <Box>
+            <BoxCover Type="TOP" MaterialType="PERFECT_CONDUCTOR" Roughness="0.0" Thickness="0.0"/>
+            <BoxCover Type="BOTTOM" MaterialName="Niobium" MaterialType="MATERIAL" Roughness="0.0" Thickness="0.0"/>
+            <Size X="3500" Y="5000" Z="10.75"/>
+            <NumCells X="3500" Y="5000"/>
+            <LocalOrigin X="0" Y="5000"/>
+            <Symmetry On="FALSE"/>
+            <RefPlane Type="NONE" Side="LEFT" CalLength="200"/>
+            <RefPlane Type="NONE" Side="RIGHT" CalLength="200"/>
+        </Box>
+        <Level MaterialName="Air" Number="0">
+            <DielectricMaterialModel Thickness="10.0"/>
+            <Objects>
+                <PlanarTechLayer Name="Niobium" MaterialName="Niobium">
+                    <ColorPattern Color="#da70d6" Pattern="ltgrey"/>
+                    <PlanarMaterialModel CurrentRatio="0.5" ModelType="THIN_METAL" Thickness="0.0"/>
+                    <RoughnessModel RoughnessOn="FALSE"/>
+                    <PlanarMeshing EnableMesh="TRUE" FillType="RECTANGULAR"/>
+                    <SubsectionMeshing XMin="1" XMax="100" YMin="1" YMax="100" EdgeMeshed="TRUE" DiagonalEdges="FALSE" AnisotropicType="X_AND_Y"/>
+                    <GLGMeshing GLG="FALSE"/>
+                    <Objects>
+                        <PlanarPolygon Id="13">
+                            <Points>(0,4700) (3500,4700) (3500,5000) (0,5000)</Points>
+                        </PlanarPolygon>
+                        <PlanarPolygon Id="14">
+                            <Points>(1729,1659.9999) (1731.1872,1659.9999) (1735.4952,1660.7595) (1739.6058,1662.2556) (1743.3942,1664.4429)</Points>
+                            <Points>(1746.7452,1667.2547) (1749.557,1670.6057) (1751.7442,1674.3941) (1753.2404,1678.5047) (1754,1682.8127)</Points>
+                            <Points>(1754,1684.9999) (1747,1684.9999) (1747,1683.4251) (1746.4531,1680.3233) (1745.3759,1677.3637)</Points>
+                            <Points>(1743.8011,1674.6361) (1741.7765,1672.2233) (1739.3638,1670.1988) (1736.6362,1668.624) (1733.6765,1667.5468)</Points>
+                            <Points>(1730.5748,1666.9999) (1729,1666.9999)</Points>
+                        </PlanarPolygon>
+                        <PlanarPolygon Id="15">
+                            <Points>(1729,1660) (1147,1660) (1147,1667) (1729,1667)</Points>
+                        </PlanarPolygon>
+                        <PlanarPolygon Id="16">
+                            <Points>(1754,1685) (1747,1685) (1747,4700) (1754,4700)</Points>
+                        </PlanarPolygon>
+                        <PlanarPolygon Id="17">
+                            <Points>(1729,1650.0001) (1732.0621,1650.0001) (1738.0933,1651.0636) (1743.8481,1653.1582) (1749.1519,1656.2203)</Points>
+                            <Points>(1753.8433,1660.1568) (1757.7798,1664.8483) (1760.8419,1670.152) (1762.9365,1675.9068) (1764,1681.938)</Points>
+                            <Points>(1764,1685.0001) (1757,1685.0001) (1757,1682.5504) (1756.1492,1677.7255) (1754.4736,1673.1216)</Points>
+                            <Points>(1752.0239,1668.8786) (1748.8746,1665.1255) (1745.1215,1661.9762) (1740.8785,1659.5266) (1736.2746,1657.8509)</Points>
+                            <Points>(1731.4497,1657.0001) (1729,1657.0001)</Points>
+                        </PlanarPolygon>
+                        <PlanarPolygon Id="18">
+                            <Points>(1729,1650) (0,1650) (0,1657) (1729,1657)</Points>
+                            <Objects>
+                                <Port Number="1" Vertex="1">
+                                    <Type Type="BOX"/>
+                                    <Impedance Resistance="20" Reactance="0" Inductance="0" Capacitance="0"/>
+                                    <Center>(0,1653.5)</Center>
+                                </Port>
+                            </Objects>
+                        </PlanarPolygon>
+                        <PlanarPolygon Id="20">
+                            <Points>(1792,1956.9999) (1788.9379,1956.9999) (1782.9067,1955.9364) (1777.1519,1953.8418) (1771.8481,1950.7797)</Points>
+                            <Points>(1767.1567,1946.8432) (1763.2202,1942.1517) (1760.1581,1936.848) (1758.0635,1931.0932) (1757,1925.062)</Points>
+                            <Points>(1757,1921.9999) (1764,1921.9999) (1764,1924.4496) (1764.8508,1929.2745) (1766.5264,1933.8784)</Points>
+                            <Points>(1768.9761,1938.1214) (1772.1254,1941.8745) (1775.8785,1945.0238) (1780.1215,1947.4734) (1784.7254,1949.1491)</Points>
+                            <Points>(1789.5503,1949.9999) (1792,1949.9999)</Points>
+                        </PlanarPolygon>
+                        <PlanarPolygon Id="21">
+                            <Points>(1764,1685) (1757,1685) (1757,1922) (1764,1922)</Points>
+                        </PlanarPolygon>
+                        <PlanarPolygon Id="22">
+                            <Points>(3500,1950) (1792,1950) (1792,1957) (3500,1957)</Points>
+                            <Objects>
+                                <Port Number="2" Vertex="3">
+                                    <Type Type="BOX"/>
+                                    <Impedance Resistance="20" Reactance="0" Inductance="0" Capacitance="0"/>
+                                    <Center>(3500,1953.5)</Center>
+                                </Port>
+                            </Objects>
+                        </PlanarPolygon>
+                    </Objects>
+                </PlanarTechLayer>
+            </Objects>
+        </Level>
+        <Level MaterialName="Silicon Dioxide" Number="1">
+            <DielectricMaterialModel Thickness="0.75"/>
+        </Level>
+    </Geometry>
+    <Sweeps SweepVariables="FALSE">
+        <Set On="TRUE">
+            <Frequencies>
+                <Sweep Type="ABS_ENTRY" On="TRUE" Adaptive="TRUE" Start="9" Stop="11" Target="300"/>
+            </Frequencies>
+        </Set>
+    </Sweeps>
+</SonnetProject>

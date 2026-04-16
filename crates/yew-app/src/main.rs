@@ -176,7 +176,7 @@ fn generate_rank_summary_csv(rank_logs: &std::collections::BTreeMap<u32, RankLog
 
 #[function_component(App)]
 fn app() -> Html {
-    let selected = use_state(|| "spheres".to_string());
+    let selected = use_state(|| "rem_es_fast".to_string());
     let selected_mode = use_state(|| 0usize); // eigenmode index (0-based)
     let switching_example = use_state(|| false);
     let running = use_state(|| false);

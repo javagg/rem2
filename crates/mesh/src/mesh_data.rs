@@ -64,6 +64,21 @@ impl ElementKind {
     }
 }
 
+fn gmsh_type_hint(t: u32) -> &'static str {
+    match t {
+        29 => "Tet20 (high-order tetrahedron, 20 nodes)",
+        30 => "Tet35 (high-order tetrahedron, 35 nodes)",
+        31 => "Tet56 (high-order tetrahedron, 56 nodes)",
+        90 => "Prism40 (high-order prism, 40 nodes)",
+        91 => "Prism75 (high-order prism, 75 nodes)",
+        92 => "Hex64 (high-order hexahedron, 64 nodes)",
+        93 => "Hex125 (high-order hexahedron, 125 nodes)",
+        118 => "Pyramid30 (high-order pyramid, 30 nodes)",
+        119 => "Pyramid55 (high-order pyramid, 55 nodes)",
+        _ => "unknown or currently unsupported element type",
+    }
+}
+
 /// A mesh element (volume or boundary face/edge).
 #[derive(Debug, Clone)]
 pub struct Element {
@@ -155,7 +170,15 @@ impl RemMesh {
             let kind = match ElementKind::from_gmsh_type(re.elem_type) {
                 Some(k) => k,
                 None => {
-                    log::warn!("Skipping unsupported GMSH element type {}", re.elem_type);
+                    log::warn!(
+                        "Skipping unsupported GMSH element type {} ({}). \
+                         Current rem-mesh support: 1(Line2), 2(Tri3), 3(Quad4), \
+                         4(Tet4), 5(Hex8), 9(Tri6), 11(Tet10). \
+                         If this is a high-order mesh (e.g. 29), export a linear mesh \
+                         (Tet4/Tet10, Tri3/Tri6, etc.) before running REM.",
+                        re.elem_type,
+                        gmsh_type_hint(re.elem_type)
+                    );
                     continue;
                 }
             };

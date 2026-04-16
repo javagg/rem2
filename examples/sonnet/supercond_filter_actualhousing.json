@@ -1,0 +1,71 @@
+{
+  "Boundaries": {
+    "PEC": {
+      "Attributes": [
+        1,
+        1001,
+        1002
+      ]
+    }
+  },
+  "Model": {
+    "L0": 1.0,
+    "Mesh": ".\\\\examples\\\\sonnet\\supercond_filter_actualhousing.msh"
+  },
+  "Problem": {
+    "Output": "./output/sonnet19",
+    "Type": "MoM",
+    "Verbose": 1
+  },
+  "Solver": {
+    "MoM": {
+      "Alpha": 0.5,
+      "Basis": "RWG",
+      "Deembed": true,
+      "Equation": "CFIE",
+      "FastSolver": "ACA",
+      "FreqMax": 4300000000.0,
+      "FreqMin": 3500000000.0,
+      "FreqStep": 2666666.6666666665,
+      "Ports": [
+        {
+          "Attributes": [
+            1002
+          ],
+          "Direction": "x",
+          "Impedance": 50.0,
+          "Index": 1
+        },
+        {
+          "Attributes": [
+            1001
+          ],
+          "Direction": "x",
+          "Impedance": 50.0,
+          "Index": 2
+        }
+      ],
+      "RefImpedance": 50.0,
+      "SingularTol": 1e-6,
+      "Substrate": {
+        "BottomPec": true,
+        "Layers": [
+          {
+            "LossTangent": 0.0,
+            "Name": "Air",
+            "Permeability": 1.0,
+            "Permittivity": 1.0,
+            "Thickness": 0.00381
+          },
+          {
+            "LossTangent": 0.0,
+            "Name": "MgO",
+            "Permeability": 1.0,
+            "Permittivity": 9.7,
+            "Thickness": 0.000507
+          }
+        ]
+      }
+    }
+  }
+}

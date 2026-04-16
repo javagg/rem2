@@ -1,6 +1,8 @@
 use anyhow::{bail, Context};
 use quick_xml::events::Event;
 use quick_xml::Reader;
+use rmsh_io::{save_msh_v2_to_path, save_step_to_path};
+use rmsh_model::{Element, ElementType, Mesh, Node};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -42,6 +44,21 @@ struct SonnetHints {
     dielectric_layers: Vec<SonnetDielectricLayer>,
     y_direction_negative: bool,  // true if YDirection="Negative"
     local_origin_y_m: Option<f64>,
+    output_folder: Option<String>,
+    matrix_solver: Option<String>,
+    sweep_type: Option<String>,
+    speed_control: Option<String>,
+    precision_mode: Option<String>,
+    deembed_on: Option<bool>,
+    subs_per_lambda: Option<f64>,
+    ref_planes: Vec<SonnetRefPlane>,
+}
+
+#[derive(Debug, Clone)]
+struct SonnetRefPlane {
+    side: String,
+    plane_type: String,
+    cal_length_m: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -52,6 +69,12 @@ struct SonnetPort {
     vertex_1based: Option<usize>,
     direction_hint: Option<String>,
     parent_polygon_points_m: Vec<(f64, f64)>,
+}
+
+#[derive(Debug, Clone)]
+struct PendingPort {
+    port: SonnetPort,
+    attr: u32,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -97,6 +120,14 @@ impl SonnetHints {
             dielectric_layers: Vec::new(),
             y_direction_negative: false,
             local_origin_y_m: None,
+            output_folder: None,
+            matrix_solver: None,
+            sweep_type: None,
+            speed_control: None,
+            precision_mode: None,
+            deembed_on: None,
+            subs_per_lambda: None,
+            ref_planes: Vec::new(),
         }
     }
 }
@@ -108,6 +139,7 @@ pub fn convert_xml_to_rem(
     freq_min_override: Option<f64>,
     freq_max_override: Option<f64>,
     freq_step_override: Option<f64>,
+    debug_step_out: Option<&Path>,
 ) -> anyhow::Result<()> {
     let xml = std::fs::read_to_string(xml_path)
         .with_context(|| format!("reading Sonnet XML: {}", xml_path.display()))?;
@@ -139,8 +171,25 @@ pub fn convert_xml_to_rem(
         std::fs::create_dir_all(parent)
             .with_context(|| format!("creating output directory: {}", parent.display()))?;
     }
+    if let Some(step_path) = debug_step_out {
+        if let Some(parent) = step_path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating debug STEP directory: {}", parent.display()))?;
+        }
+    }
 
-    let (msh_text, port_tags, pec_tags) = generate_rect_msh_with_port_tags(
+    if let Some(step_path) = debug_step_out {
+        let geom_mesh = build_debug_geometry_surface_mesh(
+            width_m,
+            height_m,
+            hints.y_direction_negative,
+            hints.local_origin_y_m.unwrap_or(height_m),
+        );
+        save_step_to_path(step_path, &geom_mesh)
+            .with_context(|| format!("writing debug STEP: {}", step_path.display()))?;
+    }
+
+    let (mesh, port_tags, pec_tags) = generate_rect_msh_with_port_tags(
         width_m,
         height_m,
         cells_x,
@@ -149,13 +198,28 @@ pub fn convert_xml_to_rem(
         hints.y_direction_negative,
         hints.local_origin_y_m.unwrap_or(height_m),
     );
-    std::fs::write(out_msh, msh_text)
+    save_msh_v2_to_path(out_msh, &mesh)
         .with_context(|| format!("writing mesh: {}", out_msh.display()))?;
 
+    let mut pending_ports: Vec<PendingPort> = hints
+        .ports
+        .iter()
+        .enumerate()
+        .map(|(i, p)| PendingPort {
+            port: p.clone(),
+            attr: port_tags.get(i).copied().unwrap_or(BASE_PEC_TAG),
+        })
+        .collect();
+    pending_ports.sort_by_key(|pp| pp.port.number.unwrap_or(i32::MAX));
+
     let mut ports_json: Vec<Value> = Vec::new();
-    for (i, p) in hints.ports.iter().enumerate() {
-        let index = (i + 1) as u32;
-        let attr = port_tags.get(i).copied().unwrap_or(BASE_PEC_TAG);
+    for (i, pp) in pending_ports.iter().enumerate() {
+        let p = &pp.port;
+        let index = p
+            .number
+            .and_then(|n| if n > 0 { Some(n as u32) } else { None })
+            .unwrap_or((i + 1) as u32);
+        let attr = pp.attr;
         let direction = p
             .direction_hint
             .clone()
@@ -170,6 +234,9 @@ pub fn convert_xml_to_rem(
         }));
     }
 
+    let fast_solver = map_fast_solver(hints.matrix_solver.as_deref(), hints.speed_control.as_deref());
+    let singular_tol = map_singular_tol(hints.precision_mode.as_deref(), hints.speed_control.as_deref());
+
     let mut mom = serde_json::Map::new();
     mom.insert("Equation".to_string(), json!("CFIE"));
     mom.insert("Basis".to_string(), json!("RWG"));
@@ -177,8 +244,26 @@ pub fn convert_xml_to_rem(
     mom.insert("FreqMax".to_string(), json!(freq_max));
     mom.insert("FreqStep".to_string(), json!(freq_step));
     mom.insert("Alpha".to_string(), json!(0.5));
-    mom.insert("FastSolver".to_string(), json!("ACA"));
+    mom.insert("SingularTol".to_string(), json!(singular_tol));
+    mom.insert("FastSolver".to_string(), json!(fast_solver));
     mom.insert("RefImpedance".to_string(), json!(50.0));
+    if let Some(deembed) = hints.deembed_on {
+        mom.insert("Deembed".to_string(), json!(deembed));
+    }
+    if !hints.ref_planes.is_empty() {
+        let refs: Vec<Value> = hints
+            .ref_planes
+            .iter()
+            .map(|rp| {
+                json!({
+                    "Side": rp.side,
+                    "Type": rp.plane_type,
+                    "CalLength": rp.cal_length_m,
+                })
+            })
+            .collect();
+        mom.insert("RefPlanes".to_string(), Value::Array(refs));
+    }
     if !ports_json.is_empty() {
         mom.insert("Ports".to_string(), Value::Array(ports_json));
     }
@@ -201,11 +286,18 @@ pub fn convert_xml_to_rem(
         mom.insert("Substrate".to_string(), Value::Object(substrate));
     }
 
+    let problem_output = hints
+        .output_folder
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| if s == "." { "./output/sonnet19".to_string() } else { s.to_string() })
+        .unwrap_or_else(|| "./output/sonnet19".to_string());
+
     let cfg = json!({
         "Problem": {
             "Type": "MoM",
             "Verbose": 1,
-            "Output": "./output/sonnet19"
+            "Output": problem_output
         },
         "Model": {
             "Mesh": out_msh.to_string_lossy(),
@@ -224,7 +316,7 @@ pub fn convert_xml_to_rem(
         .with_context(|| format!("writing config: {}", out_config.display()))?;
 
     log::info!(
-        "Sonnet19 XML converted: {} -> config={}, mesh={} (w={:.6e} m, h={:.6e} m, nx={} (raw {}), ny={} (raw {}))",
+        "Sonnet19 XML converted: {} -> config={}, mesh={} (w={:.6e} m, h={:.6e} m, nx={} (raw {}), ny={} (raw {}), fast_solver={}, singular_tol={:.1e})",
         xml_path.display(),
         out_config.display(),
         out_msh.display(),
@@ -234,9 +326,87 @@ pub fn convert_xml_to_rem(
         cells_x_raw,
         cells_y,
         cells_y_raw,
+        fast_solver,
+        singular_tol,
     );
 
     Ok(())
+}
+
+fn build_debug_geometry_surface_mesh(
+    width_m: f64,
+    height_m: f64,
+    y_direction_negative: bool,
+    local_origin_y_m: f64,
+) -> Mesh {
+    let mut mesh = Mesh::new();
+
+    let y0 = if y_direction_negative {
+        local_origin_y_m
+    } else {
+        0.0
+    };
+    let y1 = if y_direction_negative {
+        local_origin_y_m - height_m
+    } else {
+        height_m
+    };
+
+    mesh.add_node(Node::new(1, 0.0, y0, 0.0));
+    mesh.add_node(Node::new(2, width_m, y0, 0.0));
+    mesh.add_node(Node::new(3, width_m, y1, 0.0));
+    mesh.add_node(Node::new(4, 0.0, y1, 0.0));
+
+    let mut t1 = Element::new(1, ElementType::Triangle3, vec![1, 2, 3]);
+    t1.physical_tag = Some(BASE_PEC_TAG as i32);
+    mesh.add_element(t1);
+
+    let mut t2 = Element::new(2, ElementType::Triangle3, vec![1, 3, 4]);
+    t2.physical_tag = Some(BASE_PEC_TAG as i32);
+    mesh.add_element(t2);
+
+    mesh
+}
+
+fn map_fast_solver(matrix_solver: Option<&str>, speed_control: Option<&str>) -> &'static str {
+    let ms = matrix_solver.unwrap_or("").to_ascii_uppercase();
+    if ms.contains("DIRECT") {
+        return "Direct";
+    }
+    if ms.contains("ITER") || ms.contains("GMRES") {
+        return "GMRES";
+    }
+    if ms.contains("AUTO") {
+        return "ACA";
+    }
+
+    let sc = speed_control.unwrap_or("").to_ascii_uppercase();
+    if sc.contains("MAX_SPEED") {
+        "GMRES"
+    } else {
+        "ACA"
+    }
+}
+
+fn map_singular_tol(precision_mode: Option<&str>, speed_control: Option<&str>) -> f64 {
+    let p = precision_mode.unwrap_or("").to_ascii_uppercase();
+    if p.contains("QUAD") {
+        return 1.0e-7;
+    }
+    if p.contains("DOUBLE") {
+        return 1.0e-6;
+    }
+    if p.contains("SINGLE") || p.contains("MIN") {
+        return 1.0e-5;
+    }
+    let sc = speed_control.unwrap_or("").to_ascii_uppercase();
+    if sc.contains("MAX_ACCURACY") {
+        1.0e-6
+    } else if sc.contains("MAX_SPEED") {
+        5.0e-5
+    } else {
+        1.0e-5
+    }
 }
 
 fn cap_cells(nx: usize, ny: usize) -> (usize, usize) {
@@ -273,7 +443,7 @@ fn generate_rect_msh_with_port_tags(
     ports: &[SonnetPort],
     y_direction_negative: bool,
     local_origin_y_m: f64,
-) -> (String, Vec<u32>, Vec<u32>) {
+) -> (Mesh, Vec<u32>, Vec<u32>) {
     let mut port_tags: Vec<u32> = Vec::with_capacity(ports.len());
     for i in 0..ports.len() {
         port_tags.push(PORT_TAG_BASE + i as u32);
@@ -309,15 +479,20 @@ fn generate_rect_msh_with_port_tags(
     }
     let pec_tags: Vec<u32> = pec_set.into_iter().collect();
 
-    // GMSH v2.2 ASCII for straightforward per-element physical tags.
-    let total_nodes = (nx + 1) * (ny + 1);
-    let total_elems = 2 * nx + 2 * ny + 2 * nx * ny;
-    let node_id = |ix: usize, iy: usize| -> usize { iy * (nx + 1) + ix + 1 };
+    let node_id = |ix: usize, iy: usize| -> u64 { (iy * (nx + 1) + ix + 1) as u64 };
 
-    let mut s = String::new();
-    s.push_str("$MeshFormat\n2.2 0 8\n$EndMeshFormat\n");
-    s.push_str("$Nodes\n");
-    s.push_str(&format!("{}\n", total_nodes));
+    let mut mesh = Mesh::new();
+
+    mesh.physical_names.insert((2, BASE_PEC_TAG as i32), "conductor".to_string());
+    mesh.physical_names.insert((1, BOTTOM_TAG as i32), "bottom".to_string());
+    mesh.physical_names.insert((1, TOP_TAG as i32), "top".to_string());
+    mesh.physical_names.insert((1, LEFT_TAG as i32), "left".to_string());
+    mesh.physical_names.insert((1, RIGHT_TAG as i32), "right".to_string());
+    for (i, tag) in port_tags.iter().enumerate() {
+        mesh.physical_names
+            .insert((2, *tag as i32), format!("port_{}", i + 1));
+    }
+
     for iy in 0..=ny {
         for ix in 0..=nx {
             let id = node_id(ix, iy);
@@ -329,29 +504,50 @@ fn generate_rect_msh_with_port_tags(
             } else {
                 y_raw
             };
-            s.push_str(&format!("{} {:.15e} {:.15e} 0\n", id, x, y));
+            mesh.add_node(Node::new(id, x, y, 0.0));
         }
     }
-    s.push_str("$EndNodes\n");
 
-    s.push_str("$Elements\n");
-    s.push_str(&format!("{}\n", total_elems));
-    let mut eid = 1usize;
+    let mut eid = 1u64;
 
     for ix in 0..nx {
-        s.push_str(&format!("{} 1 2 {} {} {} {}\n", eid, BOTTOM_TAG, BOTTOM_TAG, node_id(ix, 0), node_id(ix + 1, 0)));
+        let mut e = Element::new(
+            eid,
+            ElementType::Line2,
+            vec![node_id(ix, 0), node_id(ix + 1, 0)],
+        );
+        e.physical_tag = Some(BOTTOM_TAG as i32);
+        mesh.add_element(e);
         eid += 1;
     }
     for ix in 0..nx {
-        s.push_str(&format!("{} 1 2 {} {} {} {}\n", eid, TOP_TAG, TOP_TAG, node_id(ix, ny), node_id(ix + 1, ny)));
+        let mut e = Element::new(
+            eid,
+            ElementType::Line2,
+            vec![node_id(ix, ny), node_id(ix + 1, ny)],
+        );
+        e.physical_tag = Some(TOP_TAG as i32);
+        mesh.add_element(e);
         eid += 1;
     }
     for iy in 0..ny {
-        s.push_str(&format!("{} 1 2 {} {} {} {}\n", eid, LEFT_TAG, LEFT_TAG, node_id(0, iy), node_id(0, iy + 1)));
+        let mut e = Element::new(
+            eid,
+            ElementType::Line2,
+            vec![node_id(0, iy), node_id(0, iy + 1)],
+        );
+        e.physical_tag = Some(LEFT_TAG as i32);
+        mesh.add_element(e);
         eid += 1;
     }
     for iy in 0..ny {
-        s.push_str(&format!("{} 1 2 {} {} {} {}\n", eid, RIGHT_TAG, RIGHT_TAG, node_id(nx, iy), node_id(nx, iy + 1)));
+        let mut e = Element::new(
+            eid,
+            ElementType::Line2,
+            vec![node_id(nx, iy), node_id(nx, iy + 1)],
+        );
+        e.physical_tag = Some(RIGHT_TAG as i32);
+        mesh.add_element(e);
         eid += 1;
     }
 
@@ -362,15 +558,20 @@ fn generate_rect_msh_with_port_tags(
             let n10 = node_id(ix + 1, iy);
             let n01 = node_id(ix, iy + 1);
             let n11 = node_id(ix + 1, iy + 1);
-            s.push_str(&format!("{} 2 2 {} {} {} {} {}\n", eid, tag, tag, n00, n10, n11));
+
+            let mut e1 = Element::new(eid, ElementType::Triangle3, vec![n00, n10, n11]);
+            e1.physical_tag = Some(tag as i32);
+            mesh.add_element(e1);
             eid += 1;
-            s.push_str(&format!("{} 2 2 {} {} {} {} {}\n", eid, tag, tag, n00, n11, n01));
+
+            let mut e2 = Element::new(eid, ElementType::Triangle3, vec![n00, n11, n01]);
+            e2.physical_tag = Some(tag as i32);
+            mesh.add_element(e2);
             eid += 1;
         }
     }
 
-    s.push_str("$EndElements\n");
-    (s, port_tags, pec_tags)
+    (mesh, port_tags, pec_tags)
 }
 
 fn parse_sonnet_hints(xml: &str) -> anyhow::Result<SonnetHints> {
@@ -384,6 +585,7 @@ fn parse_sonnet_hints(xml: &str) -> anyhow::Result<SonnetHints> {
     let mut pending_sweep: Option<SweepRaw> = None;
     let mut current_port: Option<SonnetPort> = None;
     let mut current_polygon: Option<PolygonCapture> = None;
+    let mut current_level_material: Option<String> = None;
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -399,6 +601,7 @@ fn parse_sonnet_hints(xml: &str) -> anyhow::Result<SonnetHints> {
                     &mut pending_sweep,
                     &mut current_port,
                     &mut current_polygon,
+                    &mut current_level_material,
                 );
             }
             Ok(Event::Empty(e)) => {
@@ -413,6 +616,7 @@ fn parse_sonnet_hints(xml: &str) -> anyhow::Result<SonnetHints> {
                     &mut pending_sweep,
                     &mut current_port,
                     &mut current_polygon,
+                    &mut current_level_material,
                 );
                 path.pop();
             }
@@ -422,6 +626,7 @@ fn parse_sonnet_hints(xml: &str) -> anyhow::Result<SonnetHints> {
                     parse_text_node(&path, &text, &mut state);
                     if let Some(last) = path.last() {
                         map_kv_hint(&mut hints, last, &text, state);
+                        map_text_hint(&mut hints, &path, last, &text);
                     }
                     if path_contains(path.as_slice(), "port") {
                         if let Some(last) = path.last() {
@@ -453,6 +658,8 @@ fn parse_sonnet_hints(xml: &str) -> anyhow::Result<SonnetHints> {
                     }
                 } else if tag == "planarpolygon" {
                     current_polygon = None;
+                } else if tag == "level" {
+                    current_level_material = None;
                 }
                 path.pop();
             }
@@ -496,6 +703,7 @@ fn parse_start_like(
     pending_sweep: &mut Option<SweepRaw>,
     current_port: &mut Option<SonnetPort>,
     current_polygon: &mut Option<PolygonCapture>,
+    current_level_material: &mut Option<String>,
 ) {
     let in_geometry_box = path_contains(path, "geometry") && path_contains(path, "box");
 
@@ -507,9 +715,9 @@ fn parse_start_like(
     }
 
     // Parse <Geometry YDirection="Negative"> root attribute
-    if tag == "geometry" && path.len() == 1 {
+    if tag == "geometry" {
         for (k, v) in &attrs_vec {
-            if k == "YDirection" && v.to_lowercase() == "negative" {
+            if k == "ydirection" && v.to_ascii_lowercase() == "negative" {
                 hints.y_direction_negative = true;
             }
         }
@@ -524,6 +732,45 @@ fn parse_start_like(
         }
     }
 
+    if tag == "outputfiles" {
+        for (k, v) in &attrs_vec {
+            if k == "folder" {
+                hints.output_folder = Some(v.clone());
+            }
+        }
+    }
+
+    if tag == "deembed" {
+        for (k, v) in &attrs_vec {
+            if k == "on" {
+                let vv = v.trim().to_ascii_lowercase();
+                hints.deembed_on = Some(vv == "true" || vv == "1");
+            }
+        }
+    }
+
+    if tag == "refplane" && in_geometry_box {
+        let mut side: Option<String> = None;
+        let mut plane_type: Option<String> = None;
+        let mut cal_length_m: Option<f64> = None;
+        for (k, v) in &attrs_vec {
+            if k == "side" {
+                side = Some(v.trim().to_string());
+            } else if k == "type" {
+                plane_type = Some(v.trim().to_string());
+            } else if k == "callength" {
+                cal_length_m = parse_f64(v).map(|n| n * state.length_unit_scale);
+            }
+        }
+        if side.is_some() || plane_type.is_some() || cal_length_m.is_some() {
+            hints.ref_planes.push(SonnetRefPlane {
+                side: side.unwrap_or_else(|| "UNKNOWN".to_string()),
+                plane_type: plane_type.unwrap_or_else(|| "UNKNOWN".to_string()),
+                cal_length_m,
+            });
+        }
+    }
+
     // Parse <Dielectric MacroID="..." Name="..."> with nested Eps/Tan/MuRel
     if tag == "dielectric" && path_contains(path, "geometry") {
         let mut dielectric = SonnetDielectricLayer {
@@ -534,7 +781,7 @@ fn parse_start_like(
             thickness_m: 0.0,
         };
         for (k, v) in &attrs_vec {
-            if k == "Name" {
+            if k == "name" {
                 dielectric.name = v.clone();
             }
         }
@@ -547,7 +794,7 @@ fn parse_start_like(
             let diel = hints.dielectric_layers.last_mut().unwrap();
             if tag == "eps" {
                 for (k, v) in &attrs_vec {
-                    if k == "Value" {
+                    if k == "value" {
                         if let Some(val) = parse_f64(v) {
                             diel.eps_r = val;
                         }
@@ -555,7 +802,7 @@ fn parse_start_like(
                 }
             } else if tag == "tan" {
                 for (k, v) in &attrs_vec {
-                    if k == "Value" {
+                    if k == "value" {
                         if let Some(val) = parse_f64(v) {
                             diel.loss_tan = val;
                         }
@@ -563,7 +810,7 @@ fn parse_start_like(
                 }
             } else if tag == "murel" {
                 for (k, v) in &attrs_vec {
-                    if k == "Value" {
+                    if k == "value" {
                         if let Some(val) = parse_f64(v) {
                             diel.mu_r = val;
                         }
@@ -573,16 +820,35 @@ fn parse_start_like(
         }
     }
 
+    // Capture current level material so thickness can be mapped to the correct dielectric.
+    if tag == "level" && path_contains(path, "geometry") {
+        for (k, v) in &attrs_vec {
+            if k == "materialname" {
+                *current_level_material = Some(v.clone());
+            }
+        }
+    }
+
     // Parse <DielectricMaterialModel Thickness="10.0"/> for layer thickness
     if tag == "dielectricmaterialmodel" && path_contains(path, "level") && path_contains(path, "geometry") {
-        if !hints.dielectric_layers.is_empty() {
-            for (k, v) in &attrs_vec {
-                if k == "Thickness" {
-                    if let Some(val) = parse_f64(v) {
-                        let thickness = val * state.length_unit_scale;
-                        // Find the last dielectric with the correct name from <Level MaterialName="...">
-                        // For now, just update the last dielectric
-                        hints.dielectric_layers.last_mut().unwrap().thickness_m = thickness;
+        for (k, v) in &attrs_vec {
+            if k == "thickness" {
+                if let Some(val) = parse_f64(v) {
+                    let thickness = val * state.length_unit_scale;
+                    if let Some(level_mat) = current_level_material.as_ref() {
+                        if let Some(layer) = hints
+                            .dielectric_layers
+                            .iter_mut()
+                            .find(|d| d.name.eq_ignore_ascii_case(level_mat))
+                        {
+                            layer.thickness_m = thickness;
+                            break;
+                        }
+                    }
+                    if let Some(last) = hints.dielectric_layers.last_mut() {
+                        if last.thickness_m == 0.0 {
+                            last.thickness_m = thickness;
+                        }
                     }
                 }
             }
@@ -746,6 +1012,27 @@ fn parse_text_node(path: &[String], text: &str, state: &mut ParserState) {
         if let Some(scale) = freq_unit_scale(text) {
             state.freq_unit_scale = scale;
         }
+    }
+}
+
+fn map_text_hint(hints: &mut SonnetHints, path: &[String], last: &str, text: &str) {
+    let in_control = path_contains(path, "control");
+    let in_ufft = path_contains(path, "ufftcontrol");
+
+    if in_control && !in_ufft && last == "sweeptype" {
+        hints.sweep_type = Some(text.trim().to_string());
+    }
+    if in_control && !in_ufft && last == "speedcontrol" {
+        hints.speed_control = Some(text.trim().to_string());
+    }
+    if in_control && !in_ufft && last == "precision" {
+        hints.precision_mode = Some(text.trim().to_string());
+    }
+    if in_ufft && last == "matrixsolver" {
+        hints.matrix_solver = Some(text.trim().to_string());
+    }
+    if in_control && !in_ufft && last == "subsperlambda" {
+        hints.subs_per_lambda = parse_f64(text);
     }
 }
 
@@ -1015,6 +1302,90 @@ mod tests {
         assert!((hints.freq_step_hz.unwrap() - 0.001e9).abs() < 1.0);
         assert_eq!(hints.ports.len(), 2);
     }
+
+    #[test]
+    fn parse_supercond_dielectrics_and_levels() {
+        let xml = include_str!("../../../testdata/sonnet/supercond_filter/supercond_filter_actualhousing.sonx");
+        let hints = parse_sonnet_hints(xml).unwrap();
+
+        let air = hints
+            .dielectric_layers
+            .iter()
+            .find(|d| d.name == "Air")
+            .expect("Air dielectric should be parsed");
+        assert!((air.eps_r - 1.0).abs() < 1.0e-12);
+        assert!((air.mu_r - 1.0).abs() < 1.0e-12);
+        assert!((air.thickness_m - 3.81e-3).abs() < 1.0e-12);
+
+        let mgo = hints
+            .dielectric_layers
+            .iter()
+            .find(|d| d.name == "MgO")
+            .expect("MgO dielectric should be parsed");
+        assert!((mgo.eps_r - 9.7).abs() < 1.0e-12);
+        assert!((mgo.mu_r - 1.0).abs() < 1.0e-12);
+        assert!((mgo.thickness_m - 0.507e-3).abs() < 1.0e-12);
+    }
+
+        #[test]
+        fn parse_supercond_control_hints() {
+                let xml = include_str!("../../../testdata/sonnet/supercond_filter/supercond_filter_actualhousing.sonx");
+                let hints = parse_sonnet_hints(xml).unwrap();
+
+                assert_eq!(hints.sweep_type.as_deref(), Some("VARSWP"));
+                assert_eq!(hints.matrix_solver.as_deref(), Some("AUTO"));
+                assert_eq!(hints.speed_control.as_deref(), Some("MAX_ACCURACY"));
+                assert_eq!(hints.precision_mode.as_deref(), Some("DOUBLE"));
+                assert_eq!(hints.deembed_on, Some(true));
+                assert_eq!(hints.output_folder.as_deref(), Some("."));
+                assert_eq!(hints.subs_per_lambda, Some(100.0));
+                assert!(hints.y_direction_negative);
+        }
+
+            #[test]
+            fn parse_supercond_refplanes() {
+                let xml = include_str!("../../../testdata/sonnet/supercond_resonators/1_QtrWave_SuperCondResonator.sonx");
+                let hints = parse_sonnet_hints(xml).unwrap();
+
+                assert_eq!(hints.ref_planes.len(), 2);
+                assert_eq!(hints.ref_planes[0].side, "LEFT");
+                assert_eq!(hints.ref_planes[0].plane_type, "NONE");
+                let left_cal = hints.ref_planes[0].cal_length_m.unwrap();
+                assert!((left_cal - 200.0e-6).abs() < 1.0e-12);
+            }
+
+        #[test]
+        fn singular_tol_prefers_top_level_control_precision() {
+                let xml = r#"
+<SonnetProject>
+    <Control>
+        <Precision>DOUBLE</Precision>
+        <UFFTControl>
+            <Precision>MIN</Precision>
+            <MatrixSolver>AUTO</MatrixSolver>
+        </UFFTControl>
+    </Control>
+    <Geometry YDirection="Negative">
+        <Box>
+            <Size X="10" Y="5"/>
+            <NumCells X="10" Y="5"/>
+            <LocalOrigin Y="5"/>
+        </Box>
+    </Geometry>
+    <Sweeps>
+        <Set>
+            <Frequencies>
+                <Sweep Start="1" Stop="2" Step="0.1"/>
+            </Frequencies>
+        </Set>
+    </Sweeps>
+</SonnetProject>
+"#;
+                let hints = parse_sonnet_hints(xml).unwrap();
+                let tol = map_singular_tol(hints.precision_mode.as_deref(), hints.speed_control.as_deref());
+                assert!((tol - 1.0e-6).abs() < f64::EPSILON);
+                assert!(hints.y_direction_negative);
+        }
 
     #[test]
     fn cap_cells_preserves_ratio_and_limit() {
