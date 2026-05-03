@@ -1460,11 +1460,36 @@ pub fn validate_palace_compat(cfg: &PalaceConfig) {
         );
     }
     if !cfg.boundaries.postprocessing_flux.is_empty() {
-        warn_unsupported(
-            "Boundaries.Postprocessing",
-            "Boundary postprocessing (surface flux, far-field, dielectric loss) \
-             is not implemented; ignored",
-        );
+        let mut n_electric = 0usize;
+        let mut n_magnetic = 0usize;
+        let mut n_other = 0usize;
+        for s in &cfg.boundaries.postprocessing_flux {
+            match s.flux_type.to_lowercase().as_str() {
+                "electric" => n_electric += 1,
+                "magnetic" => n_magnetic += 1,
+                _ => n_other += 1,
+            }
+        }
+        if n_electric > 0 {
+            log::info!(
+                "[REM] Boundaries.Postprocessing: {} Electric flux spec(s) -- \
+                 displacement flux written to postpro/surface-flux.csv.",
+                n_electric
+            );
+        }
+        if n_magnetic > 0 {
+            log::info!(
+                "[REM] Boundaries.Postprocessing: {} Magnetic flux spec(s) -- \
+                 B-field flux written to postpro/surface-flux.csv.",
+                n_magnetic
+            );
+        }
+        if n_other > 0 {
+            warn_unsupported(
+                "Boundaries.Postprocessing (Power / SA / MS / MA types)",
+                "Power flux and interface dielectric loss are not implemented; ignored",
+            );
+        }
     }
 
     for lp in &cfg.boundaries.lumped_port {

@@ -48,20 +48,18 @@
         "Attributes": [4]
       }
     ],
-    "Postprocessing": {
-      "SurfaceFlux": [
-        {
-          "Index": 1,
-          "Attributes": [3],
-          "Type": "Electric"
-        },
-        {
-          "Index": 2,
-          "Attributes": [4],
-          "Type": "Electric"
-        }
-      ]
-    }
+    "Postprocessing": [
+      {
+        "Index": 1,
+        "Attributes": [3],
+        "Type": "Electric"
+      },
+      {
+        "Index": 2,
+        "Attributes": [4],
+        "Type": "Electric"
+      }
+    ]
   },
   "Solver": {
     "Order": 3,

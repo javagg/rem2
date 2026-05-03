@@ -2,7 +2,7 @@
 ///
 /// Reference: Palace postpro/domain-E.csv and terminal-C.csv formats.
 
-use rem_config::EnergyPostSpec;
+use rem_config::{BoundaryPostprocessingSpec, EnergyPostSpec};
 use rem_core::{RemError, RemResult};
 use std::io::Write;
 use std::path::Path;
@@ -108,6 +108,43 @@ pub fn write_energy_groups_csv(
         writeln!(f, "{},\"{}\",{:.6e}", spec.index, attrs_str, group_energy)
             .map_err(RemError::Io)?;
     }
+
+    log::info!("Written: {}", path.display());
+    Ok(())
+}
+
+/// Write surface flux results to `<output_dir>/postpro/surface-flux.csv`.
+///
+/// Palace format:
+/// ```text
+/// "Frequency (GHz)","Flux[1] (C)","Flux[2] (C)",...
+/// 0.000000e0,1.234e-12,...
+/// ```
+/// `specs` contains the `BoundaryPostprocessingSpec` entries (for headers/index).
+/// `fluxes` is the precomputed flux value for each spec entry in order.
+/// `unit` is the unit label, e.g. `"C"` (electric) or `"Wb"` (magnetic).
+pub fn write_surface_flux_csv(
+    output_dir: &Path,
+    specs: &[&BoundaryPostprocessingSpec],
+    fluxes: &[f64],
+    unit: &str,
+) -> RemResult<()> {
+    if specs.is_empty() { return Ok(()); }
+    let dir = output_dir.join("postpro");
+    std::fs::create_dir_all(&dir).map_err(RemError::Io)?;
+    let path = dir.join("surface-flux.csv");
+
+    let mut f = std::fs::File::create(&path).map_err(RemError::Io)?;
+
+    // Header
+    let cols: Vec<String> = specs.iter()
+        .map(|s| format!("\"Flux[{}] ({})\"", s.index, unit))
+        .collect();
+    writeln!(f, "\"Frequency (GHz)\",{}", cols.join(",")).map_err(RemError::Io)?;
+
+    // Data row (static, frequency = 0 for static solvers)
+    let vals: Vec<String> = fluxes.iter().map(|v| format!("{:.6e}", v)).collect();
+    writeln!(f, "0.000000e0,{}", vals.join(",")).map_err(RemError::Io)?;
 
     log::info!("Written: {}", path.display());
     Ok(())

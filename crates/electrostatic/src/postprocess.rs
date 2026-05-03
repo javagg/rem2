@@ -732,6 +732,179 @@ pub fn capacitance(
 }
 
 // ---------------------------------------------------------------------------
+// Surface flux computation
+// ---------------------------------------------------------------------------
+
+/// Build a node → epsilon map by associating each node with the epsilon of
+/// its first adjacent volume element.  Used by `surface_flux_electric`.
+fn build_node_eps_map(mesh: &RemMesh, eps_fn: impl Fn(u32) -> f64) -> Vec<f64> {
+    let n = mesh.n_nodes();
+    let mut eps_map = vec![1.0f64; n]; // default ε = ε₀ (caller should pass ε_abs)
+    let mut assigned = vec![false; n];
+    for elem in &mesh.volume_elements {
+        let eps = eps_fn(elem.tag);
+        for &nid in &elem.node_ids {
+            if !assigned[nid] {
+                eps_map[nid] = eps;
+                assigned[nid] = true;
+            }
+        }
+    }
+    eps_map
+}
+
+/// Compute electric displacement surface flux  Qᵢ = ∫_Sᵢ **D** · **n** dA
+/// over all boundary elements whose physical tag is in `attributes`.
+///
+/// `e_nodes` = E-field vector at each node (from `gradient_recovery`).
+/// `eps_fn(domain_tag)` = ε₀εᵣ in SI [F/m].
+///
+/// Returns total flux in Coulombs [C] (3D) or C/m (2D).
+pub fn surface_flux_electric(
+    mesh: &RemMesh,
+    e_nodes: &[[f64; 3]],
+    eps_fn: impl Fn(u32) -> f64,
+    attributes: &[u32],
+) -> f64 {
+    use std::collections::HashSet;
+    let attr_set: HashSet<u32> = attributes.iter().copied().collect();
+    let node_eps = build_node_eps_map(mesh, eps_fn);
+    let mut flux = 0.0_f64;
+
+    for belem in &mesh.boundary_elements {
+        if !attr_set.contains(&belem.tag) { continue; }
+
+        match belem.kind {
+            rem_mesh::ElementKind::Line2 if belem.node_ids.len() >= 2 => {
+                let n0 = belem.node_ids[0];
+                let n1 = belem.node_ids[1];
+                let (p0, p1) = (&mesh.nodes[n0], &mesh.nodes[n1]);
+                let dx = p1.x - p0.x;
+                let dy = p1.y - p0.y;
+                let len = (dx * dx + dy * dy).sqrt();
+                if len < 1e-15 { continue; }
+                // 2-D outward normal (rotated 90° CCW from edge direction)
+                let nx = dy / len;
+                let ny = -dx / len;
+                let ex = 0.5 * (e_nodes[n0][0] + e_nodes[n1][0]);
+                let ey = 0.5 * (e_nodes[n0][1] + e_nodes[n1][1]);
+                let eps = 0.5 * (node_eps[n0] + node_eps[n1]);
+                flux += eps * (ex * nx + ey * ny) * len;
+            }
+            rem_mesh::ElementKind::Tri3 if belem.node_ids.len() >= 3 => {
+                let [n0, n1, n2] = [belem.node_ids[0], belem.node_ids[1], belem.node_ids[2]];
+                let (p0, p1, p2) = (&mesh.nodes[n0], &mesh.nodes[n1], &mesh.nodes[n2]);
+                let v1 = [p1.x - p0.x, p1.y - p0.y, p1.z - p0.z];
+                let v2 = [p2.x - p0.x, p2.y - p0.y, p2.z - p0.z];
+                // Normal = v1 × v2; |normal|/2 = area
+                let cx = v1[1]*v2[2] - v1[2]*v2[1];
+                let cy = v1[2]*v2[0] - v1[0]*v2[2];
+                let cz = v1[0]*v2[1] - v1[1]*v2[0];
+                let area = 0.5 * (cx*cx + cy*cy + cz*cz).sqrt();
+                if area < 1e-30 { continue; }
+                let nx = cx / (2.0 * area);
+                let ny = cy / (2.0 * area);
+                let nz = cz / (2.0 * area);
+                let ex = (e_nodes[n0][0] + e_nodes[n1][0] + e_nodes[n2][0]) / 3.0;
+                let ey = (e_nodes[n0][1] + e_nodes[n1][1] + e_nodes[n2][1]) / 3.0;
+                let ez = (e_nodes[n0][2] + e_nodes[n1][2] + e_nodes[n2][2]) / 3.0;
+                let eps = (node_eps[n0] + node_eps[n1] + node_eps[n2]) / 3.0;
+                flux += eps * (ex * nx + ey * ny + ez * nz) * area;
+            }
+            _ => {}
+        }
+    }
+    flux
+}
+
+/// Compute magnetic surface flux  Φᵢ = ∫_Sᵢ **B** · **n** dA
+/// over all boundary elements whose physical tag is in `attributes`.
+///
+/// `b_nodes` = B-field vector at each node.
+/// The sign of the flux is taken positive in the direction from `center`
+/// outward (if `center` is given; otherwise the geometric normal is used).
+///
+/// Returns total flux in Webers [Wb] (3D) or Wb/m (2D).
+pub fn surface_flux_magnetic(
+    mesh: &RemMesh,
+    b_nodes: &[[f64; 3]],
+    attributes: &[u32],
+    center: Option<[f64; 3]>,
+) -> f64 {
+    use std::collections::HashSet;
+    let attr_set: HashSet<u32> = attributes.iter().copied().collect();
+    let mut flux = 0.0_f64;
+
+    for belem in &mesh.boundary_elements {
+        if !attr_set.contains(&belem.tag) { continue; }
+
+        match belem.kind {
+            rem_mesh::ElementKind::Line2 if belem.node_ids.len() >= 2 => {
+                let n0 = belem.node_ids[0];
+                let n1 = belem.node_ids[1];
+                let (p0, p1) = (&mesh.nodes[n0], &mesh.nodes[n1]);
+                let dx = p1.x - p0.x;
+                let dy = p1.y - p0.y;
+                let len = (dx * dx + dy * dy).sqrt();
+                if len < 1e-15 { continue; }
+                let nx = dy / len;
+                let ny = -dx / len;
+                let bx = 0.5 * (b_nodes[n0][0] + b_nodes[n1][0]);
+                let by = 0.5 * (b_nodes[n0][1] + b_nodes[n1][1]);
+                let contrib = (bx * nx + by * ny) * len;
+                // Optionally flip sign so flux is in the direction of center
+                let sign = sign_toward_center(
+                    [0.5*(p0.x+p1.x), 0.5*(p0.y+p1.y), 0.0],
+                    [nx, ny, 0.0], center,
+                );
+                flux += sign * contrib;
+            }
+            rem_mesh::ElementKind::Tri3 if belem.node_ids.len() >= 3 => {
+                let [n0, n1, n2] = [belem.node_ids[0], belem.node_ids[1], belem.node_ids[2]];
+                let (p0, p1, p2) = (&mesh.nodes[n0], &mesh.nodes[n1], &mesh.nodes[n2]);
+                let v1 = [p1.x - p0.x, p1.y - p0.y, p1.z - p0.z];
+                let v2 = [p2.x - p0.x, p2.y - p0.y, p2.z - p0.z];
+                let cx = v1[1]*v2[2] - v1[2]*v2[1];
+                let cy = v1[2]*v2[0] - v1[0]*v2[2];
+                let cz = v1[0]*v2[1] - v1[1]*v2[0];
+                let area = 0.5 * (cx*cx + cy*cy + cz*cz).sqrt();
+                if area < 1e-30 { continue; }
+                let nx = cx / (2.0 * area);
+                let ny = cy / (2.0 * area);
+                let nz = cz / (2.0 * area);
+                let bx = (b_nodes[n0][0] + b_nodes[n1][0] + b_nodes[n2][0]) / 3.0;
+                let by_ = (b_nodes[n0][1] + b_nodes[n1][1] + b_nodes[n2][1]) / 3.0;
+                let bz = (b_nodes[n0][2] + b_nodes[n1][2] + b_nodes[n2][2]) / 3.0;
+                let centroid = [
+                    (p0.x + p1.x + p2.x) / 3.0,
+                    (p0.y + p1.y + p2.y) / 3.0,
+                    (p0.z + p1.z + p2.z) / 3.0,
+                ];
+                let contrib = (bx * nx + by_ * ny + bz * nz) * area;
+                let sign = sign_toward_center(centroid, [nx, ny, nz], center);
+                flux += sign * contrib;
+            }
+            _ => {}
+        }
+    }
+    flux
+}
+
+/// Returns +1.0 if the normal already points "toward" the center
+/// (i.e., from the face centroid toward center), or uses the raw sign otherwise.
+/// The `center` can be used to orient the normal consistently (as Palace does).
+fn sign_toward_center(
+    centroid: [f64; 3],
+    normal: [f64; 3],
+    center: Option<[f64; 3]>,
+) -> f64 {
+    let Some(ctr) = center else { return 1.0 };
+    let d = [ctr[0] - centroid[0], ctr[1] - centroid[1], ctr[2] - centroid[2]];
+    let dot = d[0]*normal[0] + d[1]*normal[1] + d[2]*normal[2];
+    if dot >= 0.0 { 1.0 } else { -1.0 }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

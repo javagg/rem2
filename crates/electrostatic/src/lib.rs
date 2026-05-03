@@ -290,6 +290,20 @@ fn finalize(
         output::write_capacitance_matrix(output_dir, c)?;
     }
 
+    // Palace Boundaries.Postprocessing — Electric surface flux
+    {
+        let electric_specs: Vec<&rem_config::BoundaryPostprocessingSpec> = config
+            .boundaries.postprocessing_flux.iter()
+            .filter(|s| s.flux_type.eq_ignore_ascii_case("electric"))
+            .collect();
+        if !electric_specs.is_empty() {
+            let fluxes: Vec<f64> = electric_specs.iter().map(|s| {
+                postprocess::surface_flux_electric(mesh, &e_field, eps_fn, &s.attributes)
+            }).collect();
+            output::write_surface_flux_csv(output_dir, &electric_specs, &fluxes, "C")?;
+        }
+    }
+
     // Field probes (Domains.Postprocessing.Probe)
     let probe_specs = config.domains.postprocessing.as_ref()
         .map(|dp| dp.probe.as_slice())

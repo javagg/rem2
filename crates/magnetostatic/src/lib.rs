@@ -122,7 +122,7 @@ fn run_2d(config: &PalaceConfig, mesh: RemMesh, comm: &dyn Comm) -> RemResult<()
     log::info!("Magnetic energy: {:.6e} J/m", energy);
 
     // Write CSV + VTK
-    write_outputs(output_dir, &final_mesh, &domain_map, &az, &b_field, energy)?;
+    write_outputs(config, output_dir, &final_mesh, &domain_map, &az, &b_field, energy)?;
 
     // Field probes (Domains.Postprocessing.Probe) — Az scalar
     if let Some(dp) = &config.domains.postprocessing {
@@ -189,7 +189,7 @@ fn run_3d(config: &PalaceConfig, mesh: RemMesh, comm: &dyn Comm) -> RemResult<()
                + postprocess::electrostatic_energy(&az, &mesh, nu_fn);
     log::info!("3-D magnetic energy: {:.6e} J", energy);
 
-    write_outputs(output_dir, &mesh, &domain_map, &az, &b_field, energy)?;
+    write_outputs(config, output_dir, &mesh, &domain_map, &az, &b_field, energy)?;
 
     // Field probes (Domains.Postprocessing.Probe) — Az component
     if let Some(dp) = &config.domains.postprocessing {
@@ -347,6 +347,7 @@ fn find_surface_current_tag(mesh: &RemMesh) -> Option<u32> {
 }
 
 fn write_outputs(
+    config: &PalaceConfig,
     output_dir: &Path,
     mesh: &RemMesh,
     domain_map: &DomainMap,
@@ -455,6 +456,34 @@ fn write_outputs(
         writeln!(vf, "{:.9e} {:.9e} {:.9e}", bx, by, bz).map_err(RemError::Io)?;
     }
     log::info!("Written: {}", vtk_path.display());
+
+    // Palace Boundaries.Postprocessing — Magnetic surface flux
+    {
+        use rem_electrostatic::postprocess::surface_flux_magnetic;
+        let mag_specs: Vec<&rem_config::BoundaryPostprocessingSpec> = config
+            .boundaries.postprocessing_flux.iter()
+            .filter(|s| s.flux_type.eq_ignore_ascii_case("magnetic"))
+            .collect();
+        if !mag_specs.is_empty() {
+            let dir = output_dir.join("postpro");
+            std::fs::create_dir_all(&dir).map_err(RemError::Io)?;
+            let path = dir.join("surface-flux.csv");
+            let mut fout = std::fs::File::create(&path).map_err(RemError::Io)?;
+            let cols: Vec<String> = mag_specs.iter()
+                .map(|s| format!("\"Flux[{}] (Wb)\"", s.index))
+                .collect();
+            writeln!(fout, "\"Frequency (GHz)\",{}", cols.join(",")).map_err(RemError::Io)?;
+            let vals: Vec<String> = mag_specs.iter().map(|s| {
+                let ctr = if s.center.len() >= 3 {
+                    Some([s.center[0], s.center[1], s.center[2]])
+                } else { None };
+                let flux = surface_flux_magnetic(mesh, b_field, &s.attributes, ctr);
+                format!("{:.6e}", flux)
+            }).collect();
+            writeln!(fout, "0.000000e0,{}", vals.join(",")).map_err(RemError::Io)?;
+            log::info!("Written: {}", path.display());
+        }
+    }
 
     Ok(())
 }
