@@ -213,3 +213,102 @@ fn sphere_forward_rcs_order_of_magnitude() {
     assert!(ratio > 0.2 && ratio < 5.0,
         "Forward RCS ratio MoM/Mie = {:.2} outside [0.2, 5.0]", ratio);
 }
+
+/// SIBC (Surface Impedance Boundary Condition) validation test.
+///
+/// Verifies that SIBC surface impedance calculation:
+/// 1. Produces correct frequency-dependent impedance
+/// 2. Follows skin-depth physics (Zs ∝ √f for good conductor)
+/// 3. Behaves correctly at limiting cases (σ→0, f→0)
+///
+/// Test geometry: copper conductivity σ = 5.8e7 S/m (standard reference)
+#[test]
+fn sibc_surface_impedance_frequency_dependence() {
+    use rem_mom::sibc::surface_impedance_from_conductivity;
+    use num_complex::Complex64;
+    
+    let sigma_cu = 5.8e7_f64; // Copper conductivity [S/m]
+    let freq_1g = 1e9_f64;     // 1 GHz
+    let freq_10g = 10e9_f64;   // 10 GHz
+    
+    // Compute surface impedance at two frequencies
+    let z_1g = surface_impedance_from_conductivity(sigma_cu, freq_1g);
+    let z_10g = surface_impedance_from_conductivity(sigma_cu, freq_10g);
+    
+    // For good conductor: Zs ≈ (1+j)/(σ·δs) where δs ∝ 1/√f
+    // So |Zs| ∝ √f, phase = 45°
+    
+    // Check phase is ~45° (real ≈ imag)
+    assert!(
+        (z_1g.re - z_1g.im).abs() < 0.1 * z_1g.re.abs(),
+        "Z_s phase should be ~45° at 1 GHz: re={:.3e}, im={:.3e}",
+        z_1g.re, z_1g.im
+    );
+    
+    assert!(
+        (z_10g.re - z_10g.im).abs() < 0.1 * z_10g.re.abs(),
+        "Z_s phase should be ~45° at 10 GHz: re={:.3e}, im={:.3e}",
+        z_10g.re, z_10g.im
+    );
+    
+    // Check frequency scaling: |Z_s(10 GHz)| ≈ √10 × |Z_s(1 GHz)|
+    let ratio = z_10g.norm() / z_1g.norm();
+    let expected_ratio = (10.0_f64).sqrt();
+    let rel_error = (ratio - expected_ratio).abs() / expected_ratio;
+    
+    println!(
+        "SIBC frequency scaling: |Z_s(1G)|={:.3e}, |Z_s(10G)|={:.3e}, ratio={:.3},  expected≈{:.3}",
+        z_1g.norm(), z_10g.norm(), ratio, expected_ratio
+    );
+    
+    assert!(
+        rel_error < 0.01,
+        "Frequency scaling error {:.1}% exceeds 1%: ratio={:.3}, expected={:.3}",
+        rel_error * 100.0, ratio, expected_ratio
+    );
+    
+    // Edge case: σ=0 should give Z_s=0
+    let z_zero = surface_impedance_from_conductivity(0.0, freq_1g);
+    assert_eq!(z_zero, Complex64::ZERO, "Zero conductivity should give Z_s=0");
+    
+    // Edge case: f=0 should give Z_s=0
+    let z_zero_f = surface_impedance_from_conductivity(sigma_cu, 0.0);
+    assert_eq!(z_zero_f, Complex64::ZERO, "Zero frequency should give Z_s=0");
+}
+
+/// Verify SIBC impedance has correct skin-effect behavior.
+///
+/// For a planar surface, the impedance Z_s = (1+j)√(πfμσ) = (1+j)/(σδs)
+/// where δs = √(2/(ωμσ)) is the skin depth.
+/// 
+/// This test validates the formula implementation against known physics.
+#[test]
+fn sibc_impedance_formula_validation() {
+    use rem_mom::sibc::surface_impedance_from_conductivity;
+    use rem_core::MU0;
+    use num_complex::Complex64;
+    use std::f64::consts::PI;
+    
+    let sigma = 1e7_f64; // 10 MΩ⁻¹ conductor
+    let freq = 1e9_f64;
+    
+    // Manual calculation of expected impedance
+    let omega = 2.0 * PI * freq;
+    let delta_s = (2.0 / (omega * MU0 * sigma)).sqrt();
+    let z_expected = Complex64::new(1.0, 1.0) / (sigma * delta_s);
+    
+    // Function result
+    let z_computed = surface_impedance_from_conductivity(sigma, freq);
+    
+    // Should match to numerical precision
+    let err_re = (z_computed.re - z_expected.re).abs() / z_expected.re.abs();
+    let err_im = (z_computed.im - z_expected.im).abs() / z_expected.im.abs();
+    
+    println!(
+        "SIBC formula validation: Z_expected={:.3e}+j{:.3e}, Z_computed={:.3e}+j{:.3e}",
+        z_expected.re, z_expected.im, z_computed.re, z_computed.im
+    );
+    
+    assert!(err_re < 1e-10, "Real part error {:.2e} exceeds 1e-10", err_re);
+    assert!(err_im < 1e-10, "Imaginary part error {:.2e} exceeds 1e-10", err_im);
+}
