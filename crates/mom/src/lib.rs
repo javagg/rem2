@@ -30,6 +30,7 @@ pub mod pmchwt;
 pub mod port;
 pub mod sparams;
 pub mod sibc;
+pub mod fft_accel;
 
 // Public re-exports for cross-crate solver integration
 pub use assemble::{gmres_solve, gmres_solve_generic, gmres_solve_op, aca_gmres_solve, gmres_generic_with_aca};
@@ -224,9 +225,20 @@ pub fn run_with_mesh(
                     log::info!("MoM: using ACA+GMRES (tol_aca=1e-4, tol_gmres=1e-8)");
                     assemble::aca_gmres_solve(&z_mat, &rhs, 1e-4, 1e-8)?
                 }
+                "FFT" => {
+                    if fft_accel::FftMomSolver::is_applicable(&surf.nodes) {
+                        log::info!("MoM FFT: planar mesh detected, building FFT operator (N={})", surf.nodes.len());
+                        let fft_op = fft_accel::FftMomSolver::build(&surf.nodes, k)?;
+                        let rhs_dv = nalgebra::DVector::from_vec(rhs.clone());
+                        assemble::gmres_solve_op(&fft_op, &rhs_dv)?.as_slice().to_vec()
+                    } else {
+                        log::warn!("MoM FFT: mesh is not planar — falling back to GMRES with dense matrix");
+                        assemble::gmres_solve(&z_mat, &rhs)?
+                    }
+                }
                 "FMM" => {
                     return Err(rem_core::RemError::Config(
-                        "FastSolver \"FMM\" is not yet implemented; use \"Direct\", \"GMRES\", or \"ACA\"".to_string()
+                        "FastSolver \"FMM\" is not yet implemented; use \"Direct\", \"GMRES\", \"ACA\", or \"FFT\"".to_string()
                     ));
                 }
                 _ => assemble::lu_solve(&z_mat, &rhs)?,

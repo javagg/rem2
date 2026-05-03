@@ -67,6 +67,19 @@ pub struct FreqResult {
     pub s_matrix: Vec<Vec<Complex64>>,
     /// Ordered port indices matching rows/cols of `s_matrix`.
     pub port_list: Vec<u32>,
+    /// Port voltage, current, and complex power at each port.
+    /// Populated by the single-port path; empty in multi-port path.
+    pub port_vi: Vec<PortVi>,
+}
+
+/// Complex port voltage, current, and power at one frequency for one port.
+#[derive(Debug, Clone)]
+pub struct PortVi {
+    pub port_index: u32,
+    pub v: Complex64,
+    pub i: Complex64,
+    /// Complex power P = ½ V I* (time-average Poynting)
+    pub p: Complex64,
 }
 
 /// Result of a driven frequency sweep.
@@ -548,7 +561,7 @@ fn run_frequency_sweep(
         apply_absorbing_bc(&mut a_base, mesh, k_wave);
 
         // ── Multi-port S-matrix path ──────────────────────────────────────────
-        let (s11, s_matrix, phi_re) = if n_ports > 1 {
+        let (s11, s_matrix, phi_re, port_vi_rec) = if n_ports > 1 {
             let omega = 2.0 * std::f64::consts::PI * freq;
             let z0_vec: Vec<Complex64> = all_ports.iter().map(|(pidx, kind)| {
                 match kind {
@@ -613,7 +626,7 @@ fn run_frequency_sweep(
                 "f={:.3e} Hz  |S11|={:.4}  (N={} ports)",
                 freq, s11_mp.norm(), n_ports
             );
-            (s11_mp, s_mat, first_phi_re)
+            (s11_mp, s_mat, first_phi_re, None::<PortVi>)
         } else {
             // ── Single-port path (backward compat) ───────────────────────────
             let dofs: HashMap<usize, f64> = if let Some(mode) = &wave_port_mode {
@@ -726,7 +739,14 @@ fn run_frequency_sweep(
                 "f={:.3e} Hz  |S11|={:.4}  ∠S11={:.2}°  Z0={:.1}Ω",
                 freq, s11.norm(), s11.arg().to_degrees(), z0
             );
-            (s11, vec![], phi_re)
+            let p_port = v_port * i_port.conj() * Complex64::new(0.5, 0.0);
+            let port_vi_rec = excited_port.map(|pidx| PortVi {
+                port_index: pidx,
+                v: v_port,
+                i: i_port,
+                p: p_port,
+            });
+            (s11, vec![], phi_re, port_vi_rec)
         };
 
         let port_list: Vec<u32> = all_ports.iter().map(|(i, _)| *i).collect();
@@ -736,6 +756,7 @@ fn run_frequency_sweep(
             s11_im: s11.im,
             s_matrix,
             port_list,
+            port_vi: port_vi_rec.into_iter().collect(),
         });
 
         // Track phi at the frequency with maximum |S11| (peak reflection)
@@ -806,7 +827,7 @@ fn run_frequency_sweep(
                     }
                     a
                 };
-                let (s11, s_mat, phi_re) = if n_ports > 1 {
+                let (s11, s_mat, phi_re, _port_vi_adap) = if n_ports > 1 {
                     let omega = 2.0 * std::f64::consts::PI * freq;
                     let z0_vec: Vec<Complex64> = all_ports.iter().map(|(pidx, kind)| match kind {
                         PortKind::Wave(idx) => { let z = wave_modes.get(idx).map(|m| m.impedance(freq)).unwrap_or(50.0); Complex64::new(if z.is_finite() { z } else { 50.0 }, 0.0) }
@@ -833,7 +854,7 @@ fn run_frequency_sweep(
                     }
                     let s_mat = z_to_s_matrix(&z_cols, &z0_vec);
                     let s11 = s_mat[0][0];
-                    (s11, s_mat, first_phi_re)
+                    (s11, s_mat, first_phi_re, None::<PortVi>)
                 } else {
                     let dofs = if let Some(mode) = &wave_port_mode {
                         if mode.is_propagating(freq) { collect_dirichlet_dofs_modal(mesh, excited_port, mode) }
@@ -875,11 +896,13 @@ fn run_frequency_sweep(
                         let z = v_port / i_port; let z0c = z0;
                         (z - z0c) / (z + z0c)
                     } else { Complex64::ZERO };
-                    (s11, vec![], phi_re)
+                    let p_a = v_port * i_port.conj() * Complex64::new(0.5, 0.0);
+                    let vi_a = excited_port.map(|pidx| PortVi { port_index: pidx, v: v_port, i: i_port, p: p_a });
+                    (s11, vec![], phi_re, vi_a)
                 };
                 log::info!("Adaptive f={:.3e} Hz  |S11|={:.4}", freq, s11.norm());
                 let port_list: Vec<u32> = all_ports.iter().map(|(i, _)| *i).collect();
-                freq_results.push(FreqResult { freq_hz: freq, s11_re: s11.re, s11_im: s11.im, s_matrix: s_mat, port_list });
+                freq_results.push(FreqResult { freq_hz: freq, s11_re: s11.re, s11_im: s11.im, s_matrix: s_mat, port_list, port_vi: _port_vi_adap.into_iter().collect() });
                 let s11_mag = s11.norm();
                 if s11_mag > peak_s11_mag {
                     peak_s11_mag = s11_mag;
@@ -894,6 +917,8 @@ fn run_frequency_sweep(
 
     #[cfg(not(target_arch = "wasm32"))]
     output::write_s_params(out_dir, &freq_results)?;
+    #[cfg(not(target_arch = "wasm32"))]
+    output::write_port_vi_csv(out_dir, &freq_results)?;
     #[cfg(not(target_arch = "wasm32"))]
     if !wave_port_support_regions.is_empty() {
         output::write_wave_port_support_regions(out_dir, &wave_port_support_regions)?;

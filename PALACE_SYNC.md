@@ -77,7 +77,7 @@ These fields are deserialized and logged as warnings; they do NOT need to be rem
 - `Domains.Postprocessing.Energy` — per-group energy written to `postpro/energy-E.csv` (Electrostatic) and `postpro/energy-B.csv` (Magnetostatic); groups sum energy over the specified domain attributes
 - `Domains.Postprocessing.Probe` — field probe sampling is implemented for Electrostatic (φ + E-field) and Magnetostatic (A_z); Eigenmode writes all modes to `postpro/probe-phi-modes.csv`
 - `Boundaries.Periodic` — Γ-point periodic BCs supported; complex Floquet (non-zero FloquetWaveVector) logs warning and skips
-- `Boundaries.Postprocessing` — `Electric` (displacement flux → `postpro/surface-flux.csv` in C) and `Magnetic` (B-flux → Wb) implemented; `Power`, `SA`, `MS`, `MA`, `FarField`, `Dielectric` not yet implemented
+- `Boundaries.Postprocessing` — `Electric` (displacement flux → `postpro/surface-flux.csv` in C) and `Magnetic` (B-flux → Wb) implemented; `Power`, `SA`, `MS`, `MA`, `FarField`, `Dielectric` not yet implemented; **`postpro/port-VI.csv`** (complex port V/I/P) now emitted by Driven solver (Phase 18)
 - `Boundaries.WavePort.{Offset, MaxIts, EigenTol, Verbose}` — accepted, ignored
 - `Boundaries.LumpedPort.Elements` — multi-element lumped port; uses first element only
 - `Solver.Driven.Save` (array) — ignored; use SaveStep integer

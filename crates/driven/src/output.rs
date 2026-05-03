@@ -4,7 +4,6 @@ use rem_core::{RemError, RemResult};
 use rem_mesh::RemMesh;
 use std::path::Path;
 use std::io::Write;
-
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DomainEnergyRecord {
     pub domain_tag: u32,
@@ -132,6 +131,66 @@ pub(crate) fn write_s_params(out_dir: &str, results: &[super::FreqResult]) -> Re
     Ok(())
 }
 
+
+/// Write Palace-compatible `postpro/port-VI.csv` with complex voltage, current,
+/// and time-average power at each frequency.
+///
+/// Palace format (one row per frequency, columns repeated for each port):
+/// ```text
+/// f (Hz), Re(V[1]), Im(V[1]), Re(I[1]), Im(I[1]), Re(P[1]), Im(P[1]), ...
+/// ```
+pub(crate) fn write_port_vi_csv(
+    out_dir: &str,
+    results: &[super::FreqResult],
+) -> RemResult<()> {
+    // Collect the superset of port indices across all results
+    let mut port_set: Vec<u32> = results
+        .iter()
+        .flat_map(|r| r.port_vi.iter().map(|v| v.port_index))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    if port_set.is_empty() {
+        return Ok(()); // nothing to write
+    }
+    port_set.sort();
+
+    let dir = Path::new(out_dir).join("postpro");
+    std::fs::create_dir_all(&dir).map_err(RemError::Io)?;
+    let path = dir.join("port-VI.csv");
+    let mut f = std::fs::File::create(&path).map_err(RemError::Io)?;
+
+    // Header
+    let mut header = String::from("f (Hz)");
+    for &p in &port_set {
+        header.push_str(&format!(
+            ",Re(V[{p}]),Im(V[{p}]),Re(I[{p}]),Im(I[{p}]),Re(P[{p}]),Im(P[{p}])"
+        ));
+    }
+    writeln!(f, "{}", header).map_err(RemError::Io)?;
+
+    for r in results {
+        write!(f, "{:.6e}", r.freq_hz).map_err(RemError::Io)?;
+        for &p in &port_set {
+            if let Some(vi) = r.port_vi.iter().find(|v| v.port_index == p) {
+                write!(
+                    f,
+                    ",{:.6e},{:.6e},{:.6e},{:.6e},{:.6e},{:.6e}",
+                    vi.v.re, vi.v.im,
+                    vi.i.re, vi.i.im,
+                    vi.p.re, vi.p.im
+                )
+                .map_err(RemError::Io)?;
+            } else {
+                write!(f, ",0,0,0,0,0,0").map_err(RemError::Io)?;
+            }
+        }
+        writeln!(f).map_err(RemError::Io)?;
+    }
+
+    log::info!("Wrote port voltage/current/power to {}", path.display());
+    Ok(())
+}
 
 /// Write field solution as VTK legacy file.
 pub fn write_field_vtk(
