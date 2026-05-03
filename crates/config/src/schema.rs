@@ -1404,8 +1404,26 @@ pub fn validate_palace_compat(cfg: &PalaceConfig) {
     for m in &cfg.domains.materials {
         if !m.material_axes.is_empty() {
             log::info!(
-                "Domains.Materials[].MaterialAxes: {} axes provided — tensor epsilon assembly enabled.",
+                "Domains.Materials[].MaterialAxes: {} axes provided -- tensor epsilon assembly enabled.",
                 m.material_axes.len()
+            );
+        }
+    }
+
+    // --- Solver.MoM ---
+    if let Some(ref m) = cfg.solver.mom {
+        if let Some(ref sub) = m.substrate {
+            log::info!(
+                "[REM] Solver.MoM.Substrate: {} layer(s), bottom_pec={} -- \
+                 layered-media Green function (DCIM) will be used for assembly.",
+                sub.layers.len(), sub.bottom_pec
+            );
+        }
+        if !m.ports.is_empty() {
+            log::info!(
+                "[REM] Solver.MoM.Ports: {} port(s), ref Z0={} Ohm -- \
+                 S-parameter sweep mode active; Touchstone and port-S.csv will be written.",
+                m.ports.len(), m.ref_impedance
             );
         }
     }

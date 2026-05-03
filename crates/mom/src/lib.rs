@@ -38,6 +38,30 @@ use rem_config::{PalaceConfig, MomSolverConfig};
 use rem_core::RemResult;
 use rem_mesh::RemMesh;
 use rem_parallel::NoComm;
+use rem_layered_green::{GreenFunction, FreeSpaceGreen, LayeredGreen, DielectricLayer};
+
+/// Build a boxed [`GreenFunction`] from the MoM solver config at a given frequency.
+///
+/// If `mom_cfg.substrate` is set, returns a [`LayeredGreen`]; otherwise free-space.
+fn build_green(mom_cfg: &MomSolverConfig, freq: f64) -> Box<dyn GreenFunction> {
+    use std::f64::consts::PI;
+    let k0 = 2.0 * PI * freq / rem_core::C0;
+    if let Some(sub) = &mom_cfg.substrate {
+        let layers: Vec<DielectricLayer> = sub.layers.iter().map(|l| DielectricLayer {
+            eps_r: l.permittivity,
+            loss_tan: l.loss_tangent,
+            mu_r: l.permeability,
+            thickness_m: l.thickness,
+        }).collect();
+        log::info!(
+            "MoM: using layered Green function ({} layer(s), bottom_pec={})",
+            layers.len(), sub.bottom_pec
+        );
+        Box::new(LayeredGreen::new(layers, k0))
+    } else {
+        Box::new(FreeSpaceGreen::new(k0))
+    }
+}
 
 /// One observation angle's RCS result.
 #[derive(Debug, Clone)]
@@ -180,7 +204,10 @@ pub fn run_with_mesh(
                 }
                 _ => {
                     let bases = basis::rwg::generate_rwg_bases(&surf);
-                    let mut z = assemble::assemble_cfie_rwg(&surf, &bases, freq, mom_cfg.alpha, &quad, mom_cfg.singular_tol)?;
+                    let green = build_green(mom_cfg, freq);
+                    let mut z = assemble::assemble_cfie_rwg_green(
+                        &surf, &bases, green.as_ref(), freq, mom_cfg.alpha, &quad, mom_cfg.singular_tol,
+                    )?;
                     if mom_cfg.wall_conductivity > 0.0 {
                         sibc::apply_sibc_rwg(&mut z, &surf, &bases, freq, mom_cfg.wall_conductivity, &quad);
                         log::info!(
@@ -250,7 +277,6 @@ fn run_s_param_sweep(
     mom_cfg: &MomSolverConfig,
     surf: &surface_mesh::SurfaceMesh,
 ) -> RemResult<MomResult> {
-    use std::f64::consts::PI;
     use port::MomLumpedPort;
 
     let output_dir = std::path::Path::new(config.problem.output_dir());
@@ -274,10 +300,10 @@ fn run_s_param_sweep(
 
     while freq <= freq_max + 1e-3 * freq_step {
         log::info!("MoM S-param solve at f = {:.3e} Hz", freq);
-        let _k = 2.0 * PI * freq / rem_core::C0;
 
-        let z_mat = assemble::assemble_cfie_rwg(
-            surf, &bases, freq, mom_cfg.alpha, &quad, mom_cfg.singular_tol,
+        let green = build_green(mom_cfg, freq);
+        let z_mat = assemble::assemble_cfie_rwg_green(
+            surf, &bases, green.as_ref(), freq, mom_cfg.alpha, &quad, mom_cfg.singular_tol,
         )?;
         let mut z_mat = z_mat;
         if mom_cfg.wall_conductivity > 0.0 {

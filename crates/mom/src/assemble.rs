@@ -3,6 +3,7 @@
 use crate::surface_mesh::SurfaceMesh;
 use crate::quadrature::TriQuad;
 use crate::green::green3d;
+use rem_layered_green::GreenFunction;
 use crate::singular::{zmn_self_duffy_pulse, zmn_singular_pulse, classify_pair, TriPairType, zmn_efie_rwg_singular};
 use crate::basis::rwg::RwgBasis;
 use nalgebra::{DMatrix, DVector};
@@ -130,6 +131,48 @@ pub fn assemble_cfie_rwg(
             z[(i, j)] = v;
         }
     }
+    Ok(z)
+}
+
+/// Variant of [`assemble_cfie_rwg`] that accepts a pluggable [`GreenFunction`].
+///
+/// Uses `green` for the regular (disjoint) quadrature terms.
+/// Near-singular terms still use free-space quasi-static extraction (standard DCIM practice).
+/// `alpha` is the CFIE combination: 1.0 = pure EFIE, 0.0 = pure MFIE.
+pub fn assemble_cfie_rwg_green(
+    surf: &SurfaceMesh,
+    bases: &[RwgBasis],
+    green: &dyn GreenFunction,
+    freq: f64,
+    alpha: f64,
+    quad: &TriQuad,
+    singular_tol: f64,
+) -> RemResult<DMatrix<Complex64>> {
+    let n = bases.len();
+    if n == 0 {
+        return Err(RemError::Mesh("No RWG bases found — check surface mesh".to_string()));
+    }
+
+    let omega = 2.0 * PI * freq;
+    let k     = omega / C0;
+    let eta0  = (MU0 / EPS0).sqrt();
+
+    let z_efie = assemble_efie_rwg_green(surf, bases, green, k, omega, quad)?;
+
+    if alpha >= 1.0 - 1e-9 {
+        return Ok(z_efie);
+    }
+
+    let z_mfie = assemble_mfie_rwg_green(surf, bases, green, k, quad)?;
+
+    let mut z = DMatrix::<Complex64>::from_element(n, n, Complex64::ZERO);
+    for i in 0..n {
+        for j in 0..n {
+            z[(i, j)] = z_efie[(i, j)] * Complex64::new(alpha, 0.0)
+                      + z_mfie[(i, j)] * Complex64::new((1.0 - alpha) * eta0, 0.0);
+        }
+    }
+    let _ = singular_tol;
     Ok(z)
 }
 
@@ -333,6 +376,173 @@ fn zmn_mfie_rwg(
         }
     }
 
+    identity_term + curl_term
+}
+
+// ---------------------------------------------------------------------------
+// Green-function-trait variants (for layered-media / DCIM support)
+// ---------------------------------------------------------------------------
+
+/// EFIE assembly using a pluggable [`GreenFunction`].
+/// Near-singular pairs fall back to free-space Sauter-Schwab quadrature; regular
+/// pairs use `green.g(rm, rn)` directly.
+fn assemble_efie_rwg_green(
+    surf: &SurfaceMesh,
+    bases: &[RwgBasis],
+    green: &dyn GreenFunction,
+    k: f64,
+    omega: f64,
+    quad: &TriQuad,
+) -> RemResult<DMatrix<Complex64>> {
+    let n = bases.len();
+    let omega_mu0 = omega * MU0;
+    let inv_omega_eps0 = 1.0 / (omega * EPS0);
+
+    // We need to capture `green` safely. Build a thread-local compute closure.
+    // (No Rayon here — GreenFunction is not guaranteed Send+Sync in general.)
+    let mut z = DMatrix::<Complex64>::from_element(n, n, Complex64::ZERO);
+    for ni in 0..n {
+        let bn = &bases[ni];
+        for mi in 0..n {
+            let bm = &bases[mi];
+            let val = zmn_efie_rwg_green(bm, bn, surf, green, k, omega_mu0, inv_omega_eps0, quad);
+            z[(mi, ni)] = val;
+        }
+    }
+    Ok(z)
+}
+
+fn zmn_efie_rwg_green(
+    bm: &RwgBasis,
+    bn: &RwgBasis,
+    surf: &SurfaceMesh,
+    green: &dyn GreenFunction,
+    k: f64,
+    omega_mu0: f64,
+    inv_omega_eps0: f64,
+    quad: &TriQuad,
+) -> Complex64 {
+    let mut val = Complex64::ZERO;
+    for &(m_face, m_plus) in &[(bm.plus_face, true), (bm.minus_face, false)] {
+        for &(n_face, n_plus) in &[(bn.plus_face, true), (bn.minus_face, false)] {
+            let face_m = &surf.faces[m_face];
+            let face_n = &surf.faces[n_face];
+            let div_n  = bn.divergence(surf, n_plus);
+            let div_m  = bm.divergence(surf, m_plus);
+
+            let pair = classify_pair(face_m, face_n);
+            if pair != TriPairType::Disjoint {
+                // Near-singular: free-space extraction (quasi-static, valid for DCIM)
+                let fm_fn = |rm: &[f64; 3], rn: &[f64; 3]| -> (f64, f64) {
+                    let fm  = bm.eval(rm, surf, m_plus);
+                    let fn_ = bn.eval(rn, surf, n_plus);
+                    let dot = fm[0]*fn_[0] + fm[1]*fn_[1] + fm[2]*fn_[2];
+                    (dot, div_m * div_n)
+                };
+                let (a_term, phi_term) =
+                    zmn_efie_rwg_singular(face_m, face_n, &fm_fn, &surf.nodes, k, 4);
+                val += a_term - inv_omega_eps0 / omega_mu0 * phi_term;
+            } else {
+                // Regular: use trait Green function
+                for (bm_pt, &wm) in quad.bary.iter().zip(quad.weights.iter()) {
+                    let rm = TriQuad::global_point(bm_pt, face_m, &surf.nodes);
+                    let fm = bm.eval(&rm, surf, m_plus);
+                    for (bn_pt, &wn) in quad.bary.iter().zip(quad.weights.iter()) {
+                        let rn = TriQuad::global_point(bn_pt, face_n, &surf.nodes);
+                        let fn_ = bn.eval(&rn, surf, n_plus);
+                        let g   = green.g(&rm, &rn);
+                        let dot_ff = fm[0]*fn_[0] + fm[1]*fn_[1] + fm[2]*fn_[2];
+                        let integrand = g * (dot_ff - inv_omega_eps0 / omega_mu0 * div_m * div_n);
+                        val += integrand * (wm * wn * 4.0 * face_m.area * face_n.area);
+                    }
+                }
+                val *= Complex64::new(0.0, omega_mu0);
+            }
+        }
+    }
+    val
+}
+
+/// MFIE assembly using a pluggable [`GreenFunction`].
+fn assemble_mfie_rwg_green(
+    surf: &SurfaceMesh,
+    bases: &[RwgBasis],
+    green: &dyn GreenFunction,
+    k: f64,
+    quad: &TriQuad,
+) -> RemResult<DMatrix<Complex64>> {
+    let _ = k; // k retained for near-singular handling if needed in future
+    let n = bases.len();
+    let mut z = DMatrix::<Complex64>::from_element(n, n, Complex64::ZERO);
+    for ni in 0..n {
+        let bn = &bases[ni];
+        for mi in 0..n {
+            let bm = &bases[mi];
+            z[(mi, ni)] = zmn_mfie_rwg_green(bm, bn, surf, green, quad);
+        }
+    }
+    Ok(z)
+}
+
+fn zmn_mfie_rwg_green(
+    bm: &RwgBasis,
+    bn: &RwgBasis,
+    surf: &SurfaceMesh,
+    green: &dyn GreenFunction,
+    quad: &TriQuad,
+) -> Complex64 {
+    // Identity term (same as free-space — geometry only)
+    let identity_term = if bm.edge_idx == bn.edge_idx {
+        let mut overlap = 0.0f64;
+        for &(face_idx, in_plus) in &[(bm.plus_face, true), (bm.minus_face, false)] {
+            let face = &surf.faces[face_idx];
+            for (b_pt, &w) in quad.bary.iter().zip(quad.weights.iter()) {
+                let r = TriQuad::global_point(b_pt, face, &surf.nodes);
+                let f = bm.eval(&r, surf, in_plus);
+                overlap += (f[0]*f[0] + f[1]*f[1] + f[2]*f[2]) * (w * 2.0 * face.area);
+            }
+        }
+        Complex64::new(0.5 * overlap, 0.0)
+    } else {
+        Complex64::ZERO
+    };
+
+    // curl-Green integral term — use trait grad_g
+    let mut curl_term = Complex64::ZERO;
+    for &(m_face, m_plus) in &[(bm.plus_face, true), (bm.minus_face, false)] {
+        for &(n_face, n_plus) in &[(bn.plus_face, true), (bn.minus_face, false)] {
+            let face_m = &surf.faces[m_face];
+            let face_n = &surf.faces[n_face];
+            let nm = face_m.normal;
+            for (bm_pt, &wm) in quad.bary.iter().zip(quad.weights.iter()) {
+                let rm = TriQuad::global_point(bm_pt, face_m, &surf.nodes);
+                let fm = bm.eval(&rm, surf, m_plus);
+                for (bn_pt, &wn) in quad.bary.iter().zip(quad.weights.iter()) {
+                    let rn = TriQuad::global_point(bn_pt, face_n, &surf.nodes);
+                    let fn_ = bn.eval(&rn, surf, n_plus);
+                    let grad_g = green.grad_g(&rm, &rn);
+
+                    let fn_c = [
+                        Complex64::new(fn_[0], 0.0),
+                        Complex64::new(fn_[1], 0.0),
+                        Complex64::new(fn_[2], 0.0),
+                    ];
+                    let curl_gfn = cross_c(&grad_g, &fn_c);
+                    let nm_c = [
+                        Complex64::new(nm[0], 0.0),
+                        Complex64::new(nm[1], 0.0),
+                        Complex64::new(nm[2], 0.0),
+                    ];
+                    let n_x_curl = cross_c(&nm_c, &curl_gfn);
+                    let dot_val = Complex64::new(
+                        fm[0]*n_x_curl[0].re + fm[1]*n_x_curl[1].re + fm[2]*n_x_curl[2].re,
+                        fm[0]*n_x_curl[0].im + fm[1]*n_x_curl[1].im + fm[2]*n_x_curl[2].im,
+                    );
+                    curl_term += dot_val * (wm * wn * 4.0 * face_m.area * face_n.area);
+                }
+            }
+        }
+    }
     identity_term + curl_term
 }
 
