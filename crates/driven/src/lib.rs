@@ -414,7 +414,12 @@ fn run_frequency_sweep(
             }
             let mut rhs_e = vec![Complex64::ZERO; n];
             apply_dirichlet_complex(&mut a_e, &mut rhs_e, &dofs_snap);
-            match gmres_complex(&a_e, &rhs_e, lin.tol, lin.max_iter) {
+            let use_pcg_snap = std::env::var("REM_USE_PCG").is_ok();
+            match if use_pcg_snap {
+                solve_complex_helmholtz_adaptive(&a_e, &rhs_e, lin.tol, lin.max_iter, true)
+            } else {
+                gmres_complex(&a_e, &rhs_e, lin.tol, lin.max_iter)
+            } {
                 Ok(phi_c) => snapshots.push(phi_c),
                 Err(e) => {
                     log::warn!("ROM: expansion solve at f={f_exp:.3e} Hz failed ({e}); disabling ROM");
@@ -561,7 +566,12 @@ fn run_frequency_sweep(
                     let mut a_tmp = a_base.clone();
                     let mut rhs_tmp = vec![Complex64::ZERO; n];
                     apply_dirichlet_complex(&mut a_tmp, &mut rhs_tmp, &dofs_first);
-                    let phi_c_first = gmres_complex(&a_tmp, &rhs_tmp, lin.tol, lin.max_iter)?;
+                    let use_pcg_f = std::env::var("REM_USE_PCG").is_ok();
+                    let phi_c_first = if use_pcg_f {
+                        solve_complex_helmholtz_adaptive(&a_tmp, &rhs_tmp, lin.tol, lin.max_iter, true)?
+                    } else {
+                        gmres_complex(&a_tmp, &rhs_tmp, lin.tol, lin.max_iter)?
+                    };
                     first_phi_re = phi_c_first.iter().map(|x| x.re).collect();
                 }
             }
@@ -647,7 +657,12 @@ fn run_frequency_sweep(
                 if is_expansion {
                     // Full solve — result is already in the snapshots used for basis
                     // construction, but we re-solve here for correct a_base(ω) with BCs.
-                    gmres_complex(&a, &rhs_c, lin.tol, lin.max_iter)?
+                    let use_pcg_r = std::env::var("REM_USE_PCG").is_ok();
+                    if use_pcg_r {
+                        solve_complex_helmholtz_adaptive(&a, &rhs_c, lin.tol, lin.max_iter, true)?
+                    } else {
+                        gmres_complex(&a, &rhs_c, lin.tol, lin.max_iter)?
+                    }
                 } else {
                     // ROM solve: project A(ω) and b down to r×r, solve, expand back.
                     let b_r = basis.project_rhs(&rhs_c);
@@ -656,7 +671,12 @@ fn run_frequency_sweep(
                         Some(x_r) => basis.expand(&x_r),
                         None => {
                             log::warn!("ROM: reduced system singular at f={freq:.3e} Hz; falling back to full solve");
-                            gmres_complex(&a, &rhs_c, lin.tol, lin.max_iter)?
+                            let use_pcg_rs = std::env::var("REM_USE_PCG").is_ok();
+                            if use_pcg_rs {
+                                solve_complex_helmholtz_adaptive(&a, &rhs_c, lin.tol, lin.max_iter, true)?
+                            } else {
+                                gmres_complex(&a, &rhs_c, lin.tol, lin.max_iter)?
+                            }
                         }
                     }
                 }
@@ -790,7 +810,12 @@ fn run_frequency_sweep(
                             let mut at = a_base_a.clone();
                             let mut rt = vec![Complex64::ZERO; n];
                             apply_dirichlet_complex(&mut at, &mut rt, &dofs_f);
-                            let pc = gmres_complex(&at, &rt, lin.tol, lin.max_iter)?;
+                            let use_pcg_af = std::env::var("REM_USE_PCG").is_ok();
+                            let pc = if use_pcg_af {
+                                solve_complex_helmholtz_adaptive(&at, &rt, lin.tol, lin.max_iter, true)?
+                            } else {
+                                gmres_complex(&at, &rt, lin.tol, lin.max_iter)?
+                            };
                             first_phi_re = pc.iter().map(|x| x.re).collect();
                         }
                     }
@@ -1506,10 +1531,9 @@ fn solve_one_excitation(
         }
     }
 
-    // Phase 2a: Optionally try PCG solver via environment variable
+    // Use PCG if enabled, fallback to GMRES on divergence
     let use_pcg = std::env::var("REM_USE_PCG").is_ok();
     let phi_c = if use_pcg {
-        log::info!("solve_one_excitation: Attempting PCG solve (REM_USE_PCG enabled)");
         solve_complex_helmholtz_adaptive(&a, &rhs_c, lin.tol, lin.max_iter, true)?
     } else {
         gmres_complex(&a, &rhs_c, lin.tol, lin.max_iter)?
