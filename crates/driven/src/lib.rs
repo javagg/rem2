@@ -661,7 +661,13 @@ fn run_frequency_sweep(
                     }
                 }
             } else {
-                gmres_complex(&a, &rhs_c, lin.tol, lin.max_iter)?
+                let use_pcg = std::env::var("REM_USE_PCG").is_ok();
+                if use_pcg {
+                    log::info!("Phase2: single-port main-loop PCG solve at f={freq:.3e} Hz");
+                    solve_complex_helmholtz_adaptive(&a, &rhs_c, lin.tol, lin.max_iter, true)?
+                } else {
+                    gmres_complex(&a, &rhs_c, lin.tol, lin.max_iter)?
+                }
             };
 
             let phi_re: Vec<f64> = phi_c.iter().map(|x| x.re).collect();
@@ -809,7 +815,13 @@ fn run_frequency_sweep(
                             }
                         }
                     }
-                    let phi_c = gmres_complex(&a, &rhs_c, lin.tol, lin.max_iter)?;
+                    let use_pcg = std::env::var("REM_USE_PCG").is_ok();
+                    let phi_c = if use_pcg {
+                        log::info!("Phase2: single-port Helmholtz attempting PCG solve");
+                        solve_complex_helmholtz_adaptive(&a, &rhs_c, lin.tol, lin.max_iter, true)?
+                    } else {
+                        gmres_complex(&a, &rhs_c, lin.tol, lin.max_iter)?
+                    };
                     let phi_re: Vec<f64> = phi_c.iter().map(|x| x.re).collect();
                     let (v_port, i_kphi) = compute_port_vi_complex(mesh, &phi_c, &k_dense, excited_port);
                     let omega = 2.0 * std::f64::consts::PI * freq;
@@ -1048,13 +1060,13 @@ fn solve_complex_helmholtz_adaptive(
     let result = solve_pcg_complex(&mat_csr, rhs, tol, max_iter);
     
     if result.converged {
-        log::debug!("PCG: converged in {} iterations (residual {:.3e})", 
+        log::info!("PCG: converged in {} iterations (residual {:.3e})", 
                     result.iterations, result.residual_norm);
         return Ok(result.solution);
     }
 
     // PCG diverged or hit max iterations; fallback to GMRES
-    log::debug!("PCG: no convergence after {} iterations (residual {:.3e}); using GMRES",
+    log::info!("PCG: no convergence after {} iterations (residual {:.3e}); using GMRES",
                 result.iterations, result.residual_norm);
     gmres_complex(a, rhs, tol, max_iter)
 }
@@ -1497,7 +1509,7 @@ fn solve_one_excitation(
     // Phase 2a: Optionally try PCG solver via environment variable
     let use_pcg = std::env::var("REM_USE_PCG").is_ok();
     let phi_c = if use_pcg {
-        log::debug!("solve_one_excitation: Attempting PCG solve (REM_USE_PCG enabled)");
+        log::info!("solve_one_excitation: Attempting PCG solve (REM_USE_PCG enabled)");
         solve_complex_helmholtz_adaptive(&a, &rhs_c, lin.tol, lin.max_iter, true)?
     } else {
         gmres_complex(&a, &rhs_c, lin.tol, lin.max_iter)?
