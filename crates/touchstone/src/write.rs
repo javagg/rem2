@@ -80,30 +80,48 @@ pub fn write_snp(
         let row = &s_data[fi];
         let freq_scaled = fhz / freq_scale;
 
-        // Touchstone 1.0: for N=1 or N=2, all data on one line.
-        // For N>2: first 4 S-values on first line, then groups of 4 per continuation line.
-        // We use a simpler single-line-per-frequency layout (valid for N<=2 and readable for N>2).
-        let mut line = format!("{:.9e}", freq_scaled);
+        // Touchstone 1.0 layout:
+        //   N ≤ 2: all data on one line (freq + N² pairs).
+        //   N ≥ 3: freq + first 4 pairs on line 1; continuation lines of 4 pairs each.
+        //          Continuation lines are indented with spaces (no frequency token).
+        let mut pairs: Vec<String> = row.iter().map(|&s| match fmt {
+            TsFormat::Ri => format!("  {:.8e}  {:.8e}", s.re, s.im),
+            TsFormat::Ma => {
+                let mag = s.norm();
+                let ang = s.im.atan2(s.re).to_degrees();
+                format!("  {:.8e}  {:.6}", mag, ang)
+            }
+            TsFormat::Db => {
+                let db = if s.norm() > 1e-300 { 20.0 * s.norm().log10() } else { -999.0 };
+                let ang = s.im.atan2(s.re).to_degrees();
+                format!("  {:.6}  {:.6}", db, ang)
+            }
+        }).collect();
 
-        for &s in row.iter() {
-            match fmt {
-                TsFormat::Ri => {
-                    line.push_str(&format!("  {:.8e}  {:.8e}", s.re, s.im));
-                }
-                TsFormat::Ma => {
-                    let mag = s.norm();
-                    let ang = s.im.atan2(s.re).to_degrees();
-                    line.push_str(&format!("  {:.8e}  {:.6}", mag, ang));
-                }
-                TsFormat::Db => {
-                    let db = if s.norm() > 1e-300 { 20.0 * s.norm().log10() } else { -999.0 };
-                    let ang = s.im.atan2(s.re).to_degrees();
-                    line.push_str(&format!("  {:.6}  {:.6}", db, ang));
-                }
+        if n_ports <= 2 {
+            // Single-line layout
+            let line: String = std::iter::once(format!("{:.9e}", freq_scaled))
+                .chain(pairs.drain(..))
+                .collect::<Vec<_>>()
+                .join("");
+            out.push_str(&line);
+            out.push('\n');
+        } else {
+            // Multi-line layout: 4 pairs per continuation line
+            let mut chunks = pairs.chunks(4);
+            if let Some(first) = chunks.next() {
+                let line = format!("{:.9e}", freq_scaled)
+                    + &first.join("");
+                out.push_str(&line);
+                out.push('\n');
+            }
+            for chunk in chunks {
+                // Indent continuation lines with spaces to align with freq column
+                let line = "          ".to_string() + &chunk.join("");
+                out.push_str(&line);
+                out.push('\n');
             }
         }
-        out.push_str(&line);
-        out.push('\n');
     }
 
     out
@@ -176,5 +194,34 @@ mod tests {
         assert!(!data_lines.is_empty());
         let fields: Vec<&str> = data_lines[0].split_whitespace().collect();
         assert_eq!(fields.len(), 9, "S2P line should have 9 fields: {data_lines:?}");
+    }
+
+    #[test]
+    fn s3p_uses_multiline_layout() {
+        // N=3: 9 S-pairs per frequency. First line has freq + 4 pairs (9 fields),
+        // second line has 4 pairs (8 fields), third line has 1 pair (2 fields).
+        let freqs = vec![1e9, 2e9];
+        let row: Vec<Complex64> = (0..9).map(|i| Complex64::new(i as f64 * 0.1, 0.0)).collect();
+        let s_data = vec![row.clone(), row];
+        let out = write_snp(&freqs, &s_data, 3, 50.0, TsFormat::Ri, TsFreqUnit::Ghz);
+
+        // Non-empty lines excluding comments and option line
+        let all_lines: Vec<&str> = out.lines()
+            .filter(|l| !l.starts_with('!') && !l.starts_with('#') && !l.trim().is_empty())
+            .collect();
+        // 2 freq blocks × 3 lines each = 6 lines
+        assert_eq!(all_lines.len(), 6, "expected 6 data/continuation lines: {all_lines:?}");
+
+        // First line of block 0: freq + 4 pairs = 9 numeric fields
+        let fields0: Vec<&str> = all_lines[0].split_whitespace().collect();
+        assert_eq!(fields0.len(), 9, "first line wrong: {:?}", all_lines[0]);
+
+        // Second line: continuation (no freq) with 4 pairs = 8 numeric fields
+        let fields1: Vec<&str> = all_lines[1].split_whitespace().collect();
+        assert_eq!(fields1.len(), 8, "continuation line wrong: {:?}", all_lines[1]);
+
+        // Third line: remainder 1 pair = 2 fields
+        let fields2: Vec<&str> = all_lines[2].split_whitespace().collect();
+        assert_eq!(fields2.len(), 2, "last continuation wrong: {:?}", all_lines[2]);
     }
 }

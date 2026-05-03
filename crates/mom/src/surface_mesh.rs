@@ -143,6 +143,19 @@ impl SurfaceMesh {
 
     /// Number of pulse basis functions = number of faces.
     pub fn n_pulse(&self) -> usize { self.faces.len() }
+
+    /// Construct a `SurfaceMesh` from pre-built parts, recomputing edge
+    /// topology and patching edge lengths automatically.
+    pub(crate) fn from_parts(
+        nodes: Vec<[f64; 3]>,
+        faces: Vec<TriFace>,
+        face_attrs: Vec<u32>,
+        global_node_ids: Vec<usize>,
+    ) -> Self {
+        let (mut edges, boundary_edges) = build_edge_topology(&faces);
+        patch_edge_lengths(&mut edges, &nodes);
+        SurfaceMesh { nodes, faces, edges, boundary_edges, face_attrs, global_node_ids }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -196,7 +209,7 @@ pub fn edge_length(nodes: &[[f64; 3]], n0: usize, n1: usize) -> f64 {
 ///
 /// Algorithm: for every edge (pair of nodes), track which faces contain it.
 /// Edges shared by exactly 2 faces → `SharedEdge`. Edges owned by 1 face → boundary.
-fn build_edge_topology(faces: &[TriFace]) -> (Vec<SharedEdge>, Vec<[usize; 2]>) {
+pub(crate) fn build_edge_topology(faces: &[TriFace]) -> (Vec<SharedEdge>, Vec<[usize; 2]>) {
     // Map: sorted edge (n0, n1) → list of face indices
     let mut edge_map: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
 

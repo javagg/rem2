@@ -984,6 +984,25 @@ pub struct MomSolverConfig {
     /// simulation, enabling multi-solver near-field coupling.
     #[serde(rename = "NearFieldSource", default)]
     pub near_field_source: Option<String>,
+
+    /// Snapshot ROM acceleration for S-parameter frequency sweeps.
+    /// `0` disables ROM (default); positive value sets the number of anchor
+    /// frequencies at which a full MoM solve is performed — all other
+    /// frequencies use the Galerkin-projected low-dimensional system.
+    /// Typical values: 4–16 for narrow-band, 8–32 for wideband.
+    #[serde(rename = "RomOrder", default)]
+    pub rom_order: usize,
+
+    /// Maximum AMR iterations.  `0` disables AMR (default).
+    /// When > 0, the mesh is refined up to `amr_iter` times with a
+    /// Dörfler marking threshold of `AmrtTheta`.
+    #[serde(rename = "AmrIter", default)]
+    pub amr_iter: usize,
+
+    /// Dörfler marking fraction for AMR.  Faces whose squared error sum
+    /// exceeds `amr_theta × total` are refined.  Default 0.5.
+    #[serde(rename = "AmrTheta", default = "default_amr_theta")]
+    pub amr_theta: f64,
 }
 
 fn default_mom_equation() -> String { "CFIE".to_string() }
@@ -994,6 +1013,7 @@ fn default_fast_solver()   -> String { "Direct".to_string() }
 fn default_polarization()  -> String { "theta".to_string() }
 fn default_ref_impedance() -> f64    { 50.0 }
 fn default_port_direction() -> String { "x".to_string() }
+fn default_amr_theta()     -> f64    { 0.5 }
 
 /// A lumped port definition for MoM S-parameter extraction.
 #[derive(Debug, Clone, Deserialize, Default)]

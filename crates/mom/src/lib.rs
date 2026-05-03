@@ -31,6 +31,8 @@ pub mod port;
 pub mod sparams;
 pub mod sibc;
 pub mod fft_accel;
+pub mod amr;
+pub mod rom;
 
 // Public re-exports for cross-crate solver integration
 pub use assemble::{gmres_solve, gmres_solve_generic, gmres_solve_op, aca_gmres_solve, gmres_generic_with_aca};
@@ -304,33 +306,66 @@ fn run_s_param_sweep(
         MomLumpedPort::from_surface(surf, &bases, &p.attributes, p.index, &p.direction, z0)
     }).collect::<RemResult<_>>()?;
 
-    // Frequency sweep
+    // Frequency sweep — use ROM if RomOrder > 0
     let mut freq = mom_cfg.freq_min;
     let freq_max  = mom_cfg.freq_max;
     let freq_step = mom_cfg.freq_step;
     let mut all_matrices: Vec<sparams::SMatrix> = Vec::new();
 
-    while freq <= freq_max + 1e-3 * freq_step {
-        log::info!("MoM S-param solve at f = {:.3e} Hz", freq);
+    // Collect all sweep frequencies up front (needed for ROM)
+    let mut freq_list: Vec<f64> = Vec::new();
+    let mut f = freq;
+    while f <= freq_max + 1e-3 * freq_step {
+        freq_list.push(f);
+        f += freq_step;
+    }
 
-        let green = build_green(mom_cfg, freq);
-        let z_mat = assemble::assemble_cfie_rwg_green(
-            surf, &bases, green.as_ref(), freq, mom_cfg.alpha, &quad, mom_cfg.singular_tol,
+    if mom_cfg.rom_order > 0 && freq_list.len() > mom_cfg.rom_order {
+        // ── ROM-accelerated sweep ─────────────────────────────────────────
+        log::info!(
+            "MoM ROM sweep: {} anchor points over {} frequencies",
+            mom_cfg.rom_order, freq_list.len()
+        );
+        let alpha   = mom_cfg.alpha;
+        let sing_tol = mom_cfg.singular_tol;
+        let sigma   = mom_cfg.wall_conductivity;
+        let build_z = |fq: f64| -> RemResult<nalgebra::DMatrix<num_complex::Complex64>> {
+            let green = build_green(mom_cfg, fq);
+            let mut z = assemble::assemble_cfie_rwg_green(
+                surf, &bases, green.as_ref(), fq, alpha, &quad, sing_tol,
+            )?;
+            if sigma > 0.0 {
+                sibc::apply_sibc_rwg(&mut z, surf, &bases, fq, sigma, &quad);
+            }
+            Ok(z)
+        };
+        all_matrices = rom::mom_rom_sweep(
+            surf, &bases, &lumped_ports,
+            &freq_list, mom_cfg.rom_order, 1e-10,
+            &build_z,
         )?;
-        let mut z_mat = z_mat;
-        if mom_cfg.wall_conductivity > 0.0 {
-            sibc::apply_sibc_rwg(&mut z_mat, surf, &bases, freq, mom_cfg.wall_conductivity, &quad);
-            log::info!(
-                "MoM SIBC enabled: sigma_wall={:.3e} S/m",
-                mom_cfg.wall_conductivity
-            );
+    } else {
+        // ── Direct sweep ──────────────────────────────────────────────────
+        for &freq in &freq_list {
+            log::info!("MoM S-param solve at f = {:.3e} Hz", freq);
+
+            let green = build_green(mom_cfg, freq);
+            let z_mat = assemble::assemble_cfie_rwg_green(
+                surf, &bases, green.as_ref(), freq, mom_cfg.alpha, &quad, mom_cfg.singular_tol,
+            )?;
+            let mut z_mat = z_mat;
+            if mom_cfg.wall_conductivity > 0.0 {
+                sibc::apply_sibc_rwg(&mut z_mat, surf, &bases, freq, mom_cfg.wall_conductivity, &quad);
+                log::info!(
+                    "MoM SIBC enabled: sigma_wall={:.3e} S/m",
+                    mom_cfg.wall_conductivity
+                );
+            }
+
+            let sm = sparams::compute_s_matrix(surf, &bases, &lumped_ports, &z_mat, freq)?;
+            log::info!("  S-matrix computed: {}×{}", sm.n_ports, sm.n_ports);
+            all_matrices.push(sm);
         }
-
-        let sm = sparams::compute_s_matrix(surf, &bases, &lumped_ports, &z_mat, freq)?;
-        log::info!("  S-matrix computed: {}×{}", sm.n_ports, sm.n_ports);
-        all_matrices.push(sm);
-
-        freq += freq_step;
     }
 
     // Write outputs
