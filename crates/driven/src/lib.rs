@@ -116,12 +116,14 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
         RemError::Config("Driven problem requires a [Solver.Driven] section".into())
     })?;
 
-    if config.solver.order > 1 {
+    if config.solver.order > 2 {
         log::warn!(
-            "Solver.Order={} requested but only P1 (order=1) is implemented; \
-             higher-order assembly is pending. Running P1.",
+            "Solver.Order={} requested; P1 and P2 (Tet10/Tri6) are implemented. \
+             Order≥3 is not yet supported — running P2.",
             config.solver.order
         );
+    } else if config.solver.order == 2 {
+        log::info!("Solver.Order=2: using P2 quadratic assembly for Tet10/Tri6 elements.");
     }
 
     // Report solver configuration

@@ -1,8 +1,8 @@
-/// P1 finite element stiffness matrix assembly.
+/// P1/P2 finite element stiffness matrix assembly.
 ///
 /// Supports:
-///  - 2-D: Tri3 (linear triangle)
-///  - 3-D: Tet4 (linear tetrahedron)
+///  - 2-D: Tri3 (P1 linear triangle), Tri6 (P2 quadratic triangle)
+///  - 3-D: Tet4 (P1 linear tetrahedron), Tet10 (P2 quadratic tetrahedron), Hex8 (trilinear)
 ///
 /// The assembled system is:
 ///   K_ij = Σ_e  ε_e · ∫_Ωe  ∇φ_i · ∇φ_j  dΩ
@@ -12,9 +12,6 @@
 use rem_core::{TripletMatrix, RemError, RemResult};
 use rem_mesh::{RemMesh, ElementKind};
 use rem_materials::DomainMap;
-use std::sync::Once;
-
-static TET10_WARNED: Once = Once::new();
 
 /// Assemble the global stiffness (diffusion) matrix for Poisson's equation.
 ///
@@ -40,16 +37,11 @@ pub fn assemble_stiffness(
             ElementKind::Tet4 => {
                 assemble_tet4(mesh, elem, eps, &mut triplet)?;
             }
+            ElementKind::Tri6 => {
+                assemble_tri6(mesh, elem, eps, &mut triplet)?;
+            }
             ElementKind::Tet10 => {
-                // P1 approximation using corner nodes only (mid-edge nodes ignored).
-                // This degrades accuracy from O(h²) to O(h) — use a Tet4 mesh for best results.
-                TET10_WARNED.call_once(|| {
-                    log::warn!(
-                        "Tet10 elements detected: using P1 corner-node approximation (mid-edge nodes ignored). \
-                         Accuracy degrades from O(h²) to O(h). Re-mesh with Tet4 elements for full precision."
-                    );
-                });
-                assemble_tet4_by_nodes(mesh, &elem.node_ids[..4], elem.id, eps, &mut triplet)?;
+                assemble_tet10(mesh, elem, eps, &mut triplet)?;
             }
             ElementKind::Hex8 => {
                 assemble_hex8(mesh, elem, eps, &mut triplet)?;
@@ -291,6 +283,245 @@ fn assemble_hex8(
 }
 
 // ---------------------------------------------------------------------------
+// P2 quadratic triangle (Tri6) stiffness assembly
+// ---------------------------------------------------------------------------
+
+/// Local stiffness for a quadratic triangle (Tri6) using P2 basis functions.
+///
+/// Reference element: ξ∈[0,1], η∈[0,1-ξ].  Barycentric: λ1=1-ξ-η, λ2=ξ, λ3=η.
+///
+/// GMSH node order:
+///   0:(0,0), 1:(1,0), 2:(0,1), 3:(1/2,0), 4:(1/2,1/2), 5:(0,1/2)
+///
+/// P2 basis: vertex φi = λi(2λi-1), edge φ3=4λ1λ2, φ4=4λ2λ3, φ5=4λ1λ3.
+///
+/// Gauss quadrature: 3-point degree-2 rule (exact for ∇φi·∇φj which is degree 2).
+fn assemble_tri6(
+    mesh: &RemMesh,
+    elem: &rem_mesh::Element,
+    eps: f64,
+    triplet: &mut TripletMatrix,
+) -> RemResult<()> {
+    debug_assert_eq!(elem.node_ids.len(), 6);
+    let nids: [usize; 6] = [
+        elem.node_ids[0], elem.node_ids[1], elem.node_ids[2],
+        elem.node_ids[3], elem.node_ids[4], elem.node_ids[5],
+    ];
+
+    // Nodal coordinates
+    let xy: [[f64; 2]; 6] = {
+        let mut c = [[0.0f64; 2]; 6];
+        for (i, &n) in nids.iter().enumerate() {
+            c[i] = [mesh.nodes[n].x, mesh.nodes[n].y];
+        }
+        c
+    };
+
+    // 3-point Gauss rule on reference triangle (exact for degree ≤ 2)
+    // Points: (1/6,1/6), (2/3,1/6), (1/6,2/3);  weight = 1/6 each
+    let gauss_pts = [[1.0/6.0, 1.0/6.0], [2.0/3.0, 1.0/6.0], [1.0/6.0, 2.0/3.0]];
+    let gauss_w = 1.0 / 6.0;
+
+    let mut ke = [[0.0f64; 6]; 6];
+
+    for &[xi, eta] in &gauss_pts {
+        let l1 = 1.0 - xi - eta;
+        let l2 = xi;
+        let l3 = eta;
+
+        // P2 basis gradients in reference coords (∂φ/∂ξ, ∂φ/∂η)
+        // Corner nodes: ∂(λ(2λ-1))/∂α = (4λ-1) ∂λ/∂α
+        // ∂l1/∂ξ=-1, ∂l1/∂η=-1; ∂l2/∂ξ=1,∂l2/∂η=0; ∂l3/∂ξ=0,∂l3/∂η=1
+        let dndxi  = [
+            -(4.0*l1 - 1.0),          // φ0 = l1(2l1-1)
+             4.0*l2 - 1.0,            // φ1 = l2(2l2-1)
+             0.0,                     // φ2 = l3(2l3-1)
+             4.0*(l1 - l2),           // φ3 = 4l1l2: ∂/∂ξ = 4(∂l1/∂ξ·l2 + l1·∂l2/∂ξ) = 4(-l2+l1)
+             4.0*l3,                  // φ4 = 4l2l3: 4l3
+            -4.0*l3,                  // φ5 = 4l1l3: 4(∂l1/∂ξ·l3) = -4l3
+        ];
+        let dndeta = [
+            -(4.0*l1 - 1.0),          // φ0
+             0.0,                     // φ1
+             4.0*l3 - 1.0,            // φ2
+            -4.0*l2,                  // φ3 = 4l1l2: 4·∂l1/∂η·l2 = -4l2
+             4.0*l2,                  // φ4 = 4l2l3: 4l2
+             4.0*(l1 - l3),           // φ5 = 4l1l3: 4(-l3+l1)
+        ];
+
+        // Jacobian J = [∂x/∂ξ, ∂x/∂η; ∂y/∂ξ, ∂y/∂η]
+        let mut jac = [[0.0f64; 2]; 2];
+        for i in 0..6 {
+            jac[0][0] += dndxi[i]  * xy[i][0]; // ∂x/∂ξ
+            jac[0][1] += dndeta[i] * xy[i][0]; // ∂x/∂η
+            jac[1][0] += dndxi[i]  * xy[i][1]; // ∂y/∂ξ
+            jac[1][1] += dndeta[i] * xy[i][1]; // ∂y/∂η
+        }
+        let det_j = jac[0][0] * jac[1][1] - jac[0][1] * jac[1][0];
+        if det_j.abs() < 1e-300 { continue; }
+
+        // J^{-1}: inv([[a,b],[c,d]]) = (1/det) [[d,-b],[-c,a]]
+        let inv_det = 1.0 / det_j;
+        let ji = [
+            [ jac[1][1] * inv_det, -jac[0][1] * inv_det],
+            [-jac[1][0] * inv_det,  jac[0][0] * inv_det],
+        ];
+
+        // Physical gradients: [∂φ/∂x, ∂φ/∂y] = J^{-T} [∂φ/∂ξ, ∂φ/∂η]
+        let mut grad = [[0.0f64; 2]; 6];
+        for i in 0..6 {
+            grad[i][0] = ji[0][0] * dndxi[i] + ji[1][0] * dndeta[i];
+            grad[i][1] = ji[0][1] * dndxi[i] + ji[1][1] * dndeta[i];
+        }
+
+        let wdet = eps * gauss_w * det_j.abs();
+        for i in 0..6 {
+            for j in 0..6 {
+                ke[i][j] += wdet * (grad[i][0]*grad[j][0] + grad[i][1]*grad[j][1]);
+            }
+        }
+    }
+
+    for i in 0..6 {
+        for j in 0..6 {
+            triplet.add(nids[i], nids[j], ke[i][j]);
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// P2 quadratic tetrahedron (Tet10) stiffness assembly
+// ---------------------------------------------------------------------------
+
+/// Local stiffness for a quadratic tetrahedron (Tet10) using P2 basis functions.
+///
+/// Reference element: ξ,η,ζ≥0, ξ+η+ζ≤1.  Barycentric: λ1=1-ξ-η-ζ, λ2=ξ, λ3=η, λ4=ζ.
+///
+/// GMSH node order (0-indexed):
+///   0:(0,0,0), 1:(1,0,0), 2:(0,1,0), 3:(0,0,1),
+///   4:mid(0-1), 5:mid(1-2), 6:mid(0-2), 7:mid(0-3), 8:mid(1-3), 9:mid(2-3)
+///
+/// P2 basis: vertex φi = λi(2λi-1), edge φij = 4λiλj.
+///
+/// Gauss quadrature: Keast 4-point degree-2 rule (exact for ∇φi·∇φj which is degree 2).
+fn assemble_tet10(
+    mesh: &RemMesh,
+    elem: &rem_mesh::Element,
+    eps: f64,
+    triplet: &mut TripletMatrix,
+) -> RemResult<()> {
+    debug_assert_eq!(elem.node_ids.len(), 10);
+    let nids: [usize; 10] = {
+        let ids = &elem.node_ids;
+        [ids[0],ids[1],ids[2],ids[3],ids[4],ids[5],ids[6],ids[7],ids[8],ids[9]]
+    };
+
+    let xyz: [[f64; 3]; 10] = {
+        let mut c = [[0.0f64; 3]; 10];
+        for (i, &n) in nids.iter().enumerate() {
+            c[i] = [mesh.nodes[n].x, mesh.nodes[n].y, mesh.nodes[n].z];
+        }
+        c
+    };
+
+    // Keast 4-point rule on reference tet (exact for degree 2).
+    // a ≈ 0.5854101966, b ≈ 0.1381966011; weight = 1/24 each.
+    const A: f64 = 0.5854101966249685;
+    const B: f64 = 0.1381966011250105;
+    const W: f64 = 1.0 / 24.0;
+    let gauss_pts = [[B,B,B],[A,B,B],[B,A,B],[B,B,A]];
+
+    let mut ke = [[0.0f64; 10]; 10];
+
+    for &[xi, eta, zet] in &gauss_pts {
+        let l1 = 1.0 - xi - eta - zet; // λ1
+        // l2 = xi, l3 = eta, l4 = zet
+
+        // P2 basis gradients in reference coords (∂φ/∂ξ, ∂φ/∂η, ∂φ/∂ζ).
+        // Corner nodes: ∂(λ(2λ-1))/∂α = (4λ-1)·∂λ/∂α
+        //   ∂l1/∂ξ=∂l1/∂η=∂l1/∂ζ=-1
+        //   ∂l2/∂ξ=1; ∂l3/∂η=1; ∂l4/∂ζ=1; all others 0
+        // Edge nodes φ_ab = 4λaλb: ∂φ/∂α = 4(∂λa/∂α·λb + λa·∂λb/∂α)
+        let dndxi = [
+            -(4.0*l1 - 1.0),              // φ0: (4l1-1)*(-1)
+             4.0*xi - 1.0,                // φ1: (4l2-1)*1
+             0.0,                         // φ2
+             0.0,                         // φ3
+             4.0*(l1 - xi),               // φ4=4l1l2: 4(-l2+l1)
+             4.0*eta,                     // φ5=4l2l3: 4l3
+            -4.0*eta,                     // φ6=4l1l3: 4(-l3)
+            -4.0*zet,                     // φ7=4l1l4: 4(-l4)
+             4.0*zet,                     // φ8=4l2l4: 4l4
+             0.0,                         // φ9=4l3l4: 0
+        ];
+        let dndeta = [
+            -(4.0*l1 - 1.0),              // φ0
+             0.0,                         // φ1
+             4.0*eta - 1.0,               // φ2: (4l3-1)*1
+             0.0,                         // φ3
+            -4.0*xi,                      // φ4=4l1l2: 4(-l2)
+             4.0*xi,                      // φ5=4l2l3: 4l2
+             4.0*(l1 - eta),              // φ6=4l1l3: 4(-l3+l1)
+            -4.0*zet,                     // φ7=4l1l4: 4(-l4)
+             0.0,                         // φ8=4l2l4: 0
+             4.0*zet,                     // φ9=4l3l4: 4l4
+        ];
+        let dndzet = [
+            -(4.0*l1 - 1.0),              // φ0
+             0.0,                         // φ1
+             0.0,                         // φ2
+             4.0*zet - 1.0,               // φ3: (4l4-1)*1
+            -4.0*xi,                      // φ4=4l1l2: 4(-l2) [no l4 term]... actually
+             0.0,                         // φ5=4l2l3: 0
+            -4.0*eta,                     // φ6=4l1l3: 4(-l3)
+             4.0*(l1 - zet),              // φ7=4l1l4: 4(-l4+l1)
+             4.0*xi,                      // φ8=4l2l4: 4l2
+             4.0*eta,                     // φ9=4l3l4: 4l3
+        ];
+
+        // Jacobian J_kl = ∂x_k/∂ξ_l  (k=row, l=col: ξ,η,ζ)
+        let mut jac = [[0.0f64; 3]; 3];
+        for i in 0..10 {
+            let dref = [dndxi[i], dndeta[i], dndzet[i]];
+            for k in 0..3 {
+                jac[k][0] += dref[0] * xyz[i][k];
+                jac[k][1] += dref[1] * xyz[i][k];
+                jac[k][2] += dref[2] * xyz[i][k];
+            }
+        }
+        let det_j = det3(&jac);
+        if det_j.abs() < 1e-300 { continue; }
+        let j_inv = inv3(&jac, det_j);
+
+        // Physical gradients: ∇φ_i = J^{-T} ∇_ξ φ_i
+        let mut grad = [[0.0f64; 3]; 10];
+        for i in 0..10 {
+            let ref_g = [dndxi[i], dndeta[i], dndzet[i]];
+            for row in 0..3 {
+                for col in 0..3 {
+                    grad[i][row] += j_inv[col][row] * ref_g[col];
+                }
+            }
+        }
+
+        let wdet = eps * W * det_j.abs();
+        for i in 0..10 {
+            for j in 0..10 {
+                ke[i][j] += wdet * dot3(&grad[i], &grad[j]);
+            }
+        }
+    }
+
+    for i in 0..10 {
+        for j in 0..10 {
+            triplet.add(nids[i], nids[j], ke[i][j]);
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // 3×3 matrix helpers (pub for use in postprocess.rs)
 // ---------------------------------------------------------------------------
 
@@ -352,11 +583,14 @@ pub fn assemble_stiffness_aniso(
             ElementKind::Tri3 => {
                 assemble_tri3_aniso(mesh, elem, &a, &mut triplet)?;
             }
+            ElementKind::Tri6 => {
+                assemble_tri6_aniso(mesh, elem, &a, &mut triplet)?;
+            }
             ElementKind::Tet4 => {
                 assemble_tet4_aniso_by_nodes(mesh, &elem.node_ids, elem.id, &a, &mut triplet)?;
             }
             ElementKind::Tet10 => {
-                assemble_tet4_aniso_by_nodes(mesh, &elem.node_ids[..4], elem.id, &a, &mut triplet)?;
+                assemble_tet10_aniso(mesh, elem, &a, &mut triplet)?;
             }
             other => {
                 log::warn!(
@@ -456,6 +690,153 @@ fn assemble_tet4_aniso_by_nodes(
                 k_ij += grads[i][r] * ag_j_r;
             }
             triplet.add(nodes[i], nodes[j], vol * k_ij);
+        }
+    }
+    Ok(())
+}
+
+/// Anisotropic Tri6 P2 stiffness: uses 3-point Gauss quadrature with tensor coefficient.
+fn assemble_tri6_aniso(
+    mesh: &RemMesh,
+    elem: &rem_mesh::Element,
+    a: &[[f64; 3]; 3],
+    triplet: &mut TripletMatrix,
+) -> RemResult<()> {
+    debug_assert_eq!(elem.node_ids.len(), 6);
+    let nids: [usize; 6] = {
+        let ids = &elem.node_ids;
+        [ids[0],ids[1],ids[2],ids[3],ids[4],ids[5]]
+    };
+    let xy: [[f64; 2]; 6] = {
+        let mut c = [[0.0f64; 2]; 6];
+        for (i, &n) in nids.iter().enumerate() {
+            c[i] = [mesh.nodes[n].x, mesh.nodes[n].y];
+        }
+        c
+    };
+
+    let gauss_pts = [[1.0/6.0, 1.0/6.0], [2.0/3.0, 1.0/6.0], [1.0/6.0, 2.0/3.0]];
+    let gauss_w = 1.0 / 6.0;
+    let mut ke = [[0.0f64; 6]; 6];
+
+    for &[xi, eta] in &gauss_pts {
+        let l1 = 1.0 - xi - eta;
+        let l2 = xi;
+        let l3 = eta;
+        let dndxi  = [-(4.0*l1-1.0), 4.0*l2-1.0, 0.0, 4.0*(l1-l2), 4.0*l3, -4.0*l3];
+        let dndeta = [-(4.0*l1-1.0), 0.0, 4.0*l3-1.0, -4.0*l2, 4.0*l2, 4.0*(l1-l3)];
+
+        let mut jac = [[0.0f64; 2]; 2];
+        for i in 0..6 {
+            jac[0][0] += dndxi[i]*xy[i][0]; jac[0][1] += dndeta[i]*xy[i][0];
+            jac[1][0] += dndxi[i]*xy[i][1]; jac[1][1] += dndeta[i]*xy[i][1];
+        }
+        let det_j = jac[0][0]*jac[1][1] - jac[0][1]*jac[1][0];
+        if det_j.abs() < 1e-300 { continue; }
+        let inv_det = 1.0 / det_j;
+        let ji = [
+            [ jac[1][1]*inv_det, -jac[0][1]*inv_det],
+            [-jac[1][0]*inv_det,  jac[0][0]*inv_det],
+        ];
+        let mut grad = [[0.0f64; 3]; 6];
+        for i in 0..6 {
+            grad[i][0] = ji[0][0]*dndxi[i] + ji[1][0]*dndeta[i];
+            grad[i][1] = ji[0][1]*dndxi[i] + ji[1][1]*dndeta[i];
+            // z-component is 0 (2D element)
+        }
+        let wdet = gauss_w * det_j.abs();
+        for i in 0..6 {
+            for j in 0..6 {
+                let mut k_ij = 0.0;
+                for r in 0..3 {
+                    let ag_r = a[r][0]*grad[j][0] + a[r][1]*grad[j][1] + a[r][2]*grad[j][2];
+                    k_ij += grad[i][r] * ag_r;
+                }
+                ke[i][j] += wdet * k_ij;
+            }
+        }
+    }
+    for i in 0..6 {
+        for j in 0..6 {
+            triplet.add(nids[i], nids[j], ke[i][j]);
+        }
+    }
+    Ok(())
+}
+
+/// Anisotropic Tet10 P2 stiffness: uses Keast 4-point Gauss quadrature with tensor coefficient.
+fn assemble_tet10_aniso(
+    mesh: &RemMesh,
+    elem: &rem_mesh::Element,
+    a: &[[f64; 3]; 3],
+    triplet: &mut TripletMatrix,
+) -> RemResult<()> {
+    debug_assert_eq!(elem.node_ids.len(), 10);
+    let nids: [usize; 10] = {
+        let ids = &elem.node_ids;
+        [ids[0],ids[1],ids[2],ids[3],ids[4],ids[5],ids[6],ids[7],ids[8],ids[9]]
+    };
+    let xyz: [[f64; 3]; 10] = {
+        let mut c = [[0.0f64; 3]; 10];
+        for (i, &n) in nids.iter().enumerate() {
+            c[i] = [mesh.nodes[n].x, mesh.nodes[n].y, mesh.nodes[n].z];
+        }
+        c
+    };
+
+    const AA: f64 = 0.5854101966249685;
+    const BB: f64 = 0.1381966011250105;
+    const WW: f64 = 1.0 / 24.0;
+    let gauss_pts = [[BB,BB,BB],[AA,BB,BB],[BB,AA,BB],[BB,BB,AA]];
+
+    let mut ke = [[0.0f64; 10]; 10];
+
+    for &[xi, eta, zet] in &gauss_pts {
+        let l1 = 1.0 - xi - eta - zet;
+        let dndxi = [-(4.0*l1-1.0), 4.0*xi-1.0, 0.0, 0.0,
+                      4.0*(l1-xi), 4.0*eta, -4.0*eta, -4.0*zet, 4.0*zet, 0.0];
+        let dndeta = [-(4.0*l1-1.0), 0.0, 4.0*eta-1.0, 0.0,
+                       -4.0*xi, 4.0*xi, 4.0*(l1-eta), -4.0*zet, 0.0, 4.0*zet];
+        let dndzet = [-(4.0*l1-1.0), 0.0, 0.0, 4.0*zet-1.0,
+                       -4.0*xi, 0.0, -4.0*eta, 4.0*(l1-zet), 4.0*xi, 4.0*eta];
+
+        let mut jac = [[0.0f64; 3]; 3];
+        for i in 0..10 {
+            let dref = [dndxi[i], dndeta[i], dndzet[i]];
+            for k in 0..3 {
+                jac[k][0] += dref[0]*xyz[i][k];
+                jac[k][1] += dref[1]*xyz[i][k];
+                jac[k][2] += dref[2]*xyz[i][k];
+            }
+        }
+        let det_j = det3(&jac);
+        if det_j.abs() < 1e-300 { continue; }
+        let j_inv = inv3(&jac, det_j);
+
+        let mut grad = [[0.0f64; 3]; 10];
+        for i in 0..10 {
+            let ref_g = [dndxi[i], dndeta[i], dndzet[i]];
+            for row in 0..3 {
+                for col in 0..3 {
+                    grad[i][row] += j_inv[col][row] * ref_g[col];
+                }
+            }
+        }
+        let wdet = WW * det_j.abs();
+        for i in 0..10 {
+            for j in 0..10 {
+                let mut k_ij = 0.0;
+                for r in 0..3 {
+                    let ag_r = a[r][0]*grad[j][0] + a[r][1]*grad[j][1] + a[r][2]*grad[j][2];
+                    k_ij += grad[i][r] * ag_r;
+                }
+                ke[i][j] += wdet * k_ij;
+            }
+        }
+    }
+    for i in 0..10 {
+        for j in 0..10 {
+            triplet.add(nids[i], nids[j], ke[i][j]);
         }
     }
     Ok(())
@@ -593,6 +974,154 @@ pub mod tests {
                 };
                 assert!((kij - kji).abs() < 1e-12, "K_aniso[{},{}]={} != K_aniso[{},{}]={}", i, j, kij, j, i, kji);
             }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // P2 element tests
+    // -----------------------------------------------------------------------
+
+    /// Build a single Tri6 element mesh from the reference triangle.
+    /// Nodes: 0:(0,0), 1:(1,0), 2:(0,1), 3:(0.5,0), 4:(0.5,0.5), 5:(0,0.5)
+    fn unit_tri6_mesh() -> RemMesh {
+        use rem_mesh::{Node, Element};
+        RemMesh {
+            nodes: vec![
+                Node { id: 0, x: 0.0, y: 0.0, z: 0.0 },
+                Node { id: 1, x: 1.0, y: 0.0, z: 0.0 },
+                Node { id: 2, x: 0.0, y: 1.0, z: 0.0 },
+                Node { id: 3, x: 0.5, y: 0.0, z: 0.0 }, // mid 0-1
+                Node { id: 4, x: 0.5, y: 0.5, z: 0.0 }, // mid 1-2
+                Node { id: 5, x: 0.0, y: 0.5, z: 0.0 }, // mid 0-2
+            ],
+            volume_elements: vec![
+                Element { id: 1, kind: ElementKind::Tri6, tag: 1, node_ids: vec![0,1,2,3,4,5], rank: 0 },
+            ],
+            boundary_elements: vec![],
+            domain_tags: Default::default(),
+            boundary_tags: Default::default(),
+            dim: 2, rank: 0, size: 1,
+        }
+    }
+
+    /// Build a single Tet10 element mesh from the reference tetrahedron.
+    /// Nodes 0-3: corners; 4-9: edge midpoints (GMSH order).
+    fn unit_tet10_mesh() -> RemMesh {
+        use rem_mesh::{Node, Element};
+        RemMesh {
+            nodes: vec![
+                Node { id: 0, x: 0.0, y: 0.0, z: 0.0 }, // corner 0
+                Node { id: 1, x: 1.0, y: 0.0, z: 0.0 }, // corner 1
+                Node { id: 2, x: 0.0, y: 1.0, z: 0.0 }, // corner 2
+                Node { id: 3, x: 0.0, y: 0.0, z: 1.0 }, // corner 3
+                Node { id: 4, x: 0.5, y: 0.0, z: 0.0 }, // mid(0-1)
+                Node { id: 5, x: 0.5, y: 0.5, z: 0.0 }, // mid(1-2)
+                Node { id: 6, x: 0.0, y: 0.5, z: 0.0 }, // mid(0-2)
+                Node { id: 7, x: 0.0, y: 0.0, z: 0.5 }, // mid(0-3)
+                Node { id: 8, x: 0.5, y: 0.0, z: 0.5 }, // mid(1-3)
+                Node { id: 9, x: 0.0, y: 0.5, z: 0.5 }, // mid(2-3)
+            ],
+            volume_elements: vec![
+                Element { id: 1, kind: ElementKind::Tet10, tag: 1,
+                    node_ids: vec![0,1,2,3,4,5,6,7,8,9], rank: 0 },
+            ],
+            boundary_elements: vec![],
+            domain_tags: Default::default(),
+            boundary_tags: Default::default(),
+            dim: 3, rank: 0, size: 1,
+        }
+    }
+
+    #[test]
+    fn tri6_stiffness_row_sum_zero() {
+        let mesh = unit_tri6_mesh();
+        let triplet = assemble_stiffness(&mesh, |_| 1.0).unwrap();
+        let csr = triplet.to_csr();
+        let n = mesh.n_nodes();
+        let x = vec![1.0; n];
+        let mut y = vec![0.0; n];
+        csr.matvec(&x, &mut y, &rem_parallel::NoComm);
+        for (i, &yi) in y.iter().enumerate() {
+            assert!(yi.abs() < 1e-12, "Tri6 row {} sum = {:.3e}", i, yi);
+        }
+    }
+
+    #[test]
+    fn tri6_stiffness_symmetry() {
+        let mesh = unit_tri6_mesh();
+        let csr = assemble_stiffness(&mesh, |_| 1.0).unwrap().to_csr();
+        let n = csr.nrows;
+        for i in 0..n {
+            for k in csr.row_ptr[i]..csr.row_ptr[i+1] {
+                let j = csr.col_idx[k];
+                let kij = csr.values[k];
+                let kji = (csr.row_ptr[j]..csr.row_ptr[j+1])
+                    .find(|&kk| csr.col_idx[kk] == i)
+                    .map(|kk| csr.values[kk]).unwrap_or(0.0);
+                assert!((kij - kji).abs() < 1e-12,
+                    "Tri6 K[{},{}]={:.4e} != K[{},{}]={:.4e}", i, j, kij, j, i, kji);
+            }
+        }
+    }
+
+    #[test]
+    fn tet10_stiffness_row_sum_zero() {
+        let mesh = unit_tet10_mesh();
+        let triplet = assemble_stiffness(&mesh, |_| 1.0).unwrap();
+        let csr = triplet.to_csr();
+        let n = mesh.n_nodes();
+        let x = vec![1.0; n];
+        let mut y = vec![0.0; n];
+        csr.matvec(&x, &mut y, &rem_parallel::NoComm);
+        for (i, &yi) in y.iter().enumerate() {
+            assert!(yi.abs() < 1e-12, "Tet10 row {} sum = {:.3e}", i, yi);
+        }
+    }
+
+    #[test]
+    fn tet10_stiffness_symmetry() {
+        let mesh = unit_tet10_mesh();
+        let csr = assemble_stiffness(&mesh, |_| 2.0).unwrap().to_csr();
+        let n = csr.nrows;
+        for i in 0..n {
+            for k in csr.row_ptr[i]..csr.row_ptr[i+1] {
+                let j = csr.col_idx[k];
+                let kij = csr.values[k];
+                let kji = (csr.row_ptr[j]..csr.row_ptr[j+1])
+                    .find(|&kk| csr.col_idx[kk] == i)
+                    .map(|kk| csr.values[kk]).unwrap_or(0.0);
+                assert!((kij - kji).abs() < 1e-12,
+                    "Tet10 K[{},{}]={:.4e} != K[{},{}]={:.4e}", i, j, kij, j, i, kji);
+            }
+        }
+    }
+
+    /// P2 Tet10 trace(K) should equal 3 * eps * (surface integral via stiffness).
+    /// For the reference tet (vol=1/6) and eps=1, trace(K) should be positive.
+    #[test]
+    fn tet10_stiffness_positive_diagonal() {
+        let mesh = unit_tet10_mesh();
+        let csr = assemble_stiffness(&mesh, |_| 1.0).unwrap().to_csr();
+        let n = csr.nrows;
+        for i in 0..n {
+            let kii = (csr.row_ptr[i]..csr.row_ptr[i+1])
+                .find(|&k| csr.col_idx[k] == i)
+                .map(|k| csr.values[k]).unwrap_or(0.0);
+            assert!(kii > 0.0, "Tet10 diagonal K[{},{}] = {:.4e} not positive", i, i, kii);
+        }
+    }
+
+    /// P2 Tri6 trace: all diagonal entries must be positive.
+    #[test]
+    fn tri6_stiffness_positive_diagonal() {
+        let mesh = unit_tri6_mesh();
+        let csr = assemble_stiffness(&mesh, |_| 1.0).unwrap().to_csr();
+        let n = csr.nrows;
+        for i in 0..n {
+            let kii = (csr.row_ptr[i]..csr.row_ptr[i+1])
+                .find(|&k| csr.col_idx[k] == i)
+                .map(|k| csr.values[k]).unwrap_or(0.0);
+            assert!(kii > 0.0, "Tri6 diagonal K[{},{}] = {:.4e} not positive", i, i, kii);
         }
     }
 }

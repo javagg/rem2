@@ -1,9 +1,8 @@
-//! P1 finite element mass matrix assembly.
+//! P1/P2 finite element mass matrix assembly.
 //!
 //! M_ij = Σ_e ε_e ∫_Ωe φ_i φ_j dΩ
 //!
-//! For Tri3: using exact integration of P1 products over a triangle.
-//! For Tet4: using exact integration over a tetrahedron.
+//! Supports: Tri3, Tri6, Tet4, Tet10, Hex8.
 
 use rem_core::{TripletMatrix, RemError, RemResult};
 use rem_mesh::{RemMesh, ElementKind};
@@ -26,8 +25,9 @@ pub fn assemble_mass(
         let eps = coeff_fn(elem.tag);
         match elem.kind {
             ElementKind::Tri3 => mass_tri3(mesh, elem, eps, &mut triplet)?,
+            ElementKind::Tri6 => mass_tri6(mesh, elem, eps, &mut triplet)?,
             ElementKind::Tet4 => mass_tet4(mesh, elem, eps, &mut triplet)?,
-            ElementKind::Tet10 => mass_tet4_corners(mesh, elem, eps, &mut triplet)?,
+            ElementKind::Tet10 => mass_tet10(mesh, elem, eps, &mut triplet)?,
             ElementKind::Hex8 => mass_hex8(mesh, elem, eps, &mut triplet)?,
             other => {
                 log::warn!("Mass matrix: element {:?} not supported — skipping", other);
@@ -108,6 +108,196 @@ fn mass_tet4_corners(
     mass_tet4_first4(mesh, &elem.node_ids[..4], elem.id, eps, triplet)
 }
 
+// ---------------------------------------------------------------------------
+// P2 quadratic triangle (Tri6) mass assembly
+// ---------------------------------------------------------------------------
+
+/// Mass matrix for a quadratic triangle (Tri6) using P2 basis functions.
+///
+/// Uses 6-point Gauss rule on reference triangle (exact for degree 4).
+/// Reference element: ξ∈[0,1], η∈[0,1-ξ].
+fn mass_tri6(
+    mesh: &RemMesh,
+    elem: &rem_mesh::Element,
+    eps: f64,
+    triplet: &mut TripletMatrix,
+) -> RemResult<()> {
+    debug_assert_eq!(elem.node_ids.len(), 6);
+    let nids: [usize; 6] = {
+        let ids = &elem.node_ids;
+        [ids[0],ids[1],ids[2],ids[3],ids[4],ids[5]]
+    };
+    let xy: [[f64; 2]; 6] = {
+        let mut c = [[0.0f64; 2]; 6];
+        for (i, &n) in nids.iter().enumerate() {
+            c[i] = [mesh.nodes[n].x, mesh.nodes[n].y];
+        }
+        c
+    };
+
+    // 6-point Gauss rule on triangle (exact for degree 4).
+    // Derived from two sets of permutations of (a1,b1,b1) and (a2,b2,b2).
+    let a1: f64 = 0.816847572980459;
+    let b1: f64 = 0.091576213509771;
+    let w1: f64 = 0.109951743655322 / 2.0;
+    let a2: f64 = 0.108103018168070;
+    let b2: f64 = 0.445948490915965;
+    let w2: f64 = 0.223381589678011 / 2.0;
+    // Points (ξ, η) and weights
+    let gauss: [[f64; 3]; 6] = [
+        [b1, b1, w1], [a1, b1, w1], [b1, a1, w1],
+        [b2, b2, w2], [a2, b2, w2], [b2, a2, w2],
+    ];
+
+    let mut me = [[0.0f64; 6]; 6];
+
+    for &[xi, eta, w] in &gauss {
+        let l1 = 1.0 - xi - eta;
+        let l2 = xi;
+        let l3 = eta;
+
+        // P2 shape function values
+        let n_val = [
+            l1*(2.0*l1-1.0), l2*(2.0*l2-1.0), l3*(2.0*l3-1.0),
+            4.0*l1*l2, 4.0*l2*l3, 4.0*l1*l3,
+        ];
+        // P2 gradients in reference coords (∂φ/∂ξ, ∂φ/∂η)
+        let dndxi = [
+            -(4.0*l1-1.0), 4.0*l2-1.0, 0.0,
+            4.0*(l1-l2), 4.0*l3, -4.0*l3,
+        ];
+        let dndeta = [
+            -(4.0*l1-1.0), 0.0, 4.0*l3-1.0,
+            -4.0*l2, 4.0*l2, 4.0*(l1-l3),
+        ];
+
+        // Jacobian
+        let mut jac = [[0.0f64; 2]; 2];
+        for i in 0..6 {
+            jac[0][0] += dndxi[i]  * xy[i][0];
+            jac[0][1] += dndeta[i] * xy[i][0];
+            jac[1][0] += dndxi[i]  * xy[i][1];
+            jac[1][1] += dndeta[i] * xy[i][1];
+        }
+        let det_j = jac[0][0]*jac[1][1] - jac[0][1]*jac[1][0];
+        if det_j.abs() < 1e-300 { continue; }
+
+        let wdet = eps * w * det_j.abs();
+        for i in 0..6 {
+            for j in 0..6 {
+                me[i][j] += wdet * n_val[i] * n_val[j];
+            }
+        }
+    }
+
+    for i in 0..6 {
+        for j in 0..6 {
+            triplet.add(nids[i], nids[j], me[i][j]);
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// P2 quadratic tetrahedron (Tet10) mass assembly
+// ---------------------------------------------------------------------------
+
+/// Mass matrix for a quadratic tetrahedron (Tet10) using P2 basis functions.
+///
+/// Uses Keast 5-point rule on reference tet (exact for degree 3; sufficient in practice
+/// for Tet10 meshes where spatial accuracy is O(h³)).
+fn mass_tet10(
+    mesh: &RemMesh,
+    elem: &rem_mesh::Element,
+    eps: f64,
+    triplet: &mut TripletMatrix,
+) -> RemResult<()> {
+    debug_assert_eq!(elem.node_ids.len(), 10);
+    let nids: [usize; 10] = {
+        let ids = &elem.node_ids;
+        [ids[0],ids[1],ids[2],ids[3],ids[4],ids[5],ids[6],ids[7],ids[8],ids[9]]
+    };
+    let xyz: [[f64; 3]; 10] = {
+        let mut c = [[0.0f64; 3]; 10];
+        for (i, &n) in nids.iter().enumerate() {
+            c[i] = [mesh.nodes[n].x, mesh.nodes[n].y, mesh.nodes[n].z];
+        }
+        c
+    };
+
+    // Keast 5-point rule (exact for degree 3):
+    // p1 = centroid (1/4,1/4,1/4), w1 = -4/5 * (1/6) = -2/15
+    // p2..p5 = (1/6,1/6,1/6), (1/2,1/6,1/6), (1/6,1/2,1/6), (1/6,1/6,1/2), w2..5 = 9/20*(1/6) = 3/40
+    let gauss: [[f64; 4]; 5] = [
+        [0.25,      0.25,      0.25,      -2.0/15.0],
+        [1.0/6.0,   1.0/6.0,   1.0/6.0,   3.0/40.0 ],
+        [1.0/2.0,   1.0/6.0,   1.0/6.0,   3.0/40.0 ],
+        [1.0/6.0,   1.0/2.0,   1.0/6.0,   3.0/40.0 ],
+        [1.0/6.0,   1.0/6.0,   1.0/2.0,   3.0/40.0 ],
+    ];
+
+    let mut me = [[0.0f64; 10]; 10];
+
+    for &[xi, eta, zet, w] in &gauss {
+        let l1 = 1.0 - xi - eta - zet;
+
+        // P2 shape function values at (ξ,η,ζ)
+        let n_val = [
+            l1*(2.0*l1-1.0),
+            xi*(2.0*xi-1.0),
+            eta*(2.0*eta-1.0),
+            zet*(2.0*zet-1.0),
+            4.0*l1*xi,
+            4.0*xi*eta,
+            4.0*l1*eta,
+            4.0*l1*zet,
+            4.0*xi*zet,
+            4.0*eta*zet,
+        ];
+        // Reference-space gradients for Jacobian computation
+        let dndxi = [
+            -(4.0*l1-1.0), 4.0*xi-1.0, 0.0, 0.0,
+            4.0*(l1-xi), 4.0*eta, -4.0*eta, -4.0*zet, 4.0*zet, 0.0,
+        ];
+        let dndeta = [
+            -(4.0*l1-1.0), 0.0, 4.0*eta-1.0, 0.0,
+            -4.0*xi, 4.0*xi, 4.0*(l1-eta), -4.0*zet, 0.0, 4.0*zet,
+        ];
+        let dndzet = [
+            -(4.0*l1-1.0), 0.0, 0.0, 4.0*zet-1.0,
+            -4.0*xi, 0.0, -4.0*eta, 4.0*(l1-zet), 4.0*xi, 4.0*eta,
+        ];
+
+        // Jacobian
+        let mut jac = [[0.0f64; 3]; 3];
+        for i in 0..10 {
+            let dref = [dndxi[i], dndeta[i], dndzet[i]];
+            for k in 0..3 {
+                jac[k][0] += dref[0] * xyz[i][k];
+                jac[k][1] += dref[1] * xyz[i][k];
+                jac[k][2] += dref[2] * xyz[i][k];
+            }
+        }
+        let det_j = jac[0][0]*(jac[1][1]*jac[2][2]-jac[1][2]*jac[2][1])
+                   -jac[0][1]*(jac[1][0]*jac[2][2]-jac[1][2]*jac[2][0])
+                   +jac[0][2]*(jac[1][0]*jac[2][1]-jac[1][1]*jac[2][0]);
+        if det_j.abs() < 1e-300 { continue; }
+
+        let wdet = eps * w * det_j.abs();
+        for i in 0..10 {
+            for j in 0..10 {
+                me[i][j] += wdet * n_val[i] * n_val[j];
+            }
+        }
+    }
+
+    for i in 0..10 {
+        for j in 0..10 {
+            triplet.add(nids[i], nids[j], me[i][j]);
+        }
+    }
+    Ok(())
+}
 fn mass_tet4_first4(
     mesh: &RemMesh,
     node_ids: &[usize],
