@@ -9,7 +9,7 @@ pub use constants::{EPS0, MU0, C0, ETA0, NU0};
 pub use error::{RemError, RemResult};
 pub use memory::report_peak_memory;
 pub use near_field::{NearFieldPoint, write_near_field_csv, read_near_field_csv, interpolate_e_at, interpolate_e_vec_at};
-pub use sparse::{CsrMatrix, CsrMatrixComplex, TripletMatrix, SolveResult, solve_pcg};
+pub use sparse::{CsrMatrix, CsrMatrixComplex, TripletMatrix, SolveResult, ComplexSolveResult, solve_pcg, solve_pcg_complex};
 pub use operator::{LinearOperator, LinearSolver};
 
 #[cfg(not(target_arch = "wasm32"))]
