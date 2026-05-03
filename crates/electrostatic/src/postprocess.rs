@@ -548,6 +548,30 @@ pub fn write_probe_e_csv(
     Ok(())
 }
 
+/// Write multi-mode probe potential values to `<output_dir>/postpro/probe-phi-modes.csv`.
+///
+/// Each row holds one probe sample from one mode: `mode_index, probe_index, x, y, z, phi`.
+/// `mode_probes` is a slice of `(mode_index, probe_values)` pairs (1-based mode_index).
+pub fn write_probe_modal_csv(
+    output_dir: &std::path::Path,
+    mode_probes: &[(usize, Vec<ProbeValue>)],
+) -> std::io::Result<()> {
+    use std::io::Write;
+    let dir = output_dir.join("postpro");
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("probe-phi-modes.csv");
+    let mut f = std::fs::File::create(&path)?;
+    writeln!(f, r#""Mode","Probe Index","x (m)","y (m)","z (m)","Phi""#)?;
+    for (mode_idx, probes) in mode_probes {
+        for p in probes {
+            writeln!(f, "{},{},{:.9e},{:.9e},{:.9e},{:.9e}",
+                mode_idx, p.index, p.center[0], p.center[1], p.center[2], p.phi)?;
+        }
+    }
+    log::info!("Written: {}", path.display());
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Barycentric coordinate helpers
 // ---------------------------------------------------------------------------

@@ -275,6 +275,17 @@ fn finalize(
     // CSV outputs
     output::write_domain_energy(output_dir, energy)?;
     output::write_domain_energy_by_tag(output_dir, &domain_energies)?;
+
+    // Palace Domains.Postprocessing.Energy: per-group energy CSV
+    if let Some(dp) = &config.domains.postprocessing {
+        if !dp.energy.is_empty() {
+            let per_tag: Vec<(u32, f64)> = domain_energies.iter()
+                .map(|r| (r.domain_tag, r.energy))
+                .collect();
+            output::write_energy_groups_csv(output_dir, &dp.energy, &per_tag)?;
+        }
+    }
+
     if let Some(c) = c_matrix {
         output::write_capacitance_matrix(output_dir, c)?;
     }

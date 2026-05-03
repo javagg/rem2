@@ -23,7 +23,7 @@
 //! for both element types.
 
 use rem_config::PalaceConfig;
-use rem_core::{RemResult, solve_spd};
+use rem_core::{RemError, RemResult, solve_spd};
 use rem_parallel::Comm;
 use rem_materials::DomainMap;
 use rem_mesh::{RemMesh, BoundaryTag, ElementKind, FemSubMesh2d, amr, extract_submesh_tri3};
@@ -124,6 +124,24 @@ fn run_2d(config: &PalaceConfig, mesh: RemMesh, comm: &dyn Comm) -> RemResult<()
     // Write CSV + VTK
     write_outputs(output_dir, &final_mesh, &domain_map, &az, &b_field, energy)?;
 
+    // Field probes (Domains.Postprocessing.Probe) — Az scalar
+    if let Some(dp) = &config.domains.postprocessing {
+        if !dp.probe.is_empty() {
+            let probes_input: Vec<(u32, [f64; 3])> = dp.probe.iter().map(|p| {
+                let c = &p.center;
+                let xyz = [c.first().copied().unwrap_or(0.0),
+                           c.get(1).copied().unwrap_or(0.0),
+                           c.get(2).copied().unwrap_or(0.0)];
+                (p.index, xyz)
+            }).collect();
+            let probe_vals = postprocess::evaluate_probes(&az, &final_mesh, &probes_input);
+            postprocess::write_probe_phi_csv(output_dir, &probe_vals)
+                .map_err(rem_core::RemError::Io)?;
+            postprocess::write_probe_e_csv(output_dir, &probe_vals)
+                .map_err(rem_core::RemError::Io)?;
+        }
+    }
+
     Ok(())
 }
 
@@ -171,7 +189,26 @@ fn run_3d(config: &PalaceConfig, mesh: RemMesh, comm: &dyn Comm) -> RemResult<()
                + postprocess::electrostatic_energy(&az, &mesh, nu_fn);
     log::info!("3-D magnetic energy: {:.6e} J", energy);
 
-    write_outputs(output_dir, &mesh, &domain_map, &az, &b_field, energy)
+    write_outputs(output_dir, &mesh, &domain_map, &az, &b_field, energy)?;
+
+    // Field probes (Domains.Postprocessing.Probe) — Az component
+    if let Some(dp) = &config.domains.postprocessing {
+        if !dp.probe.is_empty() {
+            let probes_input: Vec<(u32, [f64; 3])> = dp.probe.iter().map(|p| {
+                let c = &p.center;
+                let xyz = [c.first().copied().unwrap_or(0.0),
+                           c.get(1).copied().unwrap_or(0.0),
+                           c.get(2).copied().unwrap_or(0.0)];
+                (p.index, xyz)
+            }).collect();
+            let probe_vals = postprocess::evaluate_probes(&az, &mesh, &probes_input);
+            postprocess::write_probe_phi_csv(output_dir, &probe_vals)
+                .map_err(rem_core::RemError::Io)?;
+            postprocess::write_probe_e_csv(output_dir, &probe_vals)
+                .map_err(rem_core::RemError::Io)?;
+        }
+    }
+    Ok(())
 }
 
 /// Solve the 3-D vector potential: three decoupled scalar Poisson systems.

@@ -2,6 +2,7 @@
 ///
 /// Reference: Palace postpro/domain-E.csv and terminal-C.csv formats.
 
+use rem_config::EnergyPostSpec;
 use rem_core::{RemError, RemResult};
 use std::io::Write;
 use std::path::Path;
@@ -73,6 +74,43 @@ pub trait DomainEnergyRow {
     fn material_index(&self) -> Option<usize>;
     fn energy(&self) -> f64;
     fn fraction(&self) -> f64;
+}
+
+/// Write per-group electrostatic energy to `<output_dir>/postpro/energy-E.csv`.
+///
+/// Each row corresponds to one `EnergyPostSpec`, summing energies over all
+/// domain tags listed in `spec.attributes`.  Matches Palace's grouping output.
+///
+/// `per_tag_energies` is a slice of `(domain_tag, energy_J)` pairs.
+pub fn write_energy_groups_csv(
+    output_dir: &Path,
+    specs: &[EnergyPostSpec],
+    per_tag_energies: &[(u32, f64)],
+) -> RemResult<()> {
+    let dir = output_dir.join("postpro");
+    std::fs::create_dir_all(&dir).map_err(RemError::Io)?;
+    let path = dir.join("energy-E.csv");
+
+    let mut f = std::fs::File::create(&path).map_err(RemError::Io)?;
+    writeln!(f, r#""Index","Attributes","Electric Field Energy (J)""#)
+        .map_err(RemError::Io)?;
+
+    for spec in specs {
+        let group_energy: f64 = per_tag_energies
+            .iter()
+            .filter(|(tag, _)| spec.attributes.contains(tag))
+            .map(|(_, e)| e)
+            .sum();
+        let attrs_str = spec.attributes.iter()
+            .map(|a| a.to_string())
+            .collect::<Vec<_>>()
+            .join(";");
+        writeln!(f, "{},\"{}\",{:.6e}", spec.index, attrs_str, group_energy)
+            .map_err(RemError::Io)?;
+    }
+
+    log::info!("Written: {}", path.display());
+    Ok(())
 }
 
 /// Write the capacitance matrix to `<output_dir>/postpro/terminal-C.csv`.

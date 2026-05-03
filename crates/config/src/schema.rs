@@ -795,7 +795,7 @@ pub struct LinearSolver {
     #[serde(rename = "Type", default = "default_linear_type")]
     pub solver_type: String,
 
-    /// Palace `KSPType` — accepted, not implemented (GMRES only).
+    /// Palace `KSPType` — "CG"/"PCG" routes to PCG; "GMRES"/"" uses GMRES (default).
     #[serde(rename = "KSPType", default)]
     pub ksp_type: String,
 
@@ -1412,15 +1412,18 @@ pub fn validate_palace_compat(cfg: &PalaceConfig) {
 
     if let Some(ref dp) = cfg.domains.postprocessing {
         if !dp.energy.is_empty() {
-            warn_unsupported(
-                "Domains.Postprocessing.Energy",
-                "Per-domain energy postprocessing is not implemented; ignored",
+            log::info!(
+                "[REM] Domains.Postprocessing.Energy: {} group(s) — \
+                 per-group energy written to postpro/energy-E.csv (Electrostatic only).",
+                dp.energy.len()
             );
         }
         if !dp.probe.is_empty() {
-            warn_unsupported(
-                "Domains.Postprocessing.Probe",
-                "Field probe sampling is not implemented; ignored",
+            log::info!(
+                "[REM] Domains.Postprocessing.Probe: {} probe(s) — \
+                 results written to postpro/probe-phi.csv and probe-E.csv \
+                 (Electrostatic and Magnetostatic solvers).",
+                dp.probe.len()
             );
         }
     }

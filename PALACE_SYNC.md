@@ -70,11 +70,12 @@ These fields are deserialized and logged as warnings; they do NOT need to be rem
 - `Problem.Verbose` — accepted, value is ignored
 - `Problem.OutputFormats.GridFunction` — accepted, not implemented
 - `Solver.Device: "CPU"` — REM is CPU-only; ignored with warning
-- `Solver.Linear.KSPType` — only GMRES is supported; ignored with warning
+- `Solver.Linear.KSPType` — "GMRES" (default) and "CG"/"PCG" (routes to PCG for SPD/Helmholtz solves) are supported; other values are logged and ignored
 - `Solver.Linear.MGLevels` — algebraic multigrid not implemented; ignored
 - `Solver.Linear.ComplexCoarseSolve` — complex coarse-grid solve not implemented; ignored
 - `Domains.Materials[*].LossTan` (array form) — anisotropic loss not implemented; uses first element
-- `Domains.Postprocessing.Energy`, `Domains.Postprocessing.Probe` — not implemented
+- `Domains.Postprocessing.Energy` — per-group energy written to `postpro/energy-E.csv` (Electrostatic solver); groups sum energy over the specified domain attributes
+- `Domains.Postprocessing.Probe` — field probe sampling is implemented for Electrostatic (φ + E-field) and Magnetostatic (A_z); Eigenmode writes all modes to `postpro/probe-phi-modes.csv`
 - `Boundaries.Periodic` — Γ-point periodic BCs supported; complex Floquet (non-zero FloquetWaveVector) logs warning and skips
 - `Boundaries.Postprocessing.{SurfaceFlux, FarField, Dielectric}` — not implemented
 - `Boundaries.WavePort.{Offset, MaxIts, EigenTol, Verbose}` — accepted, ignored

@@ -143,6 +143,31 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
         output::write_mode_vtk(out_dir, &final_mesh, phi, mode_idx + 1)?;
     }
 
+    // Field probes (Domains.Postprocessing.Probe) — one row per (mode, probe)
+    if let Some(dp) = &config.domains.postprocessing {
+        if !dp.probe.is_empty() {
+            let probes_input: Vec<(u32, [f64; 3])> = dp.probe.iter().map(|p| {
+                let c = &p.center;
+                let xyz = [c.first().copied().unwrap_or(0.0),
+                           c.get(1).copied().unwrap_or(0.0),
+                           c.get(2).copied().unwrap_or(0.0)];
+                (p.index, xyz)
+            }).collect();
+            let n_modes = result.eigenvectors.len();
+            let mut mode_probes: Vec<(usize, Vec<rem_electrostatic::postprocess::ProbeValue>)> =
+                Vec::with_capacity(n_modes);
+            for (mode_idx, phi) in result.eigenvectors.iter().enumerate() {
+                let probe_vals = rem_electrostatic::postprocess::evaluate_probes(
+                    phi, &final_mesh, &probes_input,
+                );
+                mode_probes.push((mode_idx + 1, probe_vals));
+            }
+            rem_electrostatic::postprocess::write_probe_modal_csv(
+                std::path::Path::new(out_dir), &mode_probes,
+            ).map_err(RemError::Io)?;
+        }
+    }
+
     log::info!("");
     log::info!("Eigenmode solve complete:");
     log::info!("  {} modes computed", result.frequencies_hz.len());
