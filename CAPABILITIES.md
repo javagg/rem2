@@ -137,7 +137,7 @@ REM 覆盖 Palace 全部主要求解器，并额外提供 Palace 不具备的矩
 | **分层介质 Green 函数** | Sommerfeld 积分，精确多层基板 | Planar crate 已实现 TMM | 平面电路精度（REM Planar 已具备基础）|
 | **FFT 加速平面 MoM** | 核心优势，O(N log N) | Planar crate 2D FFT 卷积已实现 | 大规模平面电路速度 |
 | **去嵌入/校准** | 完整 TRL/LRL 去嵌入 | 无 | 测量对标精度 |
-| **导体损耗 SIBC** | 有限电导率 σ，R_s 建模 | 仅 PEC | 铜箔损耗精度 |
+| **导体损耗 SIBC** | 有限电导率 σ，R_s 建模 | RWG MoM 已支持 `Solver.MoM.WallConductivity` 首版；Pulse/FFT/标定未完成 | 铜箔损耗精度 |
 | **EDA 工具集成** | ADS/AWR/Cadence 无缝集成 | 独立工具 | 工作流集成 |
 | **工程成熟度** | 40 年商业产品 | v0.17 早期 | 用户信任度 |
 
@@ -566,7 +566,7 @@ REM 完全兼容 Palace JSON/YAML 配置文件格式（含 v0.16 新关键字）
 | 时域完整 Maxwell 矢量场 | 当前标量 P1 FEM 三方案 | 中 |
 | p-FEM（P2+ 实际应用）| order > 1 警告降级 P1 | 低 |
 | FMM/MLFMM 加速 | `FastSolver: "FMM"` 预留，未实现 | 低 |
-| MoM 有损导体 SIBC | 仅 PEC | P1 |
+| MoM 有损导体 SIBC | RWG + `WallConductivity` 首版已接入；Pulse/FFT/基准校准未完成 | P1 |
 | MoM AMR | 路线图中 | 低 |
 | Driven 复数 PCG | 当前实数 PCG | 中 |
 | Floquet 非零波矢 | 警告跳过，待复数矩阵 | 低 |

@@ -956,6 +956,12 @@ pub struct MomSolverConfig {
     #[serde(rename = "Substrate", default)]
     pub substrate: Option<SubstrateConfig>,
 
+    /// Conductor wall conductivity σ [S/m] for MoM SIBC loss modeling.
+    /// Set to a positive value (for example 5.8e7 for copper) to add the
+    /// Leontovich surface impedance term Zs = (1+j)/(σ δs) on PEC surfaces.
+    #[serde(rename = "WallConductivity", default)]
+    pub wall_conductivity: f64,
+
     /// Near-field source file path. When set, the RHS is built from the
     /// near-field CSV data instead of the plane-wave model.  The file
     /// contains spatially sampled E/H fields exported from a previous

@@ -1735,8 +1735,8 @@ cargo build -p rem-yew         # 0 errors
 
 | 编号 | 功能 | 文件 | 状态 |
 |------|------|------|------|
-| P18-1 | `crates/mom/src/sibc.rs`（SIBC 修正阻抗矩阵） | 新文件 | 🔲 |
-| P18-2 | `ConductivityBc` 扩展（MoM 路径） | `crates/config/src/schema.rs` | 🔲 |
+| P18-1 | `crates/mom/src/sibc.rs`（SIBC 修正阻抗矩阵） | 新文件 | ✅ |
+| P18-2 | `WallConductivity` 扩展（MoM 路径，RWG 首版） | `crates/config/src/schema.rs` | 🟡 |
 | P18-3 | `crates/mom/src/fft_accel.rs`（FFT 加速求解器） | 新文件 | 🔲 |
 | P18-4 | 铜微带传输线有损验证 | `examples/microstrip_lossy/` | 🔲 |
 

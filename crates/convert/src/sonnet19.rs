@@ -1,7 +1,7 @@
 use anyhow::{bail, Context};
 use quick_xml::events::Event;
 use quick_xml::Reader;
-use rmsh_io::{save_msh_v2_to_path, save_step_to_path};
+use rmsh_io::save_msh_v2_to_path;
 use rmsh_model::{Element, ElementType, Mesh, Node};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -188,8 +188,10 @@ pub fn convert_xml_to_rem(
             hints.local_origin_y_m.unwrap_or(height_m),
             &hints.conductor_polygons_m,
         );
-        save_step_to_path(step_path, &geom_mesh)
-            .with_context(|| format!("writing debug STEP: {}", step_path.display()))?;
+        // STEP export requires full rmsh with rcad-render; not available in vendored rmsh-io.
+        // Skipping debug STEP output silently.
+        let _ = (&geom_mesh, step_path);
+        log::warn!("debug_step_out requested but STEP export not compiled in vendored rmsh-io; skipping {}", step_path.display());
     }
 
     let raw_port_count = hints.ports.len();

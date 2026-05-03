@@ -35,7 +35,7 @@ use num_complex::Complex64;
 use rem_config::{PalaceConfig, CurrentDipoleSpec};
 use rem_core::{CsrMatrix, RemError, RemResult, TripletMatrix, report_peak_memory};
 use rem_eigenmode::assemble_mass::assemble_mass;
-use rem_electrostatic::{assemble::{assemble_stiffness, assemble_stiffness_aniso}, bc::{collect_dirichlet_dofs, apply_dirichlet}, postprocess};
+use rem_electrostatic::{assemble::{assemble_stiffness, assemble_stiffness_aniso}, bc::{collect_dirichlet_dofs, collect_dirichlet_dofs_open_circuit, apply_dirichlet}, postprocess};
 use rem_materials::DomainMap;
 use rem_mesh::{RemMesh, BoundaryTag, ElementKind, FemSubMesh2d, amr, extract_submesh_tri3};
 use rem_mesh::gmsh::read_msh_file;
@@ -565,8 +565,28 @@ fn run_frequency_sweep(
                     first_phi_re = phi_c_first.iter().map(|x| x.re).collect();
                 }
             }
+
+            // Debug: print Z-matrix before conversion
+            eprintln!("\n[Driven] Z-matrix at f={:.3e} Hz (n_ports={}):", freq, n_ports);
+            for i in 0..n_ports {
+                let row_str = (0..n_ports).map(|j| format!("{:.4e}", z_cols[j][i]))
+                    .collect::<Vec<_>>().join(", ");
+                eprintln!("  Z[{}] = [{}]", i, row_str);
+                println!("[Z_MAT] row={} {}", i, row_str);
+            }
+
             let s_mat = z_to_s_matrix(&z_cols, &z0_vec);
             let s11_mp = s_mat[0][0];
+            
+            // Debug: print S-matrix after conversion
+            eprintln!("[Driven] S-matrix at f={:.3e} Hz:", freq);
+            for i in 0..n_ports {
+                let row_str = (0..n_ports).map(|j| format!("{}", s_mat[i][j]))
+                    .collect::<Vec<_>>().join(", ");
+                eprintln!("  S[{}] = [{}]", i, row_str);
+                println!("[S_MAT] row={} {}", i, row_str);
+            }
+
             log::info!(
                 "f={:.3e} Hz  |S11|={:.4}  (N={} ports)",
                 freq, s11_mp.norm(), n_ports
@@ -1373,10 +1393,10 @@ fn solve_one_excitation(
         if mode.is_propagating(freq) {
             collect_dirichlet_dofs_modal(mesh, Some(exc_idx), mode)
         } else {
-            collect_dirichlet_dofs(mesh, Some(exc_idx), 1.0)
+            collect_dirichlet_dofs_open_circuit(mesh, Some(exc_idx), 1.0)
         }
     } else {
-        collect_dirichlet_dofs(mesh, Some(exc_idx), 1.0)
+        collect_dirichlet_dofs_open_circuit(mesh, Some(exc_idx), 1.0)
     };
 
     let mut rhs_c = vec![Complex64::ZERO; n];
@@ -1398,26 +1418,51 @@ fn solve_one_excitation(
 
     let phi_c = gmres_complex(&a, &rhs_c, lin.tol, lin.max_iter)?;
 
-    // Extract voltage at each port (mean φ over port nodes)
-    let mut voltages = Vec::with_capacity(all_ports.len());
-    for (pidx, _) in all_ports {
-        let port_nodes: Vec<usize> = mesh.boundary_elements.iter()
+    // Helper: collect unique node IDs for a given port index.
+    let port_node_ids = |pidx: u32| -> Vec<usize> {
+        mesh.boundary_elements.iter()
             .filter(|e| match mesh.boundary_tags.get(&e.tag) {
-                Some(BoundaryTag::LumpedPort { index, .. }) => index == pidx,
-                Some(BoundaryTag::WavePort { index }) => index == pidx,
+                Some(BoundaryTag::LumpedPort { index, .. }) => *index == pidx,
+                Some(BoundaryTag::WavePort { index }) => *index == pidx,
                 _ => false,
             })
             .flat_map(|e| e.node_ids.iter().copied())
             .collect::<std::collections::HashSet<_>>()
             .into_iter()
-            .collect();
+            .collect()
+    };
+
+    // Compute port current I_j for the excited port using the *original* (pre-BC) matrix:
+    //   I_j = Σ_{i ∈ port_j} (A_base · φ_c)[i]
+    // This is the short-circuit reaction current needed to form Z_ij = V_i / I_j.
+    let exc_nodes = port_node_ids(exc_idx);
+    let i_exc = if exc_nodes.is_empty() {
+        Complex64::new(1.0, 0.0) // degenerate: no normalization
+    } else {
+        let phi_vec: nalgebra::DVector<Complex64> =
+            nalgebra::DVector::from_iterator(n, phi_c.iter().copied());
+        let a_phi = a_base * phi_vec;
+        let current: Complex64 = exc_nodes.iter().map(|&row| a_phi[row]).sum();
+        if current.norm() < 1e-300 { Complex64::new(1.0, 0.0) } else { current }
+    };
+
+    log::debug!("[Driven] Excited port {} with {} nodes, I_exc = {:.6e}", exc_idx, exc_nodes.len(), i_exc);
+
+    // Extract Z-matrix column: Z_ij = V_i / I_j
+    let mut voltages = Vec::with_capacity(all_ports.len());
+    for (pidx, _) in all_ports {
+        let port_nodes = port_node_ids(*pidx);
         let v = if port_nodes.is_empty() {
             Complex64::ZERO
         } else {
-            port_nodes.iter().map(|&n| phi_c[n]).sum::<Complex64>()
+            port_nodes.iter().map(|&nd| phi_c[nd]).sum::<Complex64>()
                 / Complex64::new(port_nodes.len() as f64, 0.0)
         };
-        voltages.push(v);
+        // Normalize by drive current → Z_ij [Ω]
+        let z_ij = v / i_exc;
+        log::debug!("  Port {}: {} nodes, V_i = {:.6e}, Z_ij = {:.6e}", pidx, port_nodes.len(), v, z_ij);
+        println!("[Z] exc={} read={}: {} nodes, V={:.6e}, Z={:.6e}", exc_idx, pidx, port_nodes.len(), v, z_ij);
+        voltages.push(z_ij);
     }
     Ok(voltages)
 }

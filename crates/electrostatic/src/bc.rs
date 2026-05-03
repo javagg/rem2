@@ -64,6 +64,52 @@ pub fn collect_dirichlet_dofs(
 ///
 /// Uses symmetric elimination so the resulting system remains SPD.
 /// `dofs`: map of node-index → prescribed value.
+/// Identifies Dirichlet DOFs for **open-circuit Z-matrix extraction**.
+///
+/// Unlike `collect_dirichlet_dofs`, this function does NOT set non-excited
+/// LumpedPort / WavePort / Terminal nodes to φ=0.  Unexcited ports are left
+/// with the natural Neumann BC (∂φ/∂n = 0 → no current, i.e. open circuit),
+/// so the solution φ carries the open-circuit port voltage needed for Z_ij.
+///
+/// Only PEC/Ground and the single excited port receive Dirichlet values.
+pub fn collect_dirichlet_dofs_open_circuit(
+    mesh: &RemMesh,
+    excited_index: Option<u32>,
+    excitation_val: f64,
+) -> HashMap<usize, f64> {
+    let mut dofs: HashMap<usize, f64> = HashMap::new();
+
+    for belem in &mesh.boundary_elements {
+        if mesh.size > 1 && belem.rank != mesh.rank {
+            continue;
+        }
+        let bc = match mesh.boundary_tags.get(&belem.tag) {
+            Some(b) => b,
+            None => continue,
+        };
+
+        match bc {
+            BoundaryTag::Pec | BoundaryTag::Ground => {
+                for &nid in &belem.node_ids {
+                    dofs.entry(nid).or_insert(0.0);
+                }
+            }
+            BoundaryTag::Terminal { index }
+            | BoundaryTag::LumpedPort { index, .. }
+            | BoundaryTag::WavePort { index } => {
+                if Some(*index) == excited_index {
+                    for &nid in &belem.node_ids {
+                        dofs.entry(nid).or_insert(excitation_val);
+                    }
+                }
+                // Non-excited ports: no entry → natural BC (open circuit)
+            }
+            _ => {}
+        }
+    }
+    dofs
+}
+
 pub fn apply_dirichlet(
     mat: &mut CsrMatrix,
     rhs: &mut Vec<f64>,

@@ -28,6 +28,7 @@ pub mod aca;
 pub mod pmchwt;
 pub mod port;
 pub mod sparams;
+pub mod sibc;
 
 // Public re-exports for cross-crate solver integration
 pub use assemble::{gmres_solve, gmres_solve_generic, gmres_solve_op, aca_gmres_solve, gmres_generic_with_aca};
@@ -169,11 +170,24 @@ pub fn run_with_mesh(
             // Assemble impedance matrix Z  (PEC EFIE/MFIE/CFIE path)
             let z_mat = match mom_cfg.basis.as_str() {
                 "Pulse" | "pulse" => {
+                    if mom_cfg.wall_conductivity > 0.0 {
+                        log::warn!(
+                            "MoM SIBC: WallConductivity is currently supported only for RWG basis; ignoring for Pulse basis"
+                        );
+                    }
                     assemble::assemble_efie_pulse(&surf, freq, &quad, mom_cfg.singular_tol)
                 }
                 _ => {
                     let bases = basis::rwg::generate_rwg_bases(&surf);
-                    assemble::assemble_cfie_rwg(&surf, &bases, freq, mom_cfg.alpha, &quad, mom_cfg.singular_tol)
+                    let mut z = assemble::assemble_cfie_rwg(&surf, &bases, freq, mom_cfg.alpha, &quad, mom_cfg.singular_tol)?;
+                    if mom_cfg.wall_conductivity > 0.0 {
+                        sibc::apply_sibc_rwg(&mut z, &surf, &bases, freq, mom_cfg.wall_conductivity, &quad);
+                        log::info!(
+                            "MoM SIBC enabled: sigma_wall={:.3e} S/m",
+                            mom_cfg.wall_conductivity
+                        );
+                    }
+                    Ok(z)
                 }
             }?;
             match mom_cfg.fast_solver.to_uppercase().as_str() {
@@ -264,6 +278,14 @@ fn run_s_param_sweep(
         let z_mat = assemble::assemble_cfie_rwg(
             surf, &bases, freq, mom_cfg.alpha, &quad, mom_cfg.singular_tol,
         )?;
+        let mut z_mat = z_mat;
+        if mom_cfg.wall_conductivity > 0.0 {
+            sibc::apply_sibc_rwg(&mut z_mat, surf, &bases, freq, mom_cfg.wall_conductivity, &quad);
+            log::info!(
+                "MoM SIBC enabled: sigma_wall={:.3e} S/m",
+                mom_cfg.wall_conductivity
+            );
+        }
 
         let sm = sparams::compute_s_matrix(surf, &bases, &lumped_ports, &z_mat, freq)?;
         log::info!("  S-matrix computed: {}×{}", sm.n_ports, sm.n_ports);

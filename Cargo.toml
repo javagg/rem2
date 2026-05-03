@@ -16,7 +16,6 @@ members = [
     "crates/cli",
     "crates/parallel",
     "crates/wasm",
-    "crates/yew-app",
     "crates/touchstone",
     "crates/mom",
     "crates/bem",
@@ -29,6 +28,9 @@ members = [
     "vendor/rmsh-model",
     "vendor/rmsh-io",
 ]
+# yew-app excluded: depends on private rcad-render/rcad-kernel (SSH git dep)
+# build yew-app separately from crates/yew-app/ with its own workspace
+exclude = ["crates/yew-app"]
 
 [workspace.package]
 version = "0.17.1"
@@ -61,12 +63,6 @@ rem-touchstone    = { path = "crates/touchstone" }
 rem-sbr           = { path = "crates/sbr" }
 rem-wasm          = { path = "crates/wasm" }
 rmetis            = { path = "vendor/rmetis", default-features = false }
-rmsh-io           = { path = "vendor/rmsh/crates/io", default-features = false }
-rmsh-model        = { path = "vendor/rmsh/crates/model" }
-rmsh-geo          = { path = "vendor/rmsh/crates/geo" }
-rmsh-renderer     = { path = "vendor/rmsh/crates/renderer" }
-rcad-kernel       = { path = "vendor/rmsh/vendor/rcad/libs/rcad-kernel" }
-rcad-render       = { path = "vendor/rmsh/vendor/rcad/libs/rcad-render" }
 
 # fem-rs foundation crates (via git dependency)
 fem-core     = { git = "https://github.com/rem-rs/fem-rs.git", rev = "7fc50a9" }
