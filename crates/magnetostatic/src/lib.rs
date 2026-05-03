@@ -35,12 +35,14 @@ use std::path::Path;
 
 /// Entry point called from rem-cli.
 pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
-    if config.solver.order > 1 {
+    if config.solver.order > 2 {
         log::warn!(
-            "Solver.Order={} requested but only P1 (order=1) is implemented; \
-             higher-order assembly is pending. Running P1.",
+            "Solver.Order={} requested; P1 and P2 (Tet10/Tri6) are implemented. \
+             Order≥3 is not yet supported — running P2.",
             config.solver.order
         );
+    } else if config.solver.order == 2 {
+        log::info!("Solver.Order=2: using P2 quadratic assembly for Tet10/Tri6 elements.");
     }
     let mesh_path = Path::new(&config.model.mesh);
     let raw = read_msh_file(mesh_path)?;
@@ -383,9 +385,14 @@ fn write_outputs(
     writeln!(vf, "CELL_TYPES {}", n_cells).map_err(RemError::Io)?;
     for elem in &mesh.volume_elements {
         let t = match elem.kind {
-            rem_mesh::ElementKind::Tri3 => 5,
-            rem_mesh::ElementKind::Tet4 => 10,
-            _ => 5,
+            rem_mesh::ElementKind::Tri3  => 5,   // VTK_TRIANGLE
+            rem_mesh::ElementKind::Tri6  => 22,  // VTK_QUADRATIC_TRIANGLE
+            rem_mesh::ElementKind::Quad4 => 9,   // VTK_QUAD
+            rem_mesh::ElementKind::Tet4  => 10,  // VTK_TETRA
+            rem_mesh::ElementKind::Tet10 => 24,  // VTK_QUADRATIC_TETRA
+            rem_mesh::ElementKind::Hex8  => 12,  // VTK_HEXAHEDRON
+            rem_mesh::ElementKind::Line2 => 3,   // VTK_LINE
+            rem_mesh::ElementKind::Line3 => 21,  // VTK_QUADRATIC_EDGE
         };
         writeln!(vf, "{}", t).map_err(RemError::Io)?;
     }

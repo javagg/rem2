@@ -46,6 +46,16 @@ use std::path::Path;
 
 const C0: f64 = 2.997_924_58e8;
 
+/// Returns `true` when PCG should be used for complex Helmholtz solves.
+///
+/// PCG is selected when either:
+/// - `Solver.Linear.KSPType` is "CG" or "PCG" in the JSON config, OR
+/// - the `REM_USE_PCG=1` environment variable is set (legacy override).
+#[inline]
+fn use_pcg(config: &PalaceConfig) -> bool {
+    config.solver.linear.prefers_pcg() || std::env::var("REM_USE_PCG").is_ok()
+}
+
 /// Per-frequency S-parameter result.
 pub struct FreqResult {
     pub freq_hz: f64,
@@ -416,7 +426,7 @@ fn run_frequency_sweep(
             }
             let mut rhs_e = vec![Complex64::ZERO; n];
             apply_dirichlet_complex(&mut a_e, &mut rhs_e, &dofs_snap);
-            let use_pcg_snap = std::env::var("REM_USE_PCG").is_ok();
+            let use_pcg_snap = use_pcg(config);
             match if use_pcg_snap {
                 solve_complex_helmholtz_adaptive(&a_e, &rhs_e, lin.tol, lin.max_iter, true)
             } else {
@@ -568,7 +578,7 @@ fn run_frequency_sweep(
                     let mut a_tmp = a_base.clone();
                     let mut rhs_tmp = vec![Complex64::ZERO; n];
                     apply_dirichlet_complex(&mut a_tmp, &mut rhs_tmp, &dofs_first);
-                    let use_pcg_f = std::env::var("REM_USE_PCG").is_ok();
+                    let use_pcg_f = use_pcg(config);
                     let phi_c_first = if use_pcg_f {
                         solve_complex_helmholtz_adaptive(&a_tmp, &rhs_tmp, lin.tol, lin.max_iter, true)?
                     } else {
@@ -659,7 +669,7 @@ fn run_frequency_sweep(
                 if is_expansion {
                     // Full solve — result is already in the snapshots used for basis
                     // construction, but we re-solve here for correct a_base(ω) with BCs.
-                    let use_pcg_r = std::env::var("REM_USE_PCG").is_ok();
+                    let use_pcg_r = use_pcg(config);
                     if use_pcg_r {
                         solve_complex_helmholtz_adaptive(&a, &rhs_c, lin.tol, lin.max_iter, true)?
                     } else {
@@ -673,7 +683,7 @@ fn run_frequency_sweep(
                         Some(x_r) => basis.expand(&x_r),
                         None => {
                             log::warn!("ROM: reduced system singular at f={freq:.3e} Hz; falling back to full solve");
-                            let use_pcg_rs = std::env::var("REM_USE_PCG").is_ok();
+                            let use_pcg_rs = use_pcg(config);
                             if use_pcg_rs {
                                 solve_complex_helmholtz_adaptive(&a, &rhs_c, lin.tol, lin.max_iter, true)?
                             } else {
@@ -683,7 +693,7 @@ fn run_frequency_sweep(
                     }
                 }
             } else {
-                let use_pcg = std::env::var("REM_USE_PCG").is_ok();
+                let use_pcg = use_pcg(config);
                 if use_pcg {
                     log::info!("Phase2: single-port main-loop PCG solve at f={freq:.3e} Hz");
                     solve_complex_helmholtz_adaptive(&a, &rhs_c, lin.tol, lin.max_iter, true)?
@@ -812,7 +822,7 @@ fn run_frequency_sweep(
                             let mut at = a_base_a.clone();
                             let mut rt = vec![Complex64::ZERO; n];
                             apply_dirichlet_complex(&mut at, &mut rt, &dofs_f);
-                            let use_pcg_af = std::env::var("REM_USE_PCG").is_ok();
+                            let use_pcg_af = use_pcg(config);
                             let pc = if use_pcg_af {
                                 solve_complex_helmholtz_adaptive(&at, &rt, lin.tol, lin.max_iter, true)?
                             } else {
@@ -842,7 +852,7 @@ fn run_frequency_sweep(
                             }
                         }
                     }
-                    let use_pcg = std::env::var("REM_USE_PCG").is_ok();
+                    let use_pcg = use_pcg(config);
                     let phi_c = if use_pcg {
                         log::info!("Phase2: single-port Helmholtz attempting PCG solve");
                         solve_complex_helmholtz_adaptive(&a, &rhs_c, lin.tol, lin.max_iter, true)?
@@ -1534,7 +1544,7 @@ fn solve_one_excitation(
     }
 
     // Use PCG if enabled, fallback to GMRES on divergence
-    let use_pcg = std::env::var("REM_USE_PCG").is_ok();
+    let use_pcg = use_pcg(config);
     let phi_c = if use_pcg {
         solve_complex_helmholtz_adaptive(&a, &rhs_c, lin.tol, lin.max_iter, true)?
     } else {

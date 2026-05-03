@@ -46,12 +46,14 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
         RemError::Config("Eigenmode problem requires a [Solver.Eigenmode] section".into())
     })?;
 
-    if config.solver.order > 1 {
+    if config.solver.order > 2 {
         log::warn!(
-            "Solver.Order={} requested but only P1 (order=1) is implemented; \
-             higher-order assembly is pending. Running P1.",
+            "Solver.Order={} requested; P1 and P2 (Tet10/Tri6) are implemented. \
+             Order≥3 is not yet supported — running P2.",
             config.solver.order
         );
+    } else if config.solver.order == 2 {
+        log::info!("Solver.Order=2: using P2 quadratic assembly for Tet10/Tri6 elements.");
     }
 
     // Report solver configuration

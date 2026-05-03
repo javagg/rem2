@@ -816,6 +816,14 @@ pub struct LinearSolver {
     pub complex_coarse_solve: bool,
 }
 
+impl LinearSolver {
+    /// Returns `true` if `KSPType` is "CG" or "PCG" (case-insensitive).
+    /// This hints that the caller should prefer the PCG path over GMRES.
+    pub fn prefers_pcg(&self) -> bool {
+        matches!(self.ksp_type.to_lowercase().as_str(), "cg" | "pcg")
+    }
+}
+
 impl Default for LinearSolver {
     fn default() -> Self {
         LinearSolver {
@@ -1342,10 +1350,18 @@ pub fn validate_palace_compat(cfg: &PalaceConfig) {
 
     // --- Solver.Linear ---
     let l = &cfg.solver.linear;
-    if !l.ksp_type.is_empty() && l.ksp_type != "GMRES" && l.ksp_type != "default" {
+    // CG / PCG / GMRES are all accepted: SPD solvers use PCG by default;
+    // Driven uses GMRES (or PCG if Solver.Linear.KSPType is "CG"/"PCG").
+    let ksp_lower = l.ksp_type.to_lowercase();
+    if !l.ksp_type.is_empty()
+        && ksp_lower != "gmres"
+        && ksp_lower != "cg"
+        && ksp_lower != "pcg"
+        && ksp_lower != "default"
+    {
         warn_unsupported(
             &format!("Solver.Linear.KSPType = \"{}\"", l.ksp_type),
-            "Only GMRES is supported; value is ignored",
+            "Only GMRES and CG/PCG are supported; value is ignored",
         );
     }
     if l.mg_levels != 10 && l.mg_levels != 0 {

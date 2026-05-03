@@ -414,7 +414,278 @@ fn tet10_energy(phi: &[f64], elem: &rem_mesh::Element, mesh: &RemMesh, eps: f64)
 }
 
 // ---------------------------------------------------------------------------
-// Capacitance extraction
+// Field probe sampling
+// ---------------------------------------------------------------------------
+
+/// Result of evaluating a field probe at a specific point.
+#[derive(Debug, Clone)]
+pub struct ProbeValue {
+    /// Probe index (from config).
+    pub index: u32,
+    /// Probe coordinates [x, y, z].
+    pub center: [f64; 3],
+    /// Interpolated scalar potential φ.
+    pub phi: f64,
+    /// Interpolated E-field components (−∇φ).
+    pub e_field: [f64; 3],
+}
+
+/// Evaluate the scalar field `phi` and its gradient at a list of probe points.
+///
+/// Each probe is described by `(index, center)` where `center` is `[x, y, z]`.
+/// A brute-force element search is used (O(N_elements × N_probes)).
+/// Returns one `ProbeValue` per probe; un-found probes get NaN values.
+pub fn evaluate_probes(
+    phi: &[f64],
+    mesh: &RemMesh,
+    probes: &[(u32, [f64; 3])],
+) -> Vec<ProbeValue> {
+    probes.iter().map(|&(index, center)| {
+        let mut result = ProbeValue { index, center, phi: f64::NAN, e_field: [f64::NAN; 3] };
+
+        'search: for elem in &mesh.volume_elements {
+            match elem.kind {
+                ElementKind::Tri3 => {
+                    if let Some(bary) = bary_tri3(center, elem, mesh) {
+                        result.phi = bary[0]*phi[elem.node_ids[0]]
+                                   + bary[1]*phi[elem.node_ids[1]]
+                                   + bary[2]*phi[elem.node_ids[2]];
+                        if let Some(g) = tri3_grad(phi, elem, mesh) {
+                            result.e_field = [-g[0], -g[1], -g[2]];
+                        }
+                        break 'search;
+                    }
+                }
+                ElementKind::Tet4 => {
+                    if let Some(bary) = bary_tet4(center, elem, mesh) {
+                        result.phi = bary[0]*phi[elem.node_ids[0]]
+                                   + bary[1]*phi[elem.node_ids[1]]
+                                   + bary[2]*phi[elem.node_ids[2]]
+                                   + bary[3]*phi[elem.node_ids[3]];
+                        if let Some(g) = tet4_grad(phi, elem, mesh) {
+                            result.e_field = [-g[0], -g[1], -g[2]];
+                        }
+                        break 'search;
+                    }
+                }
+                ElementKind::Tri6 => {
+                    if let Some(bary) = bary_tri3_corners(center, elem, mesh) {
+                        // Use P1 interpolation on corner nodes for φ; centroid gradient
+                        let ids = &elem.node_ids;
+                        result.phi = bary[0]*phi[ids[0]] + bary[1]*phi[ids[1]] + bary[2]*phi[ids[2]];
+                        if let Some(g) = tri6_grad_at_bary(phi, elem, mesh, bary) {
+                            result.e_field = [-g[0], -g[1], -g[2]];
+                        }
+                        break 'search;
+                    }
+                }
+                ElementKind::Tet10 => {
+                    if let Some(bary) = bary_tet4_corners(center, elem, mesh) {
+                        // Use P1 interpolation on corner nodes for φ; centroid gradient
+                        let ids = &elem.node_ids;
+                        result.phi = bary[0]*phi[ids[0]] + bary[1]*phi[ids[1]]
+                                   + bary[2]*phi[ids[2]] + bary[3]*phi[ids[3]];
+                        if let Some(g) = tet10_grad_at_bary(phi, elem, mesh, bary) {
+                            result.e_field = [-g[0], -g[1], -g[2]];
+                        }
+                        break 'search;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if result.phi.is_nan() {
+            log::warn!("Probe {} at ({:.4}, {:.4}, {:.4}): no containing element found \
+                        (point outside mesh or unsupported element type).",
+                index, center[0], center[1], center[2]);
+        }
+        result
+    }).collect()
+}
+
+// ---------------------------------------------------------------------------
+// Probe output writers
+// ---------------------------------------------------------------------------
+
+/// Write probe potential values to `<output_dir>/postpro/probe-phi.csv`.
+pub fn write_probe_phi_csv(
+    output_dir: &std::path::Path,
+    probes: &[ProbeValue],
+) -> std::io::Result<()> {
+    use std::io::Write;
+    let dir = output_dir.join("postpro");
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("probe-phi.csv");
+    let mut f = std::fs::File::create(&path)?;
+    writeln!(f, r#""Probe Index","x (m)","y (m)","z (m)","Phi (V)""#)?;
+    for p in probes {
+        writeln!(f, "{},{:.9e},{:.9e},{:.9e},{:.9e}",
+            p.index, p.center[0], p.center[1], p.center[2], p.phi)?;
+    }
+    log::info!("Written: {}", path.display());
+    Ok(())
+}
+
+/// Write probe E-field values to `<output_dir>/postpro/probe-E.csv`.
+pub fn write_probe_e_csv(
+    output_dir: &std::path::Path,
+    probes: &[ProbeValue],
+) -> std::io::Result<()> {
+    use std::io::Write;
+    let dir = output_dir.join("postpro");
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("probe-E.csv");
+    let mut f = std::fs::File::create(&path)?;
+    writeln!(f, r#""Probe Index","x (m)","y (m)","z (m)","Ex (V/m)","Ey (V/m)","Ez (V/m)","||E|| (V/m)""#)?;
+    for p in probes {
+        let enorm = (p.e_field[0].powi(2) + p.e_field[1].powi(2) + p.e_field[2].powi(2)).sqrt();
+        writeln!(f, "{},{:.9e},{:.9e},{:.9e},{:.9e},{:.9e},{:.9e},{:.9e}",
+            p.index, p.center[0], p.center[1], p.center[2],
+            p.e_field[0], p.e_field[1], p.e_field[2], enorm)?;
+    }
+    log::info!("Written: {}", path.display());
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Barycentric coordinate helpers
+// ---------------------------------------------------------------------------
+
+const BARY_TOL: f64 = -1e-10;
+
+/// Barycentric coordinates of `pt` in triangle (corner nodes of elem).
+/// Returns Some([λ0, λ1, λ2]) if inside (λi ≥ BARY_TOL and Σλi ≈ 1).
+fn bary_tri3(pt: [f64; 3], elem: &rem_mesh::Element, mesh: &RemMesh) -> Option<[f64; 3]> {
+    let [n0, n1, n2] = [elem.node_ids[0], elem.node_ids[1], elem.node_ids[2]];
+    bary_tri3_nodes(pt, &mesh.nodes[n0], &mesh.nodes[n1], &mesh.nodes[n2])
+}
+
+/// Same but uses only first 3 node IDs (for Tri6 corner-only containment test).
+fn bary_tri3_corners(pt: [f64; 3], elem: &rem_mesh::Element, mesh: &RemMesh) -> Option<[f64; 3]> {
+    let [n0, n1, n2] = [elem.node_ids[0], elem.node_ids[1], elem.node_ids[2]];
+    bary_tri3_nodes(pt, &mesh.nodes[n0], &mesh.nodes[n1], &mesh.nodes[n2])
+}
+
+fn bary_tri3_nodes(pt: [f64; 3], n0: &rem_mesh::Node, n1: &rem_mesh::Node, n2: &rem_mesh::Node) -> Option<[f64; 3]> {
+    let (x0, y0) = (n0.x, n0.y);
+    let (x1, y1) = (n1.x, n1.y);
+    let (x2, y2) = (n2.x, n2.y);
+    let t = (y1-y2)*(x0-x2) + (x2-x1)*(y0-y2);
+    if t.abs() < 1e-300 { return None; }
+    let l0 = ((y1-y2)*(pt[0]-x2) + (x2-x1)*(pt[1]-y2)) / t;
+    let l1 = ((y2-y0)*(pt[0]-x2) + (x0-x2)*(pt[1]-y2)) / t;
+    let l2 = 1.0 - l0 - l1;
+    if l0 >= BARY_TOL && l1 >= BARY_TOL && l2 >= BARY_TOL {
+        Some([l0, l1, l2])
+    } else {
+        None
+    }
+}
+
+/// Barycentric coordinates of `pt` in Tet4.
+fn bary_tet4(pt: [f64; 3], elem: &rem_mesh::Element, mesh: &RemMesh) -> Option<[f64; 4]> {
+    let ids = &elem.node_ids;
+    bary_tet4_nodes(pt, &mesh.nodes[ids[0]], &mesh.nodes[ids[1]], &mesh.nodes[ids[2]], &mesh.nodes[ids[3]])
+}
+
+/// Same but uses only first 4 corner node IDs (for Tet10 containment test).
+fn bary_tet4_corners(pt: [f64; 3], elem: &rem_mesh::Element, mesh: &RemMesh) -> Option<[f64; 4]> {
+    let ids = &elem.node_ids;
+    bary_tet4_nodes(pt, &mesh.nodes[ids[0]], &mesh.nodes[ids[1]], &mesh.nodes[ids[2]], &mesh.nodes[ids[3]])
+}
+
+fn bary_tet4_nodes(
+    pt: [f64; 3],
+    n0: &rem_mesh::Node, n1: &rem_mesh::Node,
+    n2: &rem_mesh::Node, n3: &rem_mesh::Node,
+) -> Option<[f64; 4]> {
+    let (x0,y0,z0) = (n0.x, n0.y, n0.z);
+    let (x1,y1,z1) = (n1.x, n1.y, n1.z);
+    let (x2,y2,z2) = (n2.x, n2.y, n2.z);
+    let (x3,y3,z3) = (n3.x, n3.y, n3.z);
+    let j = [
+        [x1-x0, x2-x0, x3-x0],
+        [y1-y0, y2-y0, y3-y0],
+        [z1-z0, z2-z0, z3-z0],
+    ];
+    let det = crate::assemble::det3_pub(&j);
+    if det.abs() < 1e-300 { return None; }
+    let j_inv = crate::assemble::inv3_pub(&j, det);
+    let dp = [pt[0]-x0, pt[1]-y0, pt[2]-z0];
+    let l1 = j_inv[0][0]*dp[0] + j_inv[0][1]*dp[1] + j_inv[0][2]*dp[2];
+    let l2 = j_inv[1][0]*dp[0] + j_inv[1][1]*dp[1] + j_inv[1][2]*dp[2];
+    let l3 = j_inv[2][0]*dp[0] + j_inv[2][1]*dp[1] + j_inv[2][2]*dp[2];
+    let l0 = 1.0 - l1 - l2 - l3;
+    if l0 >= BARY_TOL && l1 >= BARY_TOL && l2 >= BARY_TOL && l3 >= BARY_TOL {
+        Some([l0, l1, l2, l3])
+    } else {
+        None
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Gradient at barycentric coordinates for P2 elements
+// ---------------------------------------------------------------------------
+
+/// Gradient of φ at reference point (ξ=l1, η=l2) in a Tri6 element.
+fn tri6_grad_at_bary(phi: &[f64], elem: &rem_mesh::Element, mesh: &RemMesh, bary: [f64; 3]) -> Option<[f64; 3]> {
+    let ids = &elem.node_ids;
+    let xy: [[f64; 2]; 6] = {
+        let mut c = [[0.0f64; 2]; 6];
+        for (i, &n) in ids.iter().enumerate() { c[i] = [mesh.nodes[n].x, mesh.nodes[n].y]; }
+        c
+    };
+    let xi = bary[1]; let eta = bary[2];
+    let l1 = 1.0 - xi - eta; let l2 = xi; let l3 = eta;
+    let dndxi  = [-(4.0*l1-1.0), 4.0*l2-1.0, 0.0, 4.0*(l1-l2), 4.0*l3, -4.0*l3];
+    let dndeta = [-(4.0*l1-1.0), 0.0, 4.0*l3-1.0, -4.0*l2, 4.0*l2, 4.0*(l1-l3)];
+    let mut jac = [[0.0f64; 2]; 2];
+    for i in 0..6 {
+        jac[0][0] += dndxi[i]*xy[i][0]; jac[0][1] += dndeta[i]*xy[i][0];
+        jac[1][0] += dndxi[i]*xy[i][1]; jac[1][1] += dndeta[i]*xy[i][1];
+    }
+    let det_j = jac[0][0]*jac[1][1] - jac[0][1]*jac[1][0];
+    if det_j.abs() < 1e-300 { return None; }
+    let inv_det = 1.0 / det_j;
+    let ji = [[ jac[1][1]*inv_det, -jac[0][1]*inv_det], [-jac[1][0]*inv_det, jac[0][0]*inv_det]];
+    let mut dphidxi = 0.0; let mut dphideta = 0.0;
+    for i in 0..6 { dphidxi += dndxi[i]*phi[ids[i]]; dphideta += dndeta[i]*phi[ids[i]]; }
+    Some([ji[0][0]*dphidxi + ji[1][0]*dphideta, ji[0][1]*dphidxi + ji[1][1]*dphideta, 0.0])
+}
+
+/// Gradient of φ at reference point (ξ=l1, η=l2, ζ=l3) in a Tet10 element.
+fn tet10_grad_at_bary(phi: &[f64], elem: &rem_mesh::Element, mesh: &RemMesh, bary: [f64; 4]) -> Option<[f64; 3]> {
+    let ids = &elem.node_ids;
+    let xyz: [[f64; 3]; 10] = {
+        let mut c = [[0.0f64; 3]; 10];
+        for (i, &n) in ids.iter().enumerate() { c[i] = [mesh.nodes[n].x, mesh.nodes[n].y, mesh.nodes[n].z]; }
+        c
+    };
+    let xi = bary[1]; let eta = bary[2]; let zet = bary[3];
+    let l1 = 1.0 - xi - eta - zet;
+    let dndxi = [-(4.0*l1-1.0), 4.0*xi-1.0, 0.0, 0.0, 4.0*(l1-xi), 4.0*eta, -4.0*eta, -4.0*zet, 4.0*zet, 0.0];
+    let dndeta = [-(4.0*l1-1.0), 0.0, 4.0*eta-1.0, 0.0, -4.0*xi, 4.0*xi, 4.0*(l1-eta), -4.0*zet, 0.0, 4.0*zet];
+    let dndzet = [-(4.0*l1-1.0), 0.0, 0.0, 4.0*zet-1.0, -4.0*xi, 0.0, -4.0*eta, 4.0*(l1-zet), 4.0*xi, 4.0*eta];
+    let mut jac = [[0.0f64; 3]; 3];
+    for i in 0..10 {
+        for k in 0..3 {
+            jac[k][0] += dndxi[i]*xyz[i][k];
+            jac[k][1] += dndeta[i]*xyz[i][k];
+            jac[k][2] += dndzet[i]*xyz[i][k];
+        }
+    }
+    let det_j = crate::assemble::det3_pub(&jac);
+    if det_j.abs() < 1e-300 { return None; }
+    let j_inv = crate::assemble::inv3_pub(&jac, det_j);
+    let mut ref_grad = [0.0f64; 3];
+    for i in 0..10 { ref_grad[0] += dndxi[i]*phi[ids[i]]; ref_grad[1] += dndeta[i]*phi[ids[i]]; ref_grad[2] += dndzet[i]*phi[ids[i]]; }
+    let mut grad = [0.0f64; 3];
+    for row in 0..3 { for col in 0..3 { grad[row] += j_inv[col][row]*ref_grad[col]; } }
+    Some(grad)
+}
+
+// ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 
 /// Extract the capacitance between the excited electrode and ground.
