@@ -1003,6 +1003,19 @@ pub struct MomSolverConfig {
     /// exceeds `amr_theta × total` are refined.  Default 0.5.
     #[serde(rename = "AmrTheta", default = "default_amr_theta")]
     pub amr_theta: f64,
+
+    /// Near-field probe points for S-parameter sweep post-processing.
+    /// For each listed (x,y,z) point, the E-field is computed at all sweep
+    /// frequencies (port-1 excitation) and written to `postpro/probe_e_field.csv`.
+    #[serde(rename = "NearFieldProbes", default)]
+    pub near_field_probes: Vec<NearFieldProbePoint>,
+
+    /// Transmission-line length [m] for RLGC per-unit-length extraction.
+    /// When > 0 and the problem has exactly 2 ports, the ABCD matrix is
+    /// computed from S-parameters and R/L/G/C are written to
+    /// `postpro/tline_params.csv`.  Default 0 (disabled).
+    #[serde(rename = "TlineLength", default)]
+    pub tline_length: f64,
 }
 
 fn default_mom_equation() -> String { "CFIE".to_string() }
@@ -1014,6 +1027,23 @@ fn default_polarization()  -> String { "theta".to_string() }
 fn default_ref_impedance() -> f64    { 50.0 }
 fn default_port_direction() -> String { "x".to_string() }
 fn default_amr_theta()     -> f64    { 0.5 }
+
+/// A near-field probe point for E-field evaluation during S-parameter sweep.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct NearFieldProbePoint {
+    /// X coordinate [m].
+    #[serde(rename = "X", default)]
+    pub x: f64,
+    /// Y coordinate [m].
+    #[serde(rename = "Y", default)]
+    pub y: f64,
+    /// Z coordinate [m].
+    #[serde(rename = "Z", default)]
+    pub z: f64,
+    /// Optional human-readable label (used in CSV comments).
+    #[serde(rename = "Label", default)]
+    pub label: String,
+}
 
 /// A lumped port definition for MoM S-parameter extraction.
 #[derive(Debug, Clone, Deserialize, Default)]

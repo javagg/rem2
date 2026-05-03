@@ -1,6 +1,7 @@
 //! Post-processing: RCS computation and CSV output.
 
 use crate::surface_mesh::SurfaceMesh;
+use crate::basis::rwg::{generate_rwg_bases, RwgBasis};
 use crate::green::green3d;
 use num_complex::Complex64;
 use rem_core::{NearFieldPoint, RemResult, ETA0, MU0};
@@ -197,8 +198,6 @@ pub fn compute_near_field(
     surf: &SurfaceMesh,
     k: f64,
 ) -> Vec<NearFieldPoint> {
-    use crate::basis::rwg::generate_rwg_bases;
-
     let omega = k * rem_core::C0;
     let jw_mu = Complex64::new(0.0, omega * MU0);
 
@@ -278,6 +277,78 @@ pub fn write_near_field_csv(
     let filename = output_file.unwrap_or("postpro/near_field.csv");
     let path = output_dir.join(filename);
     rem_core::write_near_field_csv(&path, points)
+}
+
+// ---------------------------------------------------------------------------
+// Near-field at arbitrary probe points (S-param / RWG current mode)
+// ---------------------------------------------------------------------------
+
+/// Compute the E-field vector at a list of arbitrary probe points.
+///
+/// Uses the electric-field integral representation (centroid quadrature):
+///   E(r) ≈ −jωμ₀ Σₙ Iₙ Σ_{face ∈ support(n)} G(r, r'_c) f_n(r'_c) A_face
+///
+/// `currents` are the RWG basis-function coefficients (length = `bases.len()`).
+/// Returns one `[Complex64; 3]` per probe point (Ex, Ey, Ez).
+pub fn compute_e_at_probes(
+    surf: &SurfaceMesh,
+    bases: &[RwgBasis],
+    currents: &[Complex64],
+    probes: &[[f64; 3]],
+    k: f64,
+) -> Vec<[Complex64; 3]> {
+    let omega   = k * rem_core::C0;
+    let jw_mu   = Complex64::new(0.0, omega * MU0);
+
+    probes.iter().map(|r| {
+        let mut ax = Complex64::ZERO;
+        let mut ay = Complex64::ZERO;
+        let mut az = Complex64::ZERO;
+
+        for (n, base) in bases.iter().enumerate() {
+            let i_n = currents[n];
+            for &(fi, in_plus) in &[(base.plus_face, true), (base.minus_face, false)] {
+                let src_face = &surf.faces[fi];
+                let g = green3d(r, &src_face.centroid, k);
+                let f_v = base.eval(&src_face.centroid, surf, in_plus);
+                let contrib = i_n * g * src_face.area;
+                ax += f_v[0] * contrib;
+                ay += f_v[1] * contrib;
+                az += f_v[2] * contrib;
+            }
+        }
+        [-jw_mu * ax, -jw_mu * ay, -jw_mu * az]
+    }).collect()
+}
+
+/// Write near-field probe results to CSV.
+///
+/// Columns: `freq_hz, x, y, z, Ex_re, Ex_im, Ey_re, Ey_im, Ez_re, Ez_im, |E| (dBV/m)`
+pub fn write_probe_e_field_csv(
+    path: &Path,
+    probe_xyz:  &[[f64; 3]],         // probe coordinates
+    freq_e:     &[(f64, Vec<[Complex64; 3]>)], // (freq_hz, e_per_probe)
+) -> RemResult<()> {
+    use std::io::Write;
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() { std::fs::create_dir_all(parent)?; }
+    }
+    let mut f = std::fs::File::create(path)?;
+    writeln!(f, "Freq (GHz),x,y,z,Ex_re,Ex_im,Ey_re,Ey_im,Ez_re,Ez_im,|E| (dBV/m)")?;
+    for &(freq_hz, ref e_vals) in freq_e {
+        for (idx, e) in e_vals.iter().enumerate() {
+            let [x, y, z] = probe_xyz[idx];
+            let [ex, ey, ez] = *e;
+            let e_mag = (ex.norm_sqr() + ey.norm_sqr() + ez.norm_sqr()).sqrt();
+            let e_db = if e_mag > 1e-300 { 20.0 * e_mag.log10() } else { -999.0 };
+            writeln!(f,
+                "{:.9e},{:.6e},{:.6e},{:.6e},{:.6e},{:.6e},{:.6e},{:.6e},{:.6e},{:.6e},{:.4}",
+                freq_hz / 1e9, x, y, z,
+                ex.re, ex.im, ey.re, ey.im, ez.re, ez.im, e_db,
+            )?;
+        }
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
