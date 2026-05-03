@@ -1333,9 +1333,9 @@ pub fn validate_palace_compat(cfg: &PalaceConfig) {
     // --- Problem ---
     if let Some(ref pf) = cfg.problem.output_formats {
         if pf.grid_function {
-            warn_unsupported(
-                "Problem.OutputFormats.GridFunction",
-                "VTK GridFunction output is not yet implemented",
+            log::info!(
+                "[REM] Problem.OutputFormats.GridFunction: \
+                 VTK solution files are written to <output>/paraview/solution.vtk.",
             );
         }
     }
@@ -1413,8 +1413,9 @@ pub fn validate_palace_compat(cfg: &PalaceConfig) {
     if let Some(ref dp) = cfg.domains.postprocessing {
         if !dp.energy.is_empty() {
             log::info!(
-                "[REM] Domains.Postprocessing.Energy: {} group(s) — \
-                 per-group energy written to postpro/energy-E.csv (Electrostatic only).",
+                "[REM] Domains.Postprocessing.Energy: {} group(s) -- \
+                 per-group energy written to postpro/energy-E.csv (Electrostatic) \
+                 or postpro/energy-B.csv (Magnetostatic).",
                 dp.energy.len()
             );
         }

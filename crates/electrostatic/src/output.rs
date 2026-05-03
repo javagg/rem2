@@ -113,6 +113,41 @@ pub fn write_energy_groups_csv(
     Ok(())
 }
 
+/// Write magnetic energy groups to `<output_dir>/postpro/energy-B.csv`.
+///
+/// Mirrors `write_energy_groups_csv` but uses the "Magnetic Field Energy (J)" label
+/// and writes to `energy-B.csv` (static / magnetostatic solver output).
+pub fn write_energy_groups_csv_magnetic(
+    output_dir: &Path,
+    specs: &[EnergyPostSpec],
+    per_tag_energies: &[(u32, f64)],
+) -> RemResult<()> {
+    let dir = output_dir.join("postpro");
+    std::fs::create_dir_all(&dir).map_err(RemError::Io)?;
+    let path = dir.join("energy-B.csv");
+
+    let mut f = std::fs::File::create(&path).map_err(RemError::Io)?;
+    writeln!(f, r#""Index","Attributes","Magnetic Field Energy (J)""#)
+        .map_err(RemError::Io)?;
+
+    for spec in specs {
+        let group_energy: f64 = per_tag_energies
+            .iter()
+            .filter(|(tag, _)| spec.attributes.contains(tag))
+            .map(|(_, e)| e)
+            .sum();
+        let attrs_str = spec.attributes.iter()
+            .map(|a| a.to_string())
+            .collect::<Vec<_>>()
+            .join(";");
+        writeln!(f, "{},\"{}\",{:.6e}", spec.index, attrs_str, group_energy)
+            .map_err(RemError::Io)?;
+    }
+
+    log::info!("Written: {}", path.display());
+    Ok(())
+}
+
 /// Write surface flux results to `<output_dir>/postpro/surface-flux.csv`.
 ///
 /// Palace format:

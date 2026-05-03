@@ -396,6 +396,21 @@ fn write_outputs(
         log::info!("Written: {}", path.display());
     }
 
+    // Palace Domains.Postprocessing.Energy — per-group magnetic energy (energy-B.csv)
+    if let Some(dp) = &config.domains.postprocessing {
+        if !dp.energy.is_empty() {
+            let per_tag: Vec<(u32, f64)> = domain_energies
+                .iter()
+                .map(|r| (r.domain_tag, r.energy))
+                .collect();
+            rem_electrostatic::output::write_energy_groups_csv_magnetic(
+                output_dir,
+                &dp.energy,
+                &per_tag,
+            )?;
+        }
+    }
+
     // VTK with A_z and B
     let vtk_dir = output_dir.join("paraview");
     std::fs::create_dir_all(&vtk_dir).map_err(RemError::Io)?;
