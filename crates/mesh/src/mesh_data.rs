@@ -20,6 +20,7 @@ pub struct Node {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ElementKind {
     Line2,
+    Line3,   // 3-node quadratic line (P2 boundary edges)
     Tri3,
     Tri6,
     Quad4,
@@ -32,6 +33,7 @@ impl ElementKind {
     pub fn n_nodes(self) -> usize {
         match self {
             ElementKind::Line2 => 2,
+            ElementKind::Line3 => 3,
             ElementKind::Tri3  => 3,
             ElementKind::Tri6  => 6,
             ElementKind::Quad4 => 4,
@@ -43,7 +45,7 @@ impl ElementKind {
 
     pub fn dim(self) -> u8 {
         match self {
-            ElementKind::Line2 => 1,
+            ElementKind::Line2 | ElementKind::Line3 => 1,
             ElementKind::Tri3 | ElementKind::Tri6 | ElementKind::Quad4 => 2,
             ElementKind::Tet4 | ElementKind::Tet10 | ElementKind::Hex8 => 3,
         }
@@ -53,6 +55,7 @@ impl ElementKind {
     pub fn from_gmsh_type(t: u32) -> Option<Self> {
         match t {
             1  => Some(ElementKind::Line2),
+            8  => Some(ElementKind::Line3),  // 3-node P2 line
             2  => Some(ElementKind::Tri3),
             3  => Some(ElementKind::Quad4),
             4  => Some(ElementKind::Tet4),
@@ -175,33 +178,36 @@ impl RemMesh {
                 None => {
                     log::warn!(
                         "Skipping unsupported GMSH element type {} ({}). \
-                         Current rem-mesh support: 1(Line2), 2(Tri3), 3(Quad4), \
+                         Current rem-mesh support: 1(Line2), 8(Line3), 2(Tri3), 3(Quad4), \
                          4(Tet4), 5(Hex8), 9(Tri6), 11(Tet10). \
-                         If this is a high-order mesh (e.g. 29), export a linear mesh \
-                         (Tet4/Tet10, Tri3/Tri6, etc.) before running REM.",
+                         If this is a high-order mesh (e.g. 29), export a P2 mesh \
+                         (Tet10/Tri6/Line3) or linear mesh (Tet4/Tri3) before running REM.",
                         re.elem_type,
                         gmsh_type_hint(re.elem_type)
                     );
                     continue;
                 }
             };
-            // For high-order elements mapped to lower-order (e.g. Hex27→Hex8, Quad9→Quad4),
-            // truncate node list to corner nodes only. GMSH always places corner nodes first.
-            let n_corner = kind.n_nodes();
+            // For elements mapped to lower-order approximations (Hex27→Hex8, Quad9→Quad4),
+            // truncate to corner nodes. P2 elements (Tet10, Tri6, Line3) use all their nodes.
+            let n_expected = kind.n_nodes();
             let node_ids: Vec<usize> = re.node_ids.iter()
-                .take(n_corner)
+                .take(n_expected)
                 .map(|&n| n - 1)
                 .collect();
-            if node_ids.len() < n_corner {
+            if node_ids.len() < n_expected {
                 log::warn!("Element {} (type {}) has fewer nodes ({}) than expected ({}); skipping",
-                    re.id, re.elem_type, node_ids.len(), n_corner);
+                    re.id, re.elem_type, node_ids.len(), n_expected);
                 continue;
             }
-            if re.node_ids.len() > n_corner {
+            // Warn only when we're genuinely truncating a higher-order element to P1 corners.
+            // (e.g. Quad9→Quad4, Hex27→Hex8)
+            if re.node_ids.len() > n_expected {
                 log::warn!(
-                    "GMSH type {} detected: using P1 corner-node approximation \
-                     ({} of {} nodes). Accuracy degrades. Re-mesh with linear elements for full precision.",
-                    re.elem_type, n_corner, re.node_ids.len()
+                    "GMSH type {} ({}): truncating {} nodes to {} corner nodes (P1 approximation). \
+                     Accuracy degrades — prefer a P2 (Tet10/Tri6) or P1 (Tet4/Tri3) mesh.",
+                    re.elem_type, gmsh_type_hint(re.elem_type),
+                    re.node_ids.len(), n_expected
                 );
             }
             let elem = Element {
@@ -487,7 +493,7 @@ impl RemMesh {
                 ElementKind::Tri3  => Some(FET::Tri3),
                 ElementKind::Tri6  => Some(FET::Tri6),
                 ElementKind::Quad4 => Some(FET::Quad4),
-                ElementKind::Line2 => Some(FET::Line2),
+                ElementKind::Line2 | ElementKind::Line3 => Some(FET::Line2),
             }
         }
 
@@ -599,7 +605,8 @@ impl RemMesh {
                 ElementKind::Tri3  => Some(FET::Tri3),
                 ElementKind::Tri6  => Some(FET::Tri6),
                 ElementKind::Quad4 => Some(FET::Quad4),
-                ElementKind::Line2 => Some(FET::Line2),
+                // Line3 → Line2: fem_mesh has no Line3; use corner nodes for bridge
+                ElementKind::Line2 | ElementKind::Line3 => Some(FET::Line2),
                 _ => None,
             }
         }

@@ -62,6 +62,7 @@ pub fn write_mode_vtk(
             rem_mesh::ElementKind::Tri6  => 22,
             rem_mesh::ElementKind::Tet10 => 24,
             rem_mesh::ElementKind::Line2 => 3,
+            rem_mesh::ElementKind::Line3 => 21,  // VTK_QUADRATIC_EDGE
         };
         writeln!(f, "{}", vtk_type).map_err(RemError::Io)?;
     }
