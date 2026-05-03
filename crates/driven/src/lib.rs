@@ -1379,10 +1379,11 @@ fn solve_one_excitation(
     let lin = &config.solver.linear;
     let mut a = a_base.clone();
 
-    // Build Dirichlet map: excited port → 1.0, PEC/Ground → 0.0, other ports → 0.0
-    // (unexcited ports are short-circuited; matched termination would require full Robin BC
-    //  which needs off-diagonal coupling — for the N-port Z/S approach, short-circuit gives Z,
-    //  then S = (Z-Z0)(Z+Z0)^{-1} via matrix algebra)
+    // Build Dirichlet map for multi-port Z-parameter extraction:
+    // Note: We're using the SHORT-CIRCUIT method (non-excited ports → 0.0).
+    // This directly gives Z-parameters. An alternative would be OPEN-CIRCUIT method
+    // (non-excited ports → natural BC) which gives Y-parameters requiring matrix inversion.
+    // Current approach: Short-circuit is more standard for FEM solvers.
     let excited_mode = if let PortKind::Wave(idx) = exc_kind {
         wave_modes.get(idx)
     } else {
@@ -1393,10 +1394,55 @@ fn solve_one_excitation(
         if mode.is_propagating(freq) {
             collect_dirichlet_dofs_modal(mesh, Some(exc_idx), mode)
         } else {
-            collect_dirichlet_dofs_open_circuit(mesh, Some(exc_idx), 1.0)
+            // For evanescent wave ports, also short-circuit non-excited ports
+            let mut dofs = collect_dirichlet_dofs_open_circuit(mesh, Some(exc_idx), 1.0);
+            // Short-circuit all other ports
+            for belem in &mesh.boundary_elements {
+                let bc = match mesh.boundary_tags.get(&belem.tag) {
+                    Some(b) => b,
+                    None => continue,
+                };
+                match bc {
+                    BoundaryTag::LumpedPort { index, .. }
+                    | BoundaryTag::WavePort { index } => {
+                        if *index != exc_idx {
+                            for &nid in &belem.node_ids {
+                                dofs.entry(nid).or_insert(0.0);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            dofs
         }
     } else {
-        collect_dirichlet_dofs_open_circuit(mesh, Some(exc_idx), 1.0)
+        // Lumped ports: SHORT-CIRCUIT METHOD
+        // Excited port → 1.0, all others → 0.0 (short-circuit), PEC/Ground → 0.0
+        let mut dofs: HashMap<usize, f64> = HashMap::new();
+        for belem in &mesh.boundary_elements {
+            let bc = match mesh.boundary_tags.get(&belem.tag) {
+                Some(b) => b,
+                None => continue,
+            };
+            match bc {
+                BoundaryTag::Pec | BoundaryTag::Ground => {
+                    for &nid in &belem.node_ids {
+                        dofs.entry(nid).or_insert(0.0);
+                    }
+                }
+                BoundaryTag::LumpedPort { index, .. }
+                | BoundaryTag::Terminal { index }
+                | BoundaryTag::WavePort { index } => {
+                    let val = if *index == exc_idx { 1.0 } else { 0.0 };
+                    for &nid in &belem.node_ids {
+                        dofs.entry(nid).or_insert(val);
+                    }
+                }
+                _ => {}
+            }
+        }
+        dofs
     };
 
     let mut rhs_c = vec![Complex64::ZERO; n];
