@@ -26,6 +26,8 @@ members = [
     "crates/planar",
     "crates/layered_green",
     "vendor/rmetis",
+    "vendor/rmsh-model",
+    "vendor/rmsh-io",
 ]
 
 [workspace.package]
@@ -66,16 +68,20 @@ rmsh-renderer     = { path = "vendor/rmsh/crates/renderer" }
 rcad-kernel       = { path = "vendor/rmsh/vendor/rcad/libs/rcad-kernel" }
 rcad-render       = { path = "vendor/rmsh/vendor/rcad/libs/rcad-render" }
 
-# fem-rs foundation crates (via vendor/fem-rs submodule)
-fem-core     = { path = "vendor/fem-rs/crates/core" }
-fem-linalg   = { path = "vendor/fem-rs/crates/linalg" }
-fem-mesh     = { path = "vendor/fem-rs/crates/mesh" }
-fem-element  = { path = "vendor/fem-rs/crates/element" }
-fem-space    = { path = "vendor/fem-rs/crates/space" }
-fem-assembly = { path = "vendor/fem-rs/crates/assembly" }
-fem-solver   = { path = "vendor/fem-rs/crates/solver" }
-fem-amg      = { path = "vendor/fem-rs/crates/amg" }
-fem-io       = { path = "vendor/fem-rs/crates/io" }
+# fem-rs foundation crates (via git dependency)
+fem-core     = { git = "https://github.com/rem-rs/fem-rs.git", rev = "7fc50a9" }
+fem-linalg   = { git = "https://github.com/rem-rs/fem-rs.git", rev = "7fc50a9" }
+fem-mesh     = { git = "https://github.com/rem-rs/fem-rs.git", rev = "7fc50a9" }
+fem-element  = { git = "https://github.com/rem-rs/fem-rs.git", rev = "7fc50a9" }
+fem-space    = { git = "https://github.com/rem-rs/fem-rs.git", rev = "7fc50a9" }
+fem-assembly = { git = "https://github.com/rem-rs/fem-rs.git", rev = "7fc50a9" }
+fem-solver   = { git = "https://github.com/rem-rs/fem-rs.git", rev = "7fc50a9" }
+fem-amg      = { git = "https://github.com/rem-rs/fem-rs.git", rev = "7fc50a9" }
+fem-io       = { git = "https://github.com/rem-rs/fem-rs.git", rev = "7fc50a9" }
+
+# rmsh crates (vendored locally, stripped of rcad/STEP dependencies)
+rmsh-io      = { path = "vendor/rmsh-io", default-features = false }
+rmsh-model   = { path = "vendor/rmsh-model" }
 
 wasm-bindgen      = "0.2"
 console_error_panic_hook = "0.1"

@@ -8,7 +8,7 @@
   "Model":
   {
     "Mesh": "mesh/cpw_wave_0.msh",
-    "L0": 1.0e-6,  // μm
+    "L0": 1.0e-6,
     "Refinement": {}
   },
   "Domains":
@@ -16,13 +16,13 @@
     "Materials":
     [
       {
-        "Attributes": [1],  // Air
+        "Attributes": [1],
         "Permeability": 1.0,
         "Permittivity": 1.0,
         "LossTan": 0.0
       },
       {
-        "Attributes": [2],  // Sapphire
+        "Attributes": [2],
         "Permeability": [0.99999975, 0.99999975, 0.99999979],
         "Permittivity": [9.3, 9.3, 11.5],
         "LossTan": [3.0e-5, 3.0e-5, 8.6e-5],
@@ -55,7 +55,7 @@
   {
     "PEC":
     {
-      "Attributes": [8, 9, 11]  // Metal trace + end boundaries
+      "Attributes": [8, 9, 11]
     },
     "Absorbing":
     {
@@ -108,61 +108,55 @@
       }
     ],
     "Postprocessing":
-    {
-      "SurfaceFlux":
-      [
-        {
-          "Index": 1,
-          "Attributes": [11],
-          "Type": "Electric",
-          "TwoSided": true
-        },
-        {
-          "Index": 2,
-          "Attributes": [10],
-          "Type": "Power"
-        },
-        {
-          "Index": 3,
-          "Attributes": [4, 6, 8],
-          "Type": "Power",
-          "Center": [-2000, 0, 0]
-        },
-        {
-          "Index": 4,
-          "Attributes": [5, 7, 9],
-          "Type": "Power",
-          "Center": [2000, 0, 0]
-        }
-      ],
-      "Dielectric":
-      [
-        {
-          "Index": 1,
-          "Attributes": [12],
-          "Type": "SA",
-          "Thickness": 2.0e-3,  // μm
-          "Permittivity": 10.0,
-          "LossTan": 1.0
-        },
-        {
-          "Index": 2,
-          "Attributes": [11],
-          "Type": "MS",
-          "Thickness": 2.0e-3,  // μm
-          "Permittivity": 10.0,
-          "LossTan": 1.0
-        },
-        {
-          "Index": 3,
-          "Attributes": [11],
-          "Type": "MA",
-          "Thickness": 2.0e-3,  // μm
-          "Permittivity": 10.0,
-          "LossTan": 1.0
-        }
-      ]
-    }
+    [
+      {
+        "Index": 1,
+        "Attributes": [11],
+        "Type": "Electric",
+        "TwoSided": true
+      },
+      {
+        "Index": 2,
+        "Attributes": [10],
+        "Type": "Power"
+      },
+      {
+        "Index": 3,
+        "Attributes": [4, 6, 8],
+        "Type": "Power",
+        "Center": [-2000, 0, 0]
+      },
+      {
+        "Index": 4,
+        "Attributes": [5, 7, 9],
+        "Type": "Power",
+        "Center": [2000, 0, 0]
+      },
+      {
+        "Index": 1,
+        "Attributes": [12],
+        "Type": "SA",
+        "Thickness": 2.0e-3,
+        "Permittivity": 10.0,
+        "LossTan": 1.0
+      },
+      {
+        "Index": 2,
+        "Attributes": [11],
+        "Type": "MS",
+        "Thickness": 2.0e-3,
+        "Permittivity": 10.0,
+        "LossTan": 1.0
+      },
+      {
+        "Index": 3,
+        "Attributes": [11],
+        "Type": "MA",
+        "Thickness": 2.0e-3,
+        "Permittivity": 10.0,
+        "LossTan": 1.0
+      }
+    ]
   },
   "Solver":
   {
@@ -170,17 +164,20 @@
     "Device": "CPU",
     "Driven":
     {
+      "MinFreq": 2.0e9,
+      "MaxFreq": 32.0e9,
+      "FreqStep": 6.0e9,
       "Samples":
       [
         {
           "Type": "Linear",
-          "MinFreq": 2.0,  // GHz
-          "MaxFreq": 32.0,  // GHz
-          "FreqStep": 6.0  // GHz
+          "MinFreq": 2.0e9,
+          "MaxFreq": 32.0e9,
+          "FreqStep": 6.0e9
         },
         {
           "Type": "Point",
-          "Freq": [17.0], // GHz
+          "Freq": [17.0e9],
           "SaveStep": 1
         }
       ],

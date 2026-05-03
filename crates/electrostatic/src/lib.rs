@@ -27,7 +27,7 @@ use std::path::Path;
 
 /// Entry point called from rem-cli.
 pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
-    log::info!("=== Electrostatic solver ===");
+    log::info!("\n=== Electrostatic solver ===\n");
 
     if config.solver.order > 1 {
         log::warn!(
@@ -39,15 +39,15 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
 
     // 1. Load mesh
     let mesh_path = Path::new(&config.model.mesh);
-    log::info!("Loading mesh: {}", mesh_path.display());
     let raw = read_msh_file(mesh_path)?;
     let mut mesh = RemMesh::from_raw(raw, config)?;
     mesh.set_comm(comm.rank(), comm.size());
     mesh.partition(comm);
-    log::info!(
-        "Mesh: {} nodes, {} volume elements, {} boundary elements (dim={})",
-        mesh.n_nodes(), mesh.n_volume_elements(), mesh.n_boundary_elements(), mesh.dim
-    );
+    log::info!("Mesh loaded:");
+    log::info!("  {} nodes", mesh.n_nodes());
+    log::info!("  {} volume elements", mesh.n_volume_elements());
+    log::info!("  {} boundary elements", mesh.n_boundary_elements());
+    log::info!("");
 
     // 2. Build material map
     let domain_map = DomainMap::from_config(config)?;
@@ -62,7 +62,11 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
     let amr_theta    = if amr_cfg.tol > 0.0 { amr_cfg.tol } else { 0.5 };
 
     if max_amr_iter > 0 {
-        log::info!("AMR enabled: max_iter={}, θ={}", max_amr_iter, amr_theta);
+        log::info!("Adaptive mesh refinement (AMR):");
+        log::info!("  Max iterations = {}", max_amr_iter);
+        log::info!("  Dörfler marking = {:.1}%", amr_theta * 100.0);
+        log::info!("");
+
         let mut cur_mesh = mesh;
         let mut phi = if let Some(exc_tag) = excited_port {
             solve_one(config, &cur_mesh, &domain_map, Some(exc_tag), 1.0, comm)?
@@ -73,11 +77,11 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
         for amr_iter in 1..=max_amr_iter {
             let eta = amr::zz_estimator(&cur_mesh, &phi);
             let total_err: f64 = eta.iter().map(|&e| e * e).sum::<f64>().sqrt();
-            log::info!("AMR iter {amr_iter}: nodes={}, |η|={total_err:.3e}", cur_mesh.n_nodes());
+            log::info!("  Iteration {}: {} nodes, error = {:.3e}", amr_iter, cur_mesh.n_nodes(), total_err);
 
             let marked = amr::dorfler_mark(&eta, amr_theta);
             if marked.is_empty() {
-                log::info!("AMR converged: no elements marked.");
+                log::info!("  → Converged: no elements marked for refinement");
                 break;
             }
 
@@ -97,7 +101,7 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
 
         let eta_final = amr::zz_estimator(&cur_mesh, &phi);
         let total_err: f64 = eta_final.iter().map(|&e| e * e).sum::<f64>().sqrt();
-        log::info!("AMR final: nodes={}, |η|={total_err:.3e}", cur_mesh.n_nodes());
+        log::info!("  → Final: {} nodes, error = {:.3e}\n", cur_mesh.n_nodes(), total_err);
         finalize(config, &cur_mesh, &domain_map, &phi, output_dir, None)?;
     } else if let Some(exc_tag) = excited_port {
         log::info!("Excited port tag: {}", exc_tag);

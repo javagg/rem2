@@ -28,6 +28,7 @@ pub fn assemble_mass(
             ElementKind::Tri3 => mass_tri3(mesh, elem, eps, &mut triplet)?,
             ElementKind::Tet4 => mass_tet4(mesh, elem, eps, &mut triplet)?,
             ElementKind::Tet10 => mass_tet4_corners(mesh, elem, eps, &mut triplet)?,
+            ElementKind::Hex8 => mass_hex8(mesh, elem, eps, &mut triplet)?,
             other => {
                 log::warn!("Mass matrix: element {:?} not supported — skipping", other);
             }
@@ -145,6 +146,84 @@ fn mass_tet4_first4(
         for j in 0..4 {
             let val = if i == j { diag } else { off };
             triplet.add(nodes[i], nodes[j], val);
+        }
+    }
+    Ok(())
+}
+
+/// Mass matrix for a trilinear hexahedron (Hex8) using 2×2×2 Gauss quadrature.
+fn mass_hex8(
+    mesh: &RemMesh,
+    elem: &rem_mesh::Element,
+    eps: f64,
+    triplet: &mut TripletMatrix,
+) -> RemResult<()> {
+    debug_assert!(elem.node_ids.len() >= 8);
+    let nids: [usize; 8] = [
+        elem.node_ids[0], elem.node_ids[1], elem.node_ids[2], elem.node_ids[3],
+        elem.node_ids[4], elem.node_ids[5], elem.node_ids[6], elem.node_ids[7],
+    ];
+    let xi_ref  = [-1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0_f64];
+    let eta_ref = [-1.0,-1.0, 1.0,  1.0, -1.0,-1.0, 1.0,  1.0_f64];
+    let zet_ref = [-1.0,-1.0,-1.0, -1.0,  1.0, 1.0, 1.0,  1.0_f64];
+
+    let coords: [[f64; 3]; 8] = {
+        let mut c = [[0.0f64; 3]; 8];
+        for (i, &n) in nids.iter().enumerate() {
+            c[i] = [mesh.nodes[n].x, mesh.nodes[n].y, mesh.nodes[n].z];
+        }
+        c
+    };
+
+    let gp = 1.0_f64 / 3.0_f64.sqrt();
+    let gauss_pts = [-gp, gp];
+    let mut me = [[0.0f64; 8]; 8];
+
+    for &xi in &gauss_pts {
+        for &eta in &gauss_pts {
+            for &zet in &gauss_pts {
+                let mut n_val   = [0.0f64; 8];
+                let mut dn_dxi  = [0.0f64; 8];
+                let mut dn_deta = [0.0f64; 8];
+                let mut dn_dzet = [0.0f64; 8];
+                for i in 0..8 {
+                    let (a, b, c) = (xi_ref[i], eta_ref[i], zet_ref[i]);
+                    n_val[i]   = 0.125 * (1.0 + a*xi) * (1.0 + b*eta) * (1.0 + c*zet);
+                    dn_dxi[i]  = 0.125 * a * (1.0 + b*eta) * (1.0 + c*zet);
+                    dn_deta[i] = 0.125 * b * (1.0 + a*xi)  * (1.0 + c*zet);
+                    dn_dzet[i] = 0.125 * c * (1.0 + a*xi)  * (1.0 + b*eta);
+                }
+                // Jacobian determinant
+                let mut jac = [[0.0f64; 3]; 3];
+                for i in 0..8 {
+                    jac[0][0] += dn_dxi[i]  * coords[i][0];
+                    jac[0][1] += dn_deta[i] * coords[i][0];
+                    jac[0][2] += dn_dzet[i] * coords[i][0];
+                    jac[1][0] += dn_dxi[i]  * coords[i][1];
+                    jac[1][1] += dn_deta[i] * coords[i][1];
+                    jac[1][2] += dn_dzet[i] * coords[i][1];
+                    jac[2][0] += dn_dxi[i]  * coords[i][2];
+                    jac[2][1] += dn_deta[i] * coords[i][2];
+                    jac[2][2] += dn_dzet[i] * coords[i][2];
+                }
+                let det_j = jac[0][0]*(jac[1][1]*jac[2][2]-jac[1][2]*jac[2][1])
+                           -jac[0][1]*(jac[1][0]*jac[2][2]-jac[1][2]*jac[2][0])
+                           +jac[0][2]*(jac[1][0]*jac[2][1]-jac[1][1]*jac[2][0]);
+                if det_j.abs() < 1e-300 { continue; }
+
+                let wdet = eps * det_j.abs();
+                for i in 0..8 {
+                    for j in 0..8 {
+                        me[i][j] += wdet * n_val[i] * n_val[j];
+                    }
+                }
+            }
+        }
+    }
+
+    for i in 0..8 {
+        for j in 0..8 {
+            triplet.add(nids[i], nids[j], me[i][j]);
         }
     }
     Ok(())

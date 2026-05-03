@@ -742,9 +742,13 @@ pub struct TransientSolver {
     #[serde(rename = "Type", default = "default_transient_type")]
     pub solver_type: String,
 
+    /// Integration end time in seconds [s].
+    /// NOTE: Palace uses nanoseconds; REM configs must use SI seconds (e.g. 1.0e-9 for 1 ns).
     #[serde(rename = "MaxTime")]
     pub max_time: f64,
 
+    /// Time step in seconds [s].
+    /// NOTE: Palace uses nanoseconds; REM configs must use SI seconds (e.g. 5.0e-12 for 5 ps).
     #[serde(rename = "TimeStep")]
     pub time_step: f64,
 

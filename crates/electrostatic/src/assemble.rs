@@ -51,6 +51,9 @@ pub fn assemble_stiffness(
                 });
                 assemble_tet4_by_nodes(mesh, &elem.node_ids[..4], elem.id, eps, &mut triplet)?;
             }
+            ElementKind::Hex8 => {
+                assemble_hex8(mesh, elem, eps, &mut triplet)?;
+            }
             other => {
                 log::warn!(
                     "Element kind {:?} not supported in P1 assembly — skipping",
@@ -182,6 +185,106 @@ fn assemble_tet4_by_nodes(
         for j in 0..4 {
             let k_ij = eps * vol * dot3(&grads[i], &grads[j]);
             triplet.add(nodes[i], nodes[j], k_ij);
+        }
+    }
+    Ok(())
+}
+
+/// Local stiffness for a trilinear hexahedron (Hex8).
+///
+/// Uses 2×2×2 Gauss quadrature (exact for trilinear hex on parallelepipeds,
+/// approximate for general hex). Each Gauss point carries weight 1.0.
+fn assemble_hex8(
+    mesh: &RemMesh,
+    elem: &rem_mesh::Element,
+    eps: f64,
+    triplet: &mut TripletMatrix,
+) -> RemResult<()> {
+    debug_assert!(elem.node_ids.len() >= 8);
+    let nids: [usize; 8] = [
+        elem.node_ids[0], elem.node_ids[1], elem.node_ids[2], elem.node_ids[3],
+        elem.node_ids[4], elem.node_ids[5], elem.node_ids[6], elem.node_ids[7],
+    ];
+    // GMSH Hex8 corner node order: same as standard right-hand hex
+    // Nodes 0-3: bottom face (z-), nodes 4-7: top face (z+), each face in CCW order
+    let xi_ref  = [-1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0_f64];
+    let eta_ref = [-1.0,-1.0, 1.0,  1.0, -1.0,-1.0, 1.0,  1.0_f64];
+    let zet_ref = [-1.0,-1.0,-1.0, -1.0,  1.0, 1.0, 1.0,  1.0_f64];
+
+    let coords: [[f64; 3]; 8] = {
+        let mut c = [[0.0f64; 3]; 8];
+        for (i, &n) in nids.iter().enumerate() {
+            c[i] = [mesh.nodes[n].x, mesh.nodes[n].y, mesh.nodes[n].z];
+        }
+        c
+    };
+
+    // 2-point Gauss: pts = ±1/√3, weight = 1.0
+    let gp = 1.0_f64 / 3.0_f64.sqrt();
+    let gauss_pts = [-gp, gp];
+
+    let mut ke = [[0.0f64; 8]; 8];
+
+    for &xi in &gauss_pts {
+        for &eta in &gauss_pts {
+            for &zet in &gauss_pts {
+                // Shape functions and their reference-space gradients
+                let mut n_val = [0.0f64; 8];
+                let mut dn_dxi  = [0.0f64; 8];
+                let mut dn_deta = [0.0f64; 8];
+                let mut dn_dzet = [0.0f64; 8];
+                for i in 0..8 {
+                    let a = xi_ref[i];
+                    let b = eta_ref[i];
+                    let c = zet_ref[i];
+                    n_val[i]  = 0.125 * (1.0 + a*xi) * (1.0 + b*eta) * (1.0 + c*zet);
+                    dn_dxi[i]  = 0.125 * a * (1.0 + b*eta) * (1.0 + c*zet);
+                    dn_deta[i] = 0.125 * b * (1.0 + a*xi)  * (1.0 + c*zet);
+                    dn_dzet[i] = 0.125 * c * (1.0 + a*xi)  * (1.0 + b*eta);
+                }
+
+                // Jacobian J_kl = d(x_k)/d(xi_l)
+                let mut jac = [[0.0f64; 3]; 3];
+                for i in 0..8 {
+                    jac[0][0] += dn_dxi[i]  * coords[i][0];
+                    jac[0][1] += dn_deta[i] * coords[i][0];
+                    jac[0][2] += dn_dzet[i] * coords[i][0];
+                    jac[1][0] += dn_dxi[i]  * coords[i][1];
+                    jac[1][1] += dn_deta[i] * coords[i][1];
+                    jac[1][2] += dn_dzet[i] * coords[i][1];
+                    jac[2][0] += dn_dxi[i]  * coords[i][2];
+                    jac[2][1] += dn_deta[i] * coords[i][2];
+                    jac[2][2] += dn_dzet[i] * coords[i][2];
+                }
+                let det_j = det3(&jac);
+                if det_j.abs() < 1e-300 { continue; }
+                let j_inv = inv3(&jac, det_j);
+
+                // Physical gradients: ∇φ_i = J^{-T} * [dN/dxi, dN/deta, dN/dzet]
+                let mut grad = [[0.0f64; 3]; 8];
+                for i in 0..8 {
+                    let ref_g = [dn_dxi[i], dn_deta[i], dn_dzet[i]];
+                    for row in 0..3 {
+                        for col in 0..3 {
+                            grad[i][row] += j_inv[col][row] * ref_g[col];
+                        }
+                    }
+                }
+
+                // Accumulate K_ij += eps * w * det(J) * ∇φ_i · ∇φ_j  (w=1 for 2-pt Gauss)
+                let wdet = eps * det_j.abs();
+                for i in 0..8 {
+                    for j in 0..8 {
+                        ke[i][j] += wdet * dot3(&grad[i], &grad[j]);
+                    }
+                }
+            }
+        }
+    }
+
+    for i in 0..8 {
+        for j in 0..8 {
+            triplet.add(nids[i], nids[j], ke[i][j]);
         }
     }
     Ok(())

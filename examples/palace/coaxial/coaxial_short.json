@@ -48,8 +48,8 @@
       "Excitation": "ModulatedGaussian",
       "ExcitationFreq": 10.0,
       "ExcitationWidth": 0.05,
-      "MaxTime": 1.0,
-      "TimeStep": 0.005,
+      "MaxTime": 1.0e-9,
+      "TimeStep": 5.0e-12,
       "SaveStep": 10
     },
     "Linear":

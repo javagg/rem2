@@ -115,7 +115,7 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
     }
 
     log::info!("Solver configuration:");
-    log::info!("  Excitation frequency = {:.3e} Hz", td_cfg.excitation_freq);
+    log::info!("  Excitation frequency = {:.3e} GHz", td_cfg.excitation_freq);
     log::info!("  Time step            = {:.3e} s", td_cfg.time_step);
     log::info!("  Max time             = {:.3e} s", td_cfg.max_time);
     log::info!("  Save step            = {}", td_cfg.save_step);
@@ -143,8 +143,8 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
     let mut rhs_dummy = vec![0.0f64; mesh.n_nodes()];
     apply_dirichlet(&mut m_bc, &mut rhs_dummy, &dofs);
 
-    let dt = td_cfg.time_step;
-    let t_end = td_cfg.max_time;
+    let dt = td_cfg.time_step;    // [s] — configs must use SI seconds
+    let t_end = td_cfg.max_time;  // [s] — configs must use SI seconds
     let save_step = td_cfg.save_step.max(1);
     let lin = &config.solver.linear;
 
@@ -241,8 +241,9 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
                 for i in 0..n {
                     v[i] += h * (gamma * dvdt_new[i] + (1.0 - gamma) * dvdt[i]);
                 }
-                // Enforce BCs
-                for (&dof, &val) in &dofs { if dof < n { v[dof] = val; } }
+                // Enforce BCs with time-varying Dirichlet amplitude
+                let amp_n1 = excitation_amplitude(t + h, exc_kind, exc_freq_hz, exc_sigma_s);
+                for (&dof, &val) in &dofs { if dof < n { v[dof] = val * amp_n1; } }
 
                 dvdt = dvdt_new;
                 t += h;
@@ -344,7 +345,8 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
 
                     // Correct u_s
                     for i in 0..n { u_s[i] += cur_dt * aii * ki_i[s][i]; }
-                    for (&dof, &val) in &dofs { if dof < n { u_s[dof] = val; } }
+                    let amp_s = excitation_amplitude(t_s, exc_kind, exc_freq_hz, exc_sigma_s);
+                    for (&dof, &val) in &dofs { if dof < n { u_s[dof] = val * amp_s; } }
                     u_stages[s] = u_s.clone();
 
                     // Explicit stage f_E at stage time
@@ -371,7 +373,8 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
                 }).sum::<f64>().sqrt() / (n as f64).sqrt();
 
                 if err <= 1.0 || cur_dt <= dt_min {
-                    for (&dof, &val) in &dofs { if dof < n { v3[dof] = val; } }
+                    let amp_next = excitation_amplitude(t + cur_dt, exc_kind, exc_freq_hz, exc_sigma_s);
+                    for (&dof, &val) in &dofs { if dof < n { v3[dof] = val * amp_next; } }
                     v = v3;
                     t += cur_dt;
                     let vp = port_voltage(mesh, &v, excited_port);
@@ -428,7 +431,8 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
                 for i in 0..n {
                     v[i] += h / 6.0 * (k1[i] + 2.0 * k2[i] + 2.0 * k3[i] + k4[i]);
                 }
-                for (&dof, &val) in &dofs { if dof < n { v[dof] = val; } }
+                let amp_rk = excitation_amplitude(t + h, exc_kind, exc_freq_hz, exc_sigma_s);
+                for (&dof, &val) in &dofs { if dof < n { v[dof] = val * amp_rk; } }
                 t += h;
 
                 let vp = port_voltage(mesh, &v, excited_port);

@@ -9,7 +9,7 @@
     "Model":
     {
         "Mesh": "mesh/antenna.msh",
-        "L0": 1.0  // 1 meter
+        "L0": 1.0
     },
     "Domains":
     {
@@ -30,18 +30,12 @@
         {
           "Attributes": [1, 2]
         },
-        "Postprocessing": {
-            "FarField": {
-                "Attributes": [4],
-                "NSample": 100,
-                "ThetaPhis": [[35, 20]]
-            }
-        },
+        "Postprocessing": [],
         "LumpedPort":
         [
             {
                 "Index": 1,
-                "R": 50.0,  // Ω
+                "R": 50.0,
                 "Excitation": true,
                 "Attributes": [3],
                 "Direction": "+Z"
@@ -54,11 +48,14 @@
         "Device": "CPU",
         "Driven":
         {
+            "MinFreq": 7.49e7,
+            "MaxFreq": 7.49e7,
+            "FreqStep": 7.49e7,
             "Samples":
             [
                 {
                     "Type": "Point",
-                    "Freq": [0.0749], // GHz
+                    "Freq": [7.49e7],
                     "SaveStep": 1
                 }
             ]
@@ -69,8 +66,6 @@
             "KSPType": "GMRES",
             "Tol": 1.0e-10,
             "MaxIts": 100
-            // If enough memory is available, this option speeds up convergence significantly:
-            // "ComplexCoarseSolve": true
         }
     }
 }

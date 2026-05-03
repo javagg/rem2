@@ -58,7 +58,10 @@ impl ElementKind {
             4  => Some(ElementKind::Tet4),
             5  => Some(ElementKind::Hex8),
             9  => Some(ElementKind::Tri6),
+            10 => Some(ElementKind::Quad4),  // Quad9 → Quad4 corner nodes (P1)
             11 => Some(ElementKind::Tet10),
+            12 => Some(ElementKind::Hex8),   // Hex27 → Hex8 corner nodes (P1)
+            17 => Some(ElementKind::Hex8),   // Hex20 → Hex8 corner nodes (P1)
             _  => None,
         }
     }
@@ -182,12 +185,31 @@ impl RemMesh {
                     continue;
                 }
             };
+            // For high-order elements mapped to lower-order (e.g. Hex27→Hex8, Quad9→Quad4),
+            // truncate node list to corner nodes only. GMSH always places corner nodes first.
+            let n_corner = kind.n_nodes();
+            let node_ids: Vec<usize> = re.node_ids.iter()
+                .take(n_corner)
+                .map(|&n| n - 1)
+                .collect();
+            if node_ids.len() < n_corner {
+                log::warn!("Element {} (type {}) has fewer nodes ({}) than expected ({}); skipping",
+                    re.id, re.elem_type, node_ids.len(), n_corner);
+                continue;
+            }
+            if re.node_ids.len() > n_corner {
+                log::warn!(
+                    "GMSH type {} detected: using P1 corner-node approximation \
+                     ({} of {} nodes). Accuracy degrades. Re-mesh with linear elements for full precision.",
+                    re.elem_type, n_corner, re.node_ids.len()
+                );
+            }
             let elem = Element {
-                id:       re.id,
+                id:   re.id,
                 kind,
-                tag:      re.phys_tag,
-                node_ids: re.node_ids.iter().map(|&n| n - 1).collect(), // GMSH 1-based → 0-based
-                rank:     0, // default to rank 0
+                tag:  re.phys_tag,
+                node_ids,
+                rank: 0,
             };
             if kind.dim() == mesh_dim {
                 volume_elements.push(elem);
