@@ -820,6 +820,33 @@ impl CsrMatrixComplex {
         self.values.len()
     }
 
+    /// Convert a dense DMatrix<Complex64> to CSR format (skipping zero entries).
+    pub fn from_dense(mat: &nalgebra::DMatrix<Complex64>) -> Self {
+        let (nrows, ncols) = mat.shape();
+        let mut row_ptr = Vec::with_capacity(nrows + 1);
+        let mut col_idx = Vec::new();
+        let mut values = Vec::new();
+
+        row_ptr.push(0);
+        for i in 0..nrows {
+            for j in 0..ncols {
+                if mat[(i, j)].norm() > 1e-16 {
+                    col_idx.push(j);
+                    values.push(mat[(i, j)]);
+                }
+            }
+            row_ptr.push(values.len());
+        }
+
+        CsrMatrixComplex {
+            nrows,
+            ncols,
+            row_ptr,
+            col_idx,
+            values,
+        }
+    }
+
     /// Sparse matrix–vector product: y = A * x
     pub fn matvec(&self, x: &nalgebra::DVector<Complex64>, y: &mut nalgebra::DVector<Complex64>) -> Result<(), String> {
         if x.len() != self.ncols || y.len() != self.nrows {

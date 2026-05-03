@@ -33,7 +33,7 @@ pub mod vf;
 use nalgebra::{DMatrix, DVector};
 use num_complex::Complex64;
 use rem_config::{PalaceConfig, CurrentDipoleSpec};
-use rem_core::{CsrMatrix, RemError, RemResult, TripletMatrix, report_peak_memory};
+use rem_core::{CsrMatrix, RemError, RemResult, TripletMatrix, report_peak_memory, solve_pcg_complex, CsrMatrixComplex};
 use rem_eigenmode::assemble_mass::assemble_mass;
 use rem_electrostatic::{assemble::{assemble_stiffness, assemble_stiffness_aniso}, bc::{collect_dirichlet_dofs, collect_dirichlet_dofs_open_circuit, apply_dirichlet}, postprocess};
 use rem_materials::DomainMap;
@@ -1028,6 +1028,38 @@ fn apply_dirichlet_complex(
     }
 }
 
+/// Try to solve with PCG, fallback to GMRES if conversion or convergence fails.
+/// Enable PCG attempt via use_pcg=true parameter.
+fn solve_complex_helmholtz_adaptive(
+    a: &DMatrix<Complex64>,
+    rhs: &[Complex64],
+    tol: f64,
+    max_iter: usize,
+    use_pcg: bool,
+) -> RemResult<Vec<Complex64>> {
+    if !use_pcg {
+        return gmres_complex(a, rhs, tol, max_iter);
+    }
+
+    // Convert dense DMatrix to CSR format
+    let mat_csr = CsrMatrixComplex::from_dense(a);
+    
+    // Attempt PCG solve
+    let result = solve_pcg_complex(&mat_csr, rhs, tol, max_iter);
+    
+    if result.converged {
+        log::debug!("PCG: converged in {} iterations (residual {:.3e})", 
+                    result.iterations, result.residual_norm);
+        return Ok(result.solution);
+    }
+
+    // PCG diverged or hit max iterations; fallback to GMRES
+    log::debug!("PCG: no convergence after {} iterations (residual {:.3e}); using GMRES",
+                result.iterations, result.residual_norm);
+    gmres_complex(a, rhs, tol, max_iter)
+}
+
+
 /// Complex GMRES solver using nalgebra (restart=30).
 fn gmres_complex(
     a: &DMatrix<Complex64>,
@@ -1462,7 +1494,14 @@ fn solve_one_excitation(
         }
     }
 
-    let phi_c = gmres_complex(&a, &rhs_c, lin.tol, lin.max_iter)?;
+    // Phase 2a: Optionally try PCG solver via environment variable
+    let use_pcg = std::env::var("REM_USE_PCG").is_ok();
+    let phi_c = if use_pcg {
+        log::debug!("solve_one_excitation: Attempting PCG solve (REM_USE_PCG enabled)");
+        solve_complex_helmholtz_adaptive(&a, &rhs_c, lin.tol, lin.max_iter, true)?
+    } else {
+        gmres_complex(&a, &rhs_c, lin.tol, lin.max_iter)?
+    };
 
     // Helper: collect unique node IDs for a given port index.
     let port_node_ids = |pidx: u32| -> Vec<usize> {
