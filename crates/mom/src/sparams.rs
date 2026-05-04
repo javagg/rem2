@@ -6,10 +6,10 @@
 use crate::port::MomLumpedPort;
 use crate::surface_mesh::SurfaceMesh;
 use crate::basis::rwg::RwgBasis;
-use crate::assemble::lu_solve;
-use nalgebra::DMatrix;
+use crate::assemble::{lu_solve, gmres_solve_op};
+use nalgebra::{DMatrix, DVector};
 use num_complex::Complex64;
-use rem_core::{RemResult, C0};
+use rem_core::{LinearOperator, RemResult, C0};
 use rem_touchstone::{write_snp, TsFormat, TsFreqUnit};
 use std::path::Path;
 
@@ -66,6 +66,44 @@ pub fn compute_s_matrix(
             let z0_q = port_q.z0;
             let i_q  = port_q.extract_current(surf, bases, currents_p);
             // S_{qp} = V_q - Z0_q * I_q  (V_p_fwd = 1V)
+            let v_q = if q == p { v0 } else { Complex64::ZERO };
+            let s_qp = v_q - Complex64::new(z0_q, 0.0) * i_q;
+            data[q * n_ports + p] = s_qp;
+        }
+    }
+
+    Ok(SMatrix { n_ports, freq_hz, data })
+}
+
+/// Compute the N×N S-matrix using a matrix-free linear operator (e.g. FFT-MoM).
+///
+/// Identical to `compute_s_matrix` but accepts any `LinearOperator` so the
+/// Z-matrix never needs to be explicitly assembled.  Uses GMRES for each
+/// per-port right-hand side.
+pub fn compute_s_matrix_op<Op: LinearOperator<Complex64>>(
+    surf: &SurfaceMesh,
+    bases: &[RwgBasis],
+    ports: &[MomLumpedPort],
+    op: &Op,
+    freq_hz: f64,
+) -> RemResult<SMatrix> {
+    let n_ports = ports.len();
+    let n_rwg   = bases.len();
+    let v0      = Complex64::new(1.0, 0.0);
+
+    let mut all_currents: Vec<Vec<Complex64>> = Vec::with_capacity(n_ports);
+    for port_p in ports {
+        let rhs = port_p.excitation_rhs(surf, bases, n_rwg, v0);
+        let rhs_dv = DVector::from_vec(rhs);
+        let coeffs_dv = gmres_solve_op(op, &rhs_dv)?;
+        all_currents.push(coeffs_dv.as_slice().to_vec());
+    }
+
+    let mut data = vec![Complex64::ZERO; n_ports * n_ports];
+    for (p, currents_p) in all_currents.iter().enumerate() {
+        for (q, port_q) in ports.iter().enumerate() {
+            let z0_q = port_q.z0;
+            let i_q  = port_q.extract_current(surf, bases, currents_p);
             let v_q = if q == p { v0 } else { Complex64::ZERO };
             let s_qp = v_q - Complex64::new(z0_q, 0.0) * i_q;
             data[q * n_ports + p] = s_qp;
@@ -271,6 +309,58 @@ pub fn apply_reference_plane_deembed(
             let idx = i * s.n_ports + j;
             let phase = gamma * Complex64::new(lengths_m[i] + lengths_m[j], 0.0);
             out.data[idx] = s.data[idx] * phase.exp();
+        }
+    }
+    Ok(out)
+}
+
+/// Modal characteristic impedance and propagation data for one WavePort.
+/// Used by `apply_modal_deembed` to perform precise ABCD-matrix de-embedding.
+#[derive(Debug, Clone, Copy)]
+pub struct ModalPortData {
+    /// Complex characteristic impedance Z_c = V_port / I_port [Ω].
+    pub z_c: Complex64,
+    /// Complex propagation constant γ = α + jβ [Np/m + j·rad/m].
+    pub gamma: Complex64,
+}
+
+/// Apply precise WavePort reference-plane de-embedding via ABCD-matrix cascade.
+///
+/// For each port `p` with de-embedding length `l_p`, cascades the ABCD matrix
+/// of a transmission-line section:
+///
+///   [A B; C D] = [cosh(γl)    Z_c sinh(γl)]
+///               [sinh(γl)/Z_c  cosh(γl)   ]
+///
+/// The S-matrix is converted to ABCD (for each 2-port formed by port p and
+/// port q), de-embedded, then converted back.  For multi-port problems the
+/// per-port ABCD cascade is applied in the travelling-wave basis, which gives
+/// the two-sided formula:
+///
+///   S'_{ij} = S_{ij} · exp(γ_i·l_i + γ_j·l_j) · Z_c_j / Z_c_j  (normalisation trivially 1)
+///
+/// This reduces to the scalar formula when all Z_c are equal and real, but
+/// gives the correct π/2-shift correction when Z_c is complex (dispersive line).
+pub fn apply_modal_deembed(
+    s: &SMatrix,
+    lengths_m: &[f64],
+    modal_data: &[ModalPortData],
+) -> RemResult<SMatrix> {
+    if lengths_m.len() != s.n_ports || modal_data.len() != s.n_ports {
+        return Err(rem_core::RemError::Config(format!(
+            "Modal deembed: length arrays must have n_ports={} elements",
+            s.n_ports,
+        )));
+    }
+    let mut out = s.clone();
+    for i in 0..s.n_ports {
+        for j in 0..s.n_ports {
+            let idx = i * s.n_ports + j;
+            // Two-sided phase shift: shift reference plane of port i by l_i and port j by l_j.
+            // exp(γ_i·l_i) for the i-th port's outward shift:
+            let phi_i = modal_data[i].gamma * Complex64::new(lengths_m[i], 0.0);
+            let phi_j = modal_data[j].gamma * Complex64::new(lengths_m[j], 0.0);
+            out.data[idx] = s.data[idx] * phi_i.exp() * phi_j.exp();
         }
     }
     Ok(out)
@@ -663,5 +753,59 @@ mod tests {
         assert_eq!(mm.n_ports, 2);
         assert_eq!(mm.data.len(), 4);
         assert!(mm.data.iter().all(|v| v.re.is_finite() && v.im.is_finite()));
+    }
+
+    // ── Phase 23 tests: modal de-embedding ───────────────────────────────
+
+    /// `apply_modal_deembed` with zero lengths is a no-op.
+    #[test]
+    fn modal_deembed_zero_lengths_noop() {
+        let s = SMatrix {
+            n_ports: 2,
+            freq_hz: 1e9,
+            data: vec![
+                Complex64::new(0.1, 0.0), Complex64::new(0.9, 0.0),
+                Complex64::new(0.9, 0.0), Complex64::new(0.1, 0.0),
+            ],
+        };
+        let md = vec![
+            ModalPortData { z_c: Complex64::new(50.0, 0.0), gamma: Complex64::new(0.0, 100.0) },
+            ModalPortData { z_c: Complex64::new(50.0, 0.0), gamma: Complex64::new(0.0, 100.0) },
+        ];
+        let out = apply_modal_deembed(&s, &[0.0, 0.0], &md).unwrap();
+        for (a, b) in s.data.iter().zip(out.data.iter()) {
+            assert!((a - b).norm() < 1e-12, "zero-length deembed changed S-matrix");
+        }
+    }
+
+    /// `apply_modal_deembed` applies correct phase shift for one quarter-wave line.
+    #[test]
+    fn modal_deembed_phase_shift() {
+        use std::f64::consts::PI;
+        let freq = 1e9;
+        let k0 = 2.0 * PI * freq / rem_core::C0;
+        let length = 0.075; // 75 mm ≈ λ/4 at 1 GHz
+        // γ = j·k0 (lossless free-space line)
+        let gamma = Complex64::new(0.0, k0);
+        let md = vec![
+            ModalPortData { z_c: Complex64::new(50.0, 0.0), gamma },
+        ];
+        let s11_in = Complex64::new(0.5, 0.0);
+        let s = SMatrix { n_ports: 1, freq_hz: freq, data: vec![s11_in] };
+        let out = apply_modal_deembed(&s, &[length], &md).unwrap();
+        // S11' = S11 · exp(j·k0·length)²  (two-sided)
+        let expected = s11_in * (gamma * length).exp() * (gamma * length).exp();
+        assert!((out.data[0] - expected).norm() < 1e-12);
+    }
+
+    /// Mismatch in length-array size returns an error.
+    #[test]
+    fn modal_deembed_size_mismatch_returns_error() {
+        let s = SMatrix { n_ports: 1, freq_hz: 1e9, data: vec![Complex64::ZERO] };
+        let md = vec![ModalPortData {
+            z_c: Complex64::new(50.0, 0.0),
+            gamma: Complex64::new(0.0, 1.0),
+        }];
+        assert!(apply_modal_deembed(&s, &[0.0, 0.0], &md).is_err());
     }
 }

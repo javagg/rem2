@@ -7,6 +7,7 @@
 
 use crate::surface_mesh::SurfaceMesh;
 use crate::basis::rwg::RwgBasis;
+use crate::sparams::ModalPortData;
 use nalgebra::{DMatrix, DVector};
 use num_complex::Complex64;
 use rem_core::RemResult;
@@ -25,6 +26,10 @@ pub struct MomLumpedPort {
     pub modal_profile: Option<HashMap<usize, f64>>,
     /// Reference impedance Z₀ [Ω].
     pub z0: f64,
+    /// Graph-Laplacian eigenvalue from WavePort modal solve.
+    /// Provides an estimate of the modal wavenumber: β ≈ π√λ / L_port.
+    /// `None` for lumped ports or when the eigensolve was not available.
+    pub modal_eigenvalue: Option<f64>,
 }
 
 impl MomLumpedPort {
@@ -54,10 +59,14 @@ impl MomLumpedPort {
             .map(|(i, _)| i)
             .collect();
 
-        let modal_profile = if port_type.eq_ignore_ascii_case("waveport") {
+        let modal_profile_result = if port_type.eq_ignore_ascii_case("waveport") {
             build_waveport_mode_profile(surf, &port_attr_set, mode)
         } else {
             None
+        };
+        let (modal_profile, modal_eigenvalue) = match modal_profile_result {
+            Some((lam, shape)) => (Some(shape), Some(lam)),
+            None => (None, None),
         };
 
         Ok(Self {
@@ -65,6 +74,7 @@ impl MomLumpedPort {
             rwg_indices,
             direction: direction_vec(direction_str),
             modal_profile,
+            modal_eigenvalue,
             z0,
         })
     }
@@ -137,6 +147,72 @@ impl MomLumpedPort {
         }
         i_port
     }
+
+    /// Compute modal port data (Z_c and γ) for precise WavePort de-embedding.
+    ///
+    /// Uses the graph-Laplacian eigenvalue (if present) to derive a port-specific
+    /// modal wavenumber β_modal.  The characteristic impedance is taken from `z0`.
+    /// The propagation constant is:
+    ///
+    ///   γ = α + j·β_modal
+    ///
+    /// where β_modal is derived from the eigenvalue λ and the port perimeter L:
+    ///   β_modal = π·√λ / L    (first non-trivial mode of a 1-D periodic line)
+    ///
+    /// Falls back to `eps_eff` / `alpha_np_per_m` from config when no eigenvalue is stored.
+    pub fn compute_modal_data(
+        &self,
+        surf: &SurfaceMesh,
+        freq_hz: f64,
+        eps_eff_fallback: f64,
+        alpha_np_per_m: f64,
+    ) -> ModalPortData {
+        use std::f64::consts::PI;
+        // Compute port perimeter (sum of face edge lengths on the port surface).
+        // Used to scale the eigenvalue-derived wavenumber.
+        let port_perimeter: f64 = if let Some(ref profile) = self.modal_profile {
+            // Estimate perimeter from the extent of nodes with non-trivial weight
+            let node_coords: Vec<[f64; 3]> = profile.keys()
+                .filter_map(|&ni| surf.nodes.get(ni).copied())
+                .collect();
+            if node_coords.len() >= 2 {
+                let (x_min, x_max, y_min, y_max, z_min, z_max) = node_coords.iter().fold(
+                    (f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY,
+                     f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY),
+                    |(x0, x1, y0, y1, z0, z1), &[x, y, z]| {
+                        (x0.min(x), x1.max(x), y0.min(y), y1.max(y), z0.min(z), z1.max(z))
+                    },
+                );
+                let dx = x_max - x_min;
+                let dy = y_max - y_min;
+                let dz = z_max - z_min;
+                // Dominant span as perimeter estimate
+                dx.max(dy).max(dz).max(1e-12)
+            } else {
+                1e-3 // 1 mm default
+            }
+        } else {
+            1e-3
+        };
+
+        let beta = if let Some(lam) = self.modal_eigenvalue {
+            // β from graph-Laplacian eigenvalue: β ≈ π√λ / L_port
+            let beta_modal = PI * lam.max(0.0).sqrt() / port_perimeter;
+            if beta_modal > 1e-6 {
+                beta_modal
+            } else {
+                // Fallback to config effective permittivity
+                2.0 * PI * freq_hz / rem_core::C0 * eps_eff_fallback.max(1.0).sqrt()
+            }
+        } else {
+            2.0 * PI * freq_hz / rem_core::C0 * eps_eff_fallback.max(1.0).sqrt()
+        };
+
+        ModalPortData {
+            z_c: Complex64::new(self.z0, 0.0),
+            gamma: Complex64::new(alpha_np_per_m, beta),
+        }
+    }
 }
 
 fn direction_vec(s: &str) -> [f64; 3] {
@@ -155,7 +231,7 @@ fn build_waveport_mode_profile(
     surf: &SurfaceMesh,
     port_attr_set: &HashSet<u32>,
     mode: u32,
-) -> Option<HashMap<usize, f64>> {
+) -> Option<(f64, HashMap<usize, f64>)> {
     let mode = mode.max(1) as usize;
 
     let port_faces: Vec<usize> = surf.face_attrs.iter().enumerate()
@@ -264,7 +340,7 @@ fn build_waveport_mode_profile(
         return None;
     }
 
-    let (_, y_n) = pairs.remove(mode - 1);
+    let (eigenvalue, y_n) = pairs.remove(mode - 1);
     let y = DVector::from_vec(y_n);
     let x_free = lt.solve_upper_triangular(&y)?;
 
@@ -284,7 +360,7 @@ fn build_waveport_mode_profile(
             shape.insert(gi, v);
         }
     }
-    Some(shape)
+    Some((eigenvalue, shape))
 }
 
 #[cfg(test)]

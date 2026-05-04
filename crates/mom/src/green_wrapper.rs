@@ -53,6 +53,8 @@ pub fn single_layer_fr4() -> DielectricLayer {
         loss_tan: 0.02,
         mu_r: 1.0,
         thickness_m: 1.0e-3,
+        eps_r_complex_override: None,
+        eps_r_z: None,
     }
 }
 
@@ -90,6 +92,8 @@ mod tests {
             loss_tan: 0.0,
             mu_r: 1.0,
             thickness_m: 1e10, // Very thick "air"
+            eps_r_complex_override: None,
+            eps_r_z: None,
         }];
         let freq = 1.0e9; // 1 GHz
         let r = [0.1, 0.0, 0.0]; // 10 cm

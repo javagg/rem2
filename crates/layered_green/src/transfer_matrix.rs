@@ -18,8 +18,12 @@ pub struct ModeImpedance {
 /// Material properties for a single layer
 #[derive(Debug, Clone, Copy)]
 pub struct MaterialProps {
-    /// Relative permittivity (complex to handle loss)
+    /// Relative lateral permittivity ε_xx = ε_yy (complex, includes loss)
     pub eps_r: Complex64,
+    /// Vertical (z-axis) relative permittivity ε_zz.
+    /// `None` = isotropic (ε_zz = ε_xx).
+    /// When set, enables uniaxial anisotropic dispersion relations.
+    pub eps_r_z: Option<Complex64>,
     /// Relative permeability
     pub mu_r: Complex64,
     /// Layer thickness [m]
@@ -77,7 +81,7 @@ pub fn compute_reflection_coefficient(
 ) -> Complex64 {
     // Free space characteristic impedance (Z0 = eta0)
     const ETA0: f64 = 376.73031346177066; // √(μ0/ε0) [Ω]
-    
+
     // Wave impedance in air (medium 0)
     let k_z0 = (k0 * k0 - k_rho * k_rho).sqrt();
     let z0_air = match mode {
@@ -86,14 +90,30 @@ pub fn compute_reflection_coefficient(
         _ => panic!("Invalid mode: {}", mode),
     };
 
-    // Wave impedance in substrate layer
-    let k_sub = k0 * (layer.eps_r * layer.mu_r).sqrt();
-    let k_z_sub = (k_sub * k_sub - k_rho * k_rho).sqrt();
-    
-    let z_sub = match mode {
-        "TE" => ETA0 / k_z_sub * k_sub,
-        "TM" => ETA0 * k_z_sub / k_sub,
+    // Vertical permittivity: ε_z for TM; lateral ε_t for TE
+    let eps_t = layer.eps_r;
+    let eps_z = layer.eps_r_z.unwrap_or(eps_t); // isotropic if None
+
+    // Vertical wavenumber in substrate layer (uniaxial anisotropy):
+    //   TE:  k_z_te² = k0² ε_t μ_r − k_ρ²
+    //   TM:  k_z_tm² = k0² ε_z μ_r − k_ρ² (ε_z/ε_t)
+    let k_z_sub = match mode {
+        "TE" => {
+            let kz_sq = k0 * k0 * eps_t * layer.mu_r - k_rho * k_rho;
+            kz_sq.sqrt()
+        }
+        "TM" => {
+            let kz_sq = k0 * k0 * eps_z * layer.mu_r
+                - Complex64::new(k_rho * k_rho, 0.0) * eps_z / eps_t;
+            kz_sq.sqrt()
+        }
         _ => panic!("Invalid mode: {}", mode),
+    };
+
+    let z_sub = match mode {
+        "TE" => ETA0 * Complex64::new(k0, 0.0) / k_z_sub,
+        "TM" => ETA0 * k_z_sub / (Complex64::new(k0, 0.0) * eps_z),
+        _ => unreachable!(),
     };
 
     // Reflection coefficient at air-substrate interface
@@ -121,50 +141,50 @@ pub fn spectral_green_single_layer(
 ) -> Complex64 {
     const ETA0: f64 = 376.73031346177066;
 
-    // Wavenumber in substrate
-    let k_sub = k0 * (layer.eps_r * layer.mu_r).sqrt();
-    
-    // Vertical wavenumber in air (need to handle complex case)
+    let eps_t = layer.eps_r;
+    let eps_z = layer.eps_r_z.unwrap_or(eps_t);
+
+    // Vertical wavenumber in air (evanescent if k_rho > k0)
     let k_z0_sq = k0 * k0 - k_rho * k_rho;
     let k_z0 = if k_z0_sq >= 0.0 {
         Complex64::new(k_z0_sq.sqrt(), 0.0)
     } else {
-        Complex64::new(0.0, (-k_z0_sq).sqrt()) // Evanescent wave
+        Complex64::new(0.0, (-k_z0_sq).sqrt())
     };
-    
-    // Vertical wavenumber in substrate
-    let k_z_sub_sq = k_sub * k_sub - k_rho * k_rho;
-    let k_z_sub = if k_z_sub_sq.norm_sqr() > 0.0 {
-        k_z_sub_sq.sqrt()
-    } else {
-        Complex64::new(0.0, 0.0) // Avoid NaN
-    };
-    
-    if k_z0.norm() < 1e-16 || k_z_sub.norm() < 1e-16 {
+
+    // TE vertical wavenumber in substrate: k_z_te² = k0² ε_t μ - k_ρ²
+    let k_z_te_sq = k0 * k0 * eps_t * layer.mu_r - k_rho * k_rho;
+    let k_z_te = k_z_te_sq.sqrt();
+
+    // TM vertical wavenumber in substrate (uniaxial): k_z_tm² = k0² ε_z μ - k_ρ² (ε_z/ε_t)
+    let k_z_tm_sq = k0 * k0 * eps_z * layer.mu_r
+        - Complex64::new(k_rho * k_rho, 0.0) * eps_z / eps_t;
+    let k_z_tm = k_z_tm_sq.sqrt();
+
+    if k_z0.norm() < 1e-16 || k_z_te.norm() < 1e-16 || k_z_tm.norm() < 1e-16 {
         return Complex64::new(0.0, 0.0);
     }
-    
-    // Reflection coefficients for TE and TM
-    let gamma_te = (k_z_sub - k_z0) / (k_z_sub + k_z0);
-    let gamma_tm = (layer.eps_r * k_z0 - k_z_sub) / (layer.eps_r * k_z0 + k_z_sub);
-    
-    // Vertical spacing in air
+
+    // TE reflection: Γ_TE = (k_z_te − k_z0) / (k_z_te + k_z0)
+    let gamma_te = (k_z_te - k_z0) / (k_z_te + k_z0);
+
+    // TM reflection (anisotropic): Γ_TM = (eps_t k_z0 − eps_z k_z_tm? ... use impedance form)
+    // Z_TM_sub = k_z_tm / (k0 ε_z),  Z_TM_air = k_z0 / k0
+    let z_tm_air = k_z0 / Complex64::new(k0, 0.0);
+    let z_tm_sub = k_z_tm / (Complex64::new(k0, 0.0) * eps_z);
+    let gamma_tm = (z_tm_sub - z_tm_air) / (z_tm_sub + z_tm_air);
+
     let dz = z - z_prime;
-    
-    // Green's function kernel: combination of incident and reflected waves
     if dz.abs() < 1e-14 {
         return Complex64::new(0.0, 0.0);
     }
-    
-    // Propagation factor
+
     let phase = -Complex64::new(0.0, 1.0) * k_z0 * dz;
     let prop = phase.exp();
 
-    // For both TE and TM (average contribution)
     let g_te = gamma_te * prop / k_z0;
     let g_tm = gamma_tm * prop / k_z0;
 
-    // Proper normalization
     (g_te + g_tm) / (2.0 * ETA0 * k_z0)
 }
 

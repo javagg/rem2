@@ -1145,6 +1145,115 @@ pub struct SubstrateLayerConfig {
     /// Optional name (e.g., "Silicon", "FR4") for documentation
     #[serde(rename = "Name", default)]
     pub name: String,
+
+    /// Optional frequency-dependent dispersion model.
+    ///
+    /// When present, overrides the static `Permittivity` + `LossTangent`
+    /// values at each frequency point.  The complex permittivity is evaluated
+    /// at the simulation frequency and used in the Sommerfeld integral.
+    ///
+    /// Supported models:
+    /// - `"Debye"`: relaxation model  ε(ω) = ε_∞ + (ε_s − ε_∞) / (1 + jωτ)
+    /// - `"Lorentz"`: oscillator model ε(ω) = ε_∞ + Δε·ω₀² / (ω₀² − ω² + jγω)
+    #[serde(rename = "Dispersion", default)]
+    pub dispersion: Option<DispersionModel>,
+
+    /// Anisotropic permittivity tensor [ε_xx, ε_yy, ε_zz].
+    ///
+    /// When set, overrides the scalar `Permittivity` field.  Supports
+    /// uniaxial anisotropy (ε_xx = ε_yy ≠ ε_zz) typical of laminated PCB
+    /// substrates (e.g., Rogers 4350B: ε_xy ≈ 3.48, ε_z ≈ 3.66).
+    /// The Sommerfeld integral uses ε_t = ε_xx for lateral wavenumber and
+    /// ε_z = ε_zz for vertical wavenumber in TM modes.
+    #[serde(rename = "PermittivityTensor", default)]
+    pub permittivity_tensor: Option<[f64; 3]>,
+}
+
+/// Frequency-dependent permittivity dispersion model for a substrate layer.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "Type")]
+pub enum DispersionModel {
+    /// Debye relaxation:  ε(ω) = ε_∞ + (ε_s − ε_∞) / (1 + jωτ)
+    Debye {
+        /// High-frequency permittivity ε_∞ (lossless plateau above resonance)
+        #[serde(rename = "EpsInf")]
+        eps_inf: f64,
+        /// Static (DC) permittivity ε_s
+        #[serde(rename = "EpsStatic")]
+        eps_static: f64,
+        /// Relaxation time constant τ [s]
+        #[serde(rename = "RelaxationTime")]
+        tau_s: f64,
+    },
+    /// Lorentz oscillator: ε(ω) = ε_∞ + Δε·ω₀² / (ω₀² − ω² + jγω)
+    Lorentz {
+        /// High-frequency permittivity ε_∞
+        #[serde(rename = "EpsInf")]
+        eps_inf: f64,
+        /// Permittivity increment Δε = ε_s − ε_∞
+        #[serde(rename = "DeltaEps")]
+        delta_eps: f64,
+        /// Resonant angular frequency ω₀ [rad/s]
+        #[serde(rename = "OmegaRes")]
+        omega0_rad_per_s: f64,
+        /// Damping coefficient γ [rad/s]
+        #[serde(rename = "Gamma")]
+        gamma_rad_per_s: f64,
+    },
+}
+
+impl DispersionModel {
+    /// Complex relative permittivity at angular frequency ω = 2π·f [rad/s].
+    pub fn eps_r_at_omega(&self, omega: f64) -> num_complex::Complex64 {
+        use num_complex::Complex64;
+        match *self {
+            DispersionModel::Debye { eps_inf, eps_static, tau_s } => {
+                let denom = Complex64::new(1.0, omega * tau_s);
+                Complex64::new(eps_inf, 0.0) + Complex64::new(eps_static - eps_inf, 0.0) / denom
+            }
+            DispersionModel::Lorentz { eps_inf, delta_eps, omega0_rad_per_s, gamma_rad_per_s } => {
+                let w0sq = omega0_rad_per_s * omega0_rad_per_s;
+                let denom = Complex64::new(w0sq - omega * omega, gamma_rad_per_s * omega);
+                Complex64::new(eps_inf, 0.0) + Complex64::new(delta_eps * w0sq, 0.0) / denom
+            }
+        }
+    }
+}
+
+impl SubstrateLayerConfig {
+    /// Complex relative permittivity ε_r(f) at frequency `freq_hz`.
+    ///
+    /// Priority:
+    /// 1. Dispersion model (`Dispersion` key), if present.
+    /// 2. Anisotropic tensor (`PermittivityTensor`): uses ε_xx as lateral ε.
+    /// 3. Scalar `Permittivity` + `LossTangent`.
+    pub fn eps_r_complex(&self, freq_hz: f64) -> num_complex::Complex64 {
+        use num_complex::Complex64;
+        use std::f64::consts::PI;
+        if let Some(ref model) = self.dispersion {
+            let omega = 2.0 * PI * freq_hz;
+            model.eps_r_at_omega(omega)
+        } else if let Some([eps_xx, _, _]) = self.permittivity_tensor {
+            // Use lateral (xx) component; imaginary part from loss tangent
+            Complex64::new(eps_xx, -eps_xx * self.loss_tangent)
+        } else {
+            let eps = self.permittivity;
+            Complex64::new(eps, -eps * self.loss_tangent)
+        }
+    }
+
+    /// Vertical (z-axis) complex permittivity ε_zz(f).
+    ///
+    /// For isotropic and non-tensor layers, equals `eps_r_complex`.
+    /// For anisotropic tensor layers, returns ε_zz component.
+    pub fn eps_r_z_complex(&self, freq_hz: f64) -> Option<num_complex::Complex64> {
+        use num_complex::Complex64;
+        if let Some([_, _, eps_zz]) = self.permittivity_tensor {
+            Some(Complex64::new(eps_zz, -eps_zz * self.loss_tangent))
+        } else {
+            None // isotropic: caller may treat as same as eps_r_complex
+        }
+    }
 }
 
 fn default_bottom_pec() -> bool { true }
@@ -1730,4 +1839,92 @@ where
     }
 
     d.deserialize_any(AngleVisitor)
+}
+
+#[cfg(test)]
+mod dispersion_tests {
+    use super::*;
+
+    #[test]
+    fn debye_at_dc_equals_eps_static() {
+        let model = DispersionModel::Debye { eps_inf: 2.0, eps_static: 4.5, tau_s: 1e-11 };
+        // At ω≈0, ε(ω) → ε_s
+        let eps = model.eps_r_at_omega(1.0); // very low freq
+        assert!((eps.re - 4.5).abs() < 0.01, "Debye DC: re={:.4}", eps.re);
+        assert!(eps.im < 0.0, "Debye DC: imaginary part should be negative (loss)");
+    }
+
+    #[test]
+    fn debye_at_high_freq_equals_eps_inf() {
+        let model = DispersionModel::Debye { eps_inf: 2.0, eps_static: 4.5, tau_s: 1e-11 };
+        // At very high ω (ωτ >> 1), ε(ω) → ε_∞
+        let eps = model.eps_r_at_omega(1e14); // 10 THz >> 1/τ
+        assert!((eps.re - 2.0).abs() < 0.05, "Debye HF: re={:.4}", eps.re);
+    }
+
+    #[test]
+    fn lorentz_at_resonance_is_imaginary_dominated() {
+        let omega0 = 2.0e11; // 200 GHz resonance
+        let gamma  = 1.0e10; // 10 GHz damping
+        let model = DispersionModel::Lorentz {
+            eps_inf: 1.0, delta_eps: 1.0, omega0_rad_per_s: omega0, gamma_rad_per_s: gamma,
+        };
+        let eps = model.eps_r_at_omega(omega0); // at resonance
+        // At resonance: ε = ε_∞ + Δε·ω₀²/(jγω₀) = ε_∞ - j Δε·ω₀/γ
+        assert!(eps.im.abs() > eps.re.abs(), "Lorentz at resonance: should be loss-dominated");
+    }
+
+    #[test]
+    fn substrate_layer_eps_r_complex_uses_dispersion_when_set() {
+        use std::f64::consts::PI;
+        let layer = SubstrateLayerConfig {
+            permittivity: 4.0,
+            loss_tangent: 0.02,
+            permeability: 1.0,
+            thickness: 1e-3,
+            name: String::new(),
+            dispersion: Some(DispersionModel::Debye {
+                eps_inf: 2.0, eps_static: 6.0, tau_s: 1e-11,
+            }),
+            permittivity_tensor: None,
+        };
+        let freq = 1e9; // 1 GHz
+        let eps = layer.eps_r_complex(freq);
+        // Debye at 1 GHz: ωτ = 2π·1e9·1e-11 ≈ 0.063; still close to ε_s
+        assert!(eps.re > 4.0 && eps.re < 6.5, "Debye 1 GHz re={:.3}", eps.re);
+        assert!(eps.im < 0.0, "Should have negative imaginary part (loss)");
+    }
+
+    #[test]
+    fn substrate_layer_eps_r_z_returns_tensor_zz() {
+        let layer = SubstrateLayerConfig {
+            permittivity: 3.48,
+            loss_tangent: 0.004,
+            permeability: 1.0,
+            thickness: 0.254e-3,
+            name: "Rogers4350B".to_string(),
+            dispersion: None,
+            permittivity_tensor: Some([3.48, 3.48, 3.66]),
+        };
+        let eps_lat = layer.eps_r_complex(1e9);
+        let eps_z   = layer.eps_r_z_complex(1e9).expect("should be Some for tensor");
+        assert!((eps_lat.re - 3.48).abs() < 1e-6);
+        assert!((eps_z.re   - 3.66).abs() < 1e-6);
+        // z and lateral should differ
+        assert!((eps_z.re - eps_lat.re).abs() > 0.1);
+    }
+
+    #[test]
+    fn substrate_layer_isotropic_eps_r_z_returns_none() {
+        let layer = SubstrateLayerConfig {
+            permittivity: 4.2,
+            loss_tangent: 0.02,
+            permeability: 1.0,
+            thickness: 1e-3,
+            name: String::new(),
+            dispersion: None,
+            permittivity_tensor: None,
+        };
+        assert!(layer.eps_r_z_complex(1e9).is_none());
+    }
 }

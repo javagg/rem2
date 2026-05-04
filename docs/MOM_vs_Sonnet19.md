@@ -1,7 +1,7 @@
 # REM MoM 求解器 vs Sonnet Suite 19 对比分析
 
-> 版本：2026-05-04（更新至 REM v0.22.0）
-> REM 基准版本：v0.22.0（`crates/mom/`）  
+> 版本：2026-05-04（更新至 REM v0.23.0）
+> REM 基准版本：v0.23.0（`crates/mom/`）  
 > Sonnet 基准版本：Suite 19（商业授权，Sonnet Software Inc.）
 
 ---
@@ -43,7 +43,7 @@
 | 加速方法 | REM MoM | Sonnet Suite 19 |
 |---------|---------|-----------------|
 | **ACA（自适应截面近似）** | ✅ 部分主元 ACA，Z≈U·V^T，O(N·r) 矩阵向量积；`FastSolver: "ACA"` | ❌ 不支持 ACA |
-| **FFT 加速 MoM** | ❌ 未实现（待 FMM 路线图） | ✅ **核心优势**：利用平面周期性，FFT 加速矩阵填充和矩阵-向量积，O(N log N) |
+| **FFT 加速 MoM** | ✅ v0.23.0 `FftMomSolver` — 平面网格 2-D 卷积，O(N log N)；`FastSolver:"FFT"` 可同时加速 RCS 和 S 参数求解 | ✅ **核心优势**：利用平面周期性，FFT 加速矩阵填充和矩阵-向量积，O(N log N) |
 | **FMM（快速多极子）** | ❌ 配置项已预留，运行时返回错误 | ❌ Sonnet 不使用 FMM |
 | **直接密集 LU** | ✅ nalgebra dense LU，O(N³) | ✅ 内置 dense LU（小问题） |
 | **GMRES** | ✅ 重启 GMRES（restart=30，tol=1e-8），O(N²·restart) | ✅ Krylov 迭代求解器 |
@@ -53,8 +53,8 @@
 | 问题规模（RWG 基函数数 N）| REM 推荐求解器 | Sonnet 能力 |
 |--------------------------|--------------|------------|
 | N < 500 | Dense LU（精度最高） | Dense LU |
-| 500 ≤ N < 3000 | GMRES | FFT 加速迭代 |
-| N ≥ 3000 | **ACA + GMRES**（O(N·r)） | **FFT 加速**（O(N log N)），可处理 N > 100,000 |
+| 500 ≤ N < 3000 | GMRES 或 **FFT**（平面） | FFT 加速迭代 |
+| N ≥ 3000 | **ACA + GMRES**（O(N·r)）或 **FFT**（平面，O(N log N)） | **FFT 加速**（O(N log N)），可处理 N > 100,000 |
 | N > 50,000 | 尚未验证（FMM 路线图中） | Sonnet 商业版支持，需多线程或多核机器 |
 
 ---
@@ -81,7 +81,7 @@
 | **集总端口激励** | ✅ v0.17.0 集总端口，内阻可配 | ✅ 集总端口，内阻可配 |
 | **波导端口** | ✅ v0.22.0 WavePort 图 Laplacian 模式加权激励（`Type:"WavePort"`, `Mode:N`） | ✅ 矩形/同轴波导端口，去嵌入 |
 | **差分端口（混合模）** | ✅ v0.22.0 `PairWith` 字段 + `single_ended_to_mixed_mode` → 2×2 Sdd/Scc 及 2N×2N 全混合模矩阵 | ✅ |
-| **自动去嵌入（Deembedding）** | ✅ v0.22.0 参考面相位+衰减去嵌入（`DeembedLength` / `DeembedEpsEff` / `DeembedAlpha`） | ✅ 港口参考面精确去嵌入 |
+| **自动去嵌入（Deembedding）** | ✅ v0.23.0 WavePort 端口自动选择精确模态去嵌入（`modal_eigenvalue` 推导 γ + 端口 Z_c 级联 ABCD）；Lumped 端口退化为标量相位校正 | ✅ 端口参考面精确去嵌入 |
 
 ### 4.2 后处理
 
@@ -106,8 +106,8 @@
 | **介质目标（均匀）** | ✅ PMCHWT（2N×2N）ε_r/μ_r 可配 | ❌ 不支持任意三维介质散射 |
 | **分层介质基板** | ✅ v0.18.0 Sommerfeld/DCIM 分层 Green 函数 | ✅ **核心优势**：Sommerfeld 积分精确建模任意层叠基板 |
 | **有损导体（表面阻抗）** | ✅ v0.19.0 Leontovich SIBC（`WallConductivity` 配置） | ✅ 表面电阻（σ 有限），R_s 建模 |
-| **各向异性介质** | ❌ MoM 无；FEM 求解器支持 3×3 张量 | ❌ 各向同性基板 |
-| **频变材料** | ❌ MoM 中未实现 | ✅ 有限，通过宽带建模（Debye/Lorentz 近似） |
+| **各向异性介质** | ✅ v0.23.0 `PermittivityTensor:[ε_xx,ε_yy,ε_zz]`；单轴各向异性 Sommerfeld 积分（TE/TM 分别用 ε_t 和 ε_z） | ❌ 各向同性基板 |
+| **频变材料** | ✅ v0.23.0 `Dispersion:{Type:"Debye",...}` 和 `{Type:"Lorentz",...}`；每个频率点重新评估 ε(ω) | ✅ 有限，通过宽带建模（Debye/Lorentz 近似） |
 
 ---
 
@@ -166,7 +166,7 @@
 
 1. **分层介质 Green 函数**：Sonnet 使用精确的 Sommerfeld 积分 Green 函数，天然建模多层基板（FR4、Rogers、LTCC 等叠层），无需将基板体积离散化。这是平面电路分析的物理根基——REM 使用自由空间 Green 函数，无法处理嵌入基板的导体。
 
-2. **FFT 加速 MoM（O(N log N)）**：利用平面结构的移位不变性，用 FFT 加速矩阵填充和矩阵-向量积，可处理 N > 100,000 的超大平面电路。REM ACA 虽有效，但对平面问题效率不及 FFT。
+2. ~~**FFT 加速 MoM（O(N log N)）**：利用平面结构的移位不变性，用 FFT 加速矩阵填充和矩阵-向量积，可处理 N > 100,000 的超大平面电路。REM ACA 虽有效，但对平面问题效率不及 FFT~~（✅ v0.23.0 `FftMomSolver` 2-D FFT 卷积加速已集成，`FastSolver:"FFT"` 在 RCS 和 S 参数路径均可用）
 
 3. ~~**波导端口与去嵌入**：Sonnet 波导端口（矩形/同轴）和端口参考面精确去嵌入仍是 REM 的差距~~（✅ v0.22.0 已实现 WavePort 模式加权激励、`PairWith` 差分混合模、`DeembedLength` 参考面去嵌入）
 

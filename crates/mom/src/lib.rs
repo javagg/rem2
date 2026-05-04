@@ -55,10 +55,14 @@ fn build_green(mom_cfg: &MomSolverConfig, freq: f64) -> Box<dyn GreenFunction> {
             loss_tan: l.loss_tangent,
             mu_r: l.permeability,
             thickness_m: l.thickness,
+            // Frequency-dependent or anisotropic lateral ε: evaluated at this frequency
+            eps_r_complex_override: Some(l.eps_r_complex(freq)),
+            // Anisotropic vertical ε_zz (None = isotropic)
+            eps_r_z: l.eps_r_z_complex(freq),
         }).collect();
         log::info!(
-            "MoM: using layered Green function ({} layer(s), bottom_pec={})",
-            layers.len(), sub.bottom_pec
+            "MoM: using layered Green function ({} layer(s), bottom_pec={}, f={:.3e} Hz)",
+            layers.len(), sub.bottom_pec, freq
         );
         Box::new(LayeredGreen::new(layers, k0))
     } else {
@@ -379,19 +383,30 @@ fn run_s_param_sweep(
             log::info!("MoM S-param solve at f = {:.3e} Hz", freq);
 
             let green = build_green(mom_cfg, freq);
-            let z_mat = assemble::assemble_cfie_rwg_green(
-                surf, &bases, green.as_ref(), freq, mom_cfg.alpha, &quad, mom_cfg.singular_tol,
-            )?;
-            let mut z_mat = z_mat;
-            if mom_cfg.wall_conductivity > 0.0 {
-                sibc::apply_sibc_rwg(&mut z_mat, surf, &bases, freq, mom_cfg.wall_conductivity, &quad);
-                log::info!(
-                    "MoM SIBC enabled: sigma_wall={:.3e} S/m",
-                    mom_cfg.wall_conductivity
-                );
-            }
 
-            let sm = sparams::compute_s_matrix(surf, &bases, &lumped_ports, &z_mat, freq)?;
+            let sm = if mom_cfg.fast_solver.eq_ignore_ascii_case("FFT")
+                && fft_accel::FftMomSolver::is_applicable(&surf.nodes)
+            {
+                // FFT-accelerated path: avoid building full Z matrix
+                let k = 2.0 * std::f64::consts::PI * freq / rem_core::C0;
+                log::info!("MoM FFT S-param: planar mesh N={}, building FFT operator", surf.nodes.len());
+                let fft_op = fft_accel::FftMomSolver::build(&surf.nodes, k)?;
+                sparams::compute_s_matrix_op(surf, &bases, &lumped_ports, &fft_op, freq)?
+            } else {
+                let z_mat = assemble::assemble_cfie_rwg_green(
+                    surf, &bases, green.as_ref(), freq, mom_cfg.alpha, &quad, mom_cfg.singular_tol,
+                )?;
+                let mut z_mat = z_mat;
+                if mom_cfg.wall_conductivity > 0.0 {
+                    sibc::apply_sibc_rwg(&mut z_mat, surf, &bases, freq, mom_cfg.wall_conductivity, &quad);
+                    log::info!(
+                        "MoM SIBC enabled: sigma_wall={:.3e} S/m",
+                        mom_cfg.wall_conductivity
+                    );
+                }
+                sparams::compute_s_matrix(surf, &bases, &lumped_ports, &z_mat, freq)?
+            };
+
             log::info!("  S-matrix computed: {}×{}", sm.n_ports, sm.n_ports);
             all_matrices.push(sm);
         }
@@ -400,19 +415,41 @@ fn run_s_param_sweep(
     // Optional per-port de-embedding before writing outputs.
     let deembed_lengths: Vec<f64> = mom_cfg.ports.iter().map(|p| p.deembed_length).collect();
     if deembed_lengths.iter().any(|&l| l.abs() > 0.0) {
-        all_matrices = all_matrices.iter()
-            .map(|s| sparams::apply_reference_plane_deembed(
-                s,
-                &deembed_lengths,
+        // Determine whether any port is a WavePort with a modal eigenvalue.
+        // When available, use precise modal de-embedding; otherwise fall back
+        // to scalar phase-delay approximation.
+        let has_modal = lumped_ports.iter().any(|p| p.modal_eigenvalue.is_some());
+        if has_modal {
+            let modal_data: Vec<sparams::ModalPortData> = lumped_ports.iter()
+                .map(|p| p.compute_modal_data(
+                    surf,
+                    freq, // use first sweep frequency for de-embedding γ
+                    mom_cfg.deembed_eps_eff,
+                    mom_cfg.deembed_alpha_np_per_m,
+                ))
+                .collect();
+            all_matrices = all_matrices.iter()
+                .map(|s| sparams::apply_modal_deembed(s, &deembed_lengths, &modal_data))
+                .collect::<RemResult<_>>()?;
+            log::info!(
+                "MoM WavePort modal de-embedding: {} ports with eigenvalue-derived γ",
+                lumped_ports.iter().filter(|p| p.modal_eigenvalue.is_some()).count()
+            );
+        } else {
+            all_matrices = all_matrices.iter()
+                .map(|s| sparams::apply_reference_plane_deembed(
+                    s,
+                    &deembed_lengths,
+                    mom_cfg.deembed_eps_eff,
+                    mom_cfg.deembed_alpha_np_per_m,
+                ))
+                .collect::<RemResult<_>>()?;
+            log::info!(
+                "MoM reference-plane de-embedding enabled: eps_eff={:.4}, alpha={:.4e} Np/m",
                 mom_cfg.deembed_eps_eff,
                 mom_cfg.deembed_alpha_np_per_m,
-            ))
-            .collect::<RemResult<_>>()?;
-        log::info!(
-            "MoM reference-plane de-embedding enabled: eps_eff={:.4}, alpha={:.4e} Np/m",
-            mom_cfg.deembed_eps_eff,
-            mom_cfg.deembed_alpha_np_per_m,
-        );
+            );
+        }
     }
 
     // Build differential-pair index list (0-based positions in `lumped_ports`).

@@ -120,7 +120,7 @@ pub struct LayeredGreen {
 /// Single dielectric layer definition.
 #[derive(Debug, Clone)]
 pub struct DielectricLayer {
-    /// Relative permittivity (isotropic for now; may extend to tensor)
+    /// Relative permittivity (isotropic lateral value; set eps_r_complex_override for dispersive)
     pub eps_r: f64,
     /// Loss tangent: tan(δ) for dissipation model
     pub loss_tan: f64,
@@ -128,6 +128,14 @@ pub struct DielectricLayer {
     pub mu_r: f64,
     /// Layer thickness [m]; use large value (1e10) for top (air)
     pub thickness_m: f64,
+    /// Pre-evaluated complex permittivity override (lateral, ε_xx = ε_yy).
+    /// When set, supersedes `eps_r` and `loss_tan` for the Sommerfeld integral.
+    /// Use this for frequency-dependent (Debye/Lorentz) or anisotropic lateral ε.
+    pub eps_r_complex_override: Option<num_complex::Complex64>,
+    /// Pre-evaluated vertical (z-axis) complex permittivity ε_zz.
+    /// `None` = isotropic (ε_zz equals the lateral value).
+    /// When set, enables uniaxial anisotropic Sommerfeld integration.
+    pub eps_r_z: Option<num_complex::Complex64>,
 }
 
 impl LayeredGreen {
@@ -194,6 +202,7 @@ impl LayeredGreen {
         if self.layers.is_empty() {
             return vec![MaterialProps {
                 eps_r: Complex64::new(1.0, 0.0),
+                eps_r_z: None,
                 mu_r: Complex64::new(1.0, 0.0),
                 thickness: 1e10,
             }];
@@ -202,10 +211,14 @@ impl LayeredGreen {
         self.layers
             .iter()
             .map(|layer| {
-                let eps_r_real = layer.eps_r;
-                let eps_r_imag = -layer.eps_r * layer.loss_tan;
+                let eps_r_lateral = if let Some(c) = layer.eps_r_complex_override {
+                    c
+                } else {
+                    Complex64::new(layer.eps_r, -layer.eps_r * layer.loss_tan)
+                };
                 MaterialProps {
-                    eps_r: Complex64::new(eps_r_real, eps_r_imag),
+                    eps_r: eps_r_lateral,
+                    eps_r_z: layer.eps_r_z,
                     mu_r: Complex64::new(layer.mu_r, 0.0),
                     thickness: layer.thickness_m,
                 }
@@ -213,18 +226,29 @@ impl LayeredGreen {
             .collect()
     }
 
-    /// Build material properties from layer definition (legacy single-layer).
-    /// For multi-layer, use `build_material_stack`.
-    #[allow(dead_code)]
+    /// Build material properties from layer definition (single-layer, for legacy callers).
+    /// For multi-layer meshes, use `build_material_stack`.
     fn build_material_properties(&self) -> MaterialProps {
-        self.build_material_stack()
-            .first()
-            .copied()
-            .unwrap_or(MaterialProps {
+        if self.layers.is_empty() {
+            return MaterialProps {
                 eps_r: Complex64::new(1.0, 0.0),
+                eps_r_z: None,
                 mu_r: Complex64::new(1.0, 0.0),
                 thickness: 1e10,
-            })
+            };
+        }
+        let layer = &self.layers[0];
+        let eps_r_lateral = if let Some(c) = layer.eps_r_complex_override {
+            c
+        } else {
+            Complex64::new(layer.eps_r, -layer.eps_r * layer.loss_tan)
+        };
+        MaterialProps {
+            eps_r: eps_r_lateral,
+            eps_r_z: layer.eps_r_z,
+            mu_r: Complex64::new(layer.mu_r, 0.0),
+            thickness: layer.thickness_m,
+        }
     }
 
     /// Euclidean distance between r and r'.
@@ -331,6 +355,8 @@ mod tests {
                 loss_tan: 0.01,
                 mu_r: 1.0,
                 thickness_m: 1.0,
+                eps_r_complex_override: None,
+                eps_r_z: None,
             },
         ];
         let green = LayeredGreen::new(layers.clone(), 1.0);
@@ -348,6 +374,8 @@ mod tests {
                 loss_tan: 0.0,
                 mu_r: 1.0,
                 thickness_m: 1e10,
+                eps_r_complex_override: None,
+                eps_r_z: None,
             },
         ];
         let green = LayeredGreen::new(layers, 1.0);
@@ -365,6 +393,8 @@ mod tests {
                 loss_tan: 0.0,
                 mu_r: 1.0,
                 thickness_m: 1e10,
+                eps_r_complex_override: None,
+                eps_r_z: None,
             },
         ];
         let green = LayeredGreen::new(layers, 10.0); // Use higher wavenumber
