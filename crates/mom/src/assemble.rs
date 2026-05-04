@@ -176,6 +176,49 @@ pub fn assemble_cfie_rwg_green(
     Ok(z)
 }
 
+/// Assemble a rectangular sub-block of the CFIE Z matrix for specified row/column basis indices.
+///
+/// Returns a `row_indices.len() × col_indices.len()` matrix.
+/// Used by the FMM solver for near-field exact block assembly.
+pub fn assemble_cfie_rwg_block(
+    surf: &SurfaceMesh,
+    bases: &[RwgBasis],
+    row_indices: &[usize],
+    col_indices: &[usize],
+    green: &dyn GreenFunction,
+    freq: f64,
+    alpha: f64,
+    quad: &TriQuad,
+) -> RemResult<DMatrix<Complex64>> {
+    let nr = row_indices.len();
+    let nc = col_indices.len();
+    if nr == 0 || nc == 0 {
+        return Ok(DMatrix::from_element(nr, nc, Complex64::ZERO));
+    }
+    let omega       = 2.0 * PI * freq;
+    let k           = omega / C0;
+    let eta0        = (MU0 / EPS0).sqrt();
+    let omega_mu0   = omega * MU0;
+    let inv_oe      = 1.0 / (omega * EPS0);
+
+    let mut z = DMatrix::<Complex64>::from_element(nr, nc, Complex64::ZERO);
+    for (ci, &ni) in col_indices.iter().enumerate() {
+        let bn = &bases[ni];
+        for (ri, &mi) in row_indices.iter().enumerate() {
+            let bm = &bases[mi];
+            let z_efie = zmn_efie_rwg_green(bm, bn, surf, green, k, omega_mu0, inv_oe, quad);
+            z[(ri, ci)] = if alpha >= 1.0 - 1e-9 {
+                z_efie
+            } else {
+                let z_mfie = zmn_mfie_rwg_green(bm, bn, surf, green, quad);
+                z_efie * Complex64::new(alpha, 0.0)
+                    + z_mfie * Complex64::new((1.0 - alpha) * eta0, 0.0)
+            };
+        }
+    }
+    Ok(z)
+}
+
 /// Assemble RWG EFIE impedance matrix.
 fn assemble_efie_rwg(
     surf: &SurfaceMesh,

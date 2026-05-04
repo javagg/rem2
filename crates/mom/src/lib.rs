@@ -31,6 +31,7 @@ pub mod port;
 pub mod sparams;
 pub mod sibc;
 pub mod fft_accel;
+pub mod fmm;
 pub mod amr;
 pub mod rom;
 
@@ -200,6 +201,21 @@ pub fn run_with_mesh(
             j_coeffs
         } else {
             // Assemble impedance matrix Z  (PEC EFIE/MFIE/CFIE path)
+            // Early-exit for FMM: builds a matrix-free operator, skips full Z assembly.
+            let is_fmm = mom_cfg.fast_solver.eq_ignore_ascii_case("FMM")
+                && !mom_cfg.basis.eq_ignore_ascii_case("Pulse");
+            if is_fmm {
+                let bases = basis::rwg::generate_rwg_bases(&surf);
+                log::info!("MoM FMM: building 3-D FFT monopole FMM (N={})", bases.len());
+                let green_fmm = build_green(mom_cfg, freq);
+                let quad_fmm  = quadrature::TriQuad::new(3);
+                let fmm_op = fmm::FmmMomSolver::build(
+                    &surf, &bases, green_fmm.as_ref(),
+                    freq, mom_cfg.alpha, &quad_fmm,
+                )?;
+                let rhs_dv = nalgebra::DVector::from_vec(rhs.clone());
+                assemble::gmres_solve_op(&fmm_op, &rhs_dv)?.as_slice().to_vec()
+            } else {
             let z_mat = match mom_cfg.basis.as_str() {
                 "Pulse" | "pulse" => {
                     if mom_cfg.wall_conductivity > 0.0 {
@@ -242,13 +258,9 @@ pub fn run_with_mesh(
                         assemble::gmres_solve(&z_mat, &rhs)?
                     }
                 }
-                "FMM" => {
-                    return Err(rem_core::RemError::Config(
-                        "FastSolver \"FMM\" is not yet implemented; use \"Direct\", \"GMRES\", \"ACA\", or \"FFT\"".to_string()
-                    ));
-                }
                 _ => assemble::lu_solve(&z_mat, &rhs)?,
             }
+            } // end else (non-FMM)
         };
 
         // Compute RCS pattern (always, not just for file output)

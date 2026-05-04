@@ -1,7 +1,7 @@
 # REM MoM 求解器 vs Sonnet Suite 19 对比分析
 
-> 版本：2026-05-04（更新至 REM v0.23.0）
-> REM 基准版本：v0.23.0（`crates/mom/`）  
+> 版本：2026-05-04（更新至 REM v0.25.0）
+> REM 基准版本：v0.25.0（`crates/mom/`）  
 > Sonnet 基准版本：Suite 19（商业授权，Sonnet Software Inc.）
 
 ---
@@ -44,7 +44,7 @@
 |---------|---------|-----------------|
 | **ACA（自适应截面近似）** | ✅ 部分主元 ACA，Z≈U·V^T，O(N·r) 矩阵向量积；`FastSolver: "ACA"` | ❌ 不支持 ACA |
 | **FFT 加速 MoM** | ✅ v0.23.0 `FftMomSolver` — 平面网格 2-D 卷积，O(N log N)；`FastSolver:"FFT"` 可同时加速 RCS 和 S 参数求解 | ✅ **核心优势**：利用平面周期性，FFT 加速矩阵填充和矩阵-向量积，O(N log N) |
-| **FMM（快速多极子）** | ❌ 配置项已预留，运行时返回错误 | ❌ Sonnet 不使用 FMM |
+| **FMM（快速多极子）** | ✅ v0.25.0：3D FFT 单极子 FMM，O(N log N) 三维散射 | ❌ Sonnet 不使用 FMM |
 | **直接密集 LU** | ✅ nalgebra dense LU，O(N³) | ✅ 内置 dense LU（小问题） |
 | **GMRES** | ✅ 重启 GMRES（restart=30，tol=1e-8），O(N²·restart) | ✅ Krylov 迭代求解器 |
 
@@ -55,7 +55,7 @@
 | N < 500 | Dense LU（精度最高） | Dense LU |
 | 500 ≤ N < 3000 | GMRES 或 **FFT**（平面） | FFT 加速迭代 |
 | N ≥ 3000 | **ACA + GMRES**（O(N·r)）或 **FFT**（平面，O(N log N)） | **FFT 加速**（O(N log N)），可处理 N > 100,000 |
-| N > 50,000 | 尚未验证（FMM 路线图中） | Sonnet 商业版支持，需多线程或多核机器 |
+| N > 50,000 | FMM 可处理（O(N log N)），精度验证中 | Sonnet 商业版支持，需多线程或多核机器 |
 
 ---
 
@@ -213,7 +213,7 @@
 | **高** | **端口激励 + S 参数** | 集总端口 + 波导端口，输出 Touchstone `.s2p`，打通 EDA 接口 |
 | **中** | **FFT 加速矩阵填充** | 针对平面结构利用 FFT，将复杂度从 O(N²) 降至 O(N log N) |
 | **中** | **有损导体（表面阻抗）** | 有限电导率 σ 的 SIBC（表面阻抗边界条件） |
-| **低** | **FMM（快速多极子）** | 通用三维大规模散射加速（已在配置项预留） |
+| **已完成** | **FMM（快速多极子）** | v0.25.0：3D FFT 单极子 FMM + 近场精确修正，O(N log N) 三维散射 |
 | **低** | **MoM 内 AMR** | 基于远场/近场误差指示的自适应三角网格细化 |
 
 ---
