@@ -491,6 +491,36 @@ pub fn solve_pcg_ilu0(
     }
 }
 
+/// Solve A x = b using AMG-preconditioned CG (fem-rs AMG backend).
+///
+/// Algebraic Multigrid typically gives 5-30× speedup over Jacobi/SSOR
+/// for large SPD systems from FEM discretisations.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn solve_pcg_amg(
+    mat: &CsrMatrix,
+    b: &[f64],
+    tol: f64,
+    max_iter: usize,
+) -> Result<SolveResult, String> {
+    let fem_mat = mat.to_fem_csr();
+    let solver_cfg = fem_solver::SolverConfig {
+        rtol: tol,
+        max_iter,
+        ..fem_solver::SolverConfig::default()
+    };
+    let amg_cfg = fem_amg::AmgConfig::default();
+    let mut x = vec![0.0f64; b.len()];
+    match fem_amg::solve_amg_cg(&fem_mat, b, &mut x, &amg_cfg, &solver_cfg) {
+        Ok(r) => Ok(SolveResult {
+            solution: x,
+            iterations: r.iterations,
+            residual_norm: r.final_residual,
+            converged: r.converged,
+        }),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 /// Solve A x = b using a sparse direct Cholesky factorisation (fem-rs backend).
 ///
 /// Suitable for small to medium symmetric positive-definite systems where

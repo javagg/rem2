@@ -22,6 +22,8 @@ rem-mom           = { workspace = true }
 rem-sbr           = { workspace = true }
 rem-febi          = { workspace = true }
 rem-ddm           = { workspace = true }
+rem-bem           = { workspace = true }
+rem-planar        = { workspace = true }
 rem-convert       = { workspace = true }
 clap              = { workspace = true }
 anyhow            = { workspace = true }

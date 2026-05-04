@@ -7,7 +7,9 @@
 
 use num_complex::Complex64;
 use std::f64::consts::PI;
-use crate::transfer_matrix::{MaterialProps, spectral_green_single_layer};
+use crate::transfer_matrix::{
+    MaterialProps, spectral_green_single_layer, spectral_green_multilayer,
+};
 
 /// Options for Sommerfeld integral evaluation
 #[derive(Debug, Clone, Copy)]
@@ -98,6 +100,126 @@ pub fn compute_green_sommerfeld(
     );
 
     integral / (4.0 * PI)
+}
+
+/// Compute Sommerfeld integral for multi-layer Green's function.
+///
+/// Uses the Transfer Matrix Method (TMM) to cascade all layers and
+/// evaluate the spectral Green's function. This is the general form
+/// that supports arbitrary stratified media.
+///
+/// # Arguments
+/// * `k0` - Free-space wavenumber [rad/m]
+/// * `rho` - Horizontal distance [m]
+/// * `z` - Observation height [m]
+/// * `z_prime` - Source height [m]
+/// * `materials` - Full layer stack (bottom to top)
+/// * `options` - Numerical integration options
+pub fn compute_green_sommerfeld_multilayer(
+    k0: f64,
+    rho: f64,
+    z: f64,
+    z_prime: f64,
+    materials: &[MaterialProps],
+    options: &SommerfeldOptions,
+) -> Complex64 {
+    if rho < 1e-12 {
+        return Complex64::new(1.0 / (4.0 * PI), 0.0);
+    }
+
+    // Maximum integration limit from the highest-permittivity layer
+    let max_eps: f64 = materials
+        .iter()
+        .map(|m| m.eps_r.norm())
+        .fold(1.0, f64::max);
+    let k_sub_max = k0 * max_eps.sqrt();
+    let k_rho_max = k_sub_max * options.max_param;
+
+    let integral = adaptive_gaussian_quadrature_multilayer(
+        k0, rho, z, z_prime, materials,
+        0.0, k_rho_max, options.max_points, options.rel_error,
+    );
+
+    integral / (4.0 * PI)
+}
+
+/// Adaptive quadrature for multi-layer Green's function.
+fn adaptive_gaussian_quadrature_multilayer(
+    k0: f64,
+    rho: f64,
+    z: f64,
+    z_prime: f64,
+    materials: &[MaterialProps],
+    a: f64,
+    b: f64,
+    _max_points: usize,
+    rel_tol: f64,
+) -> Complex64 {
+    let mut total = Complex64::new(0.0, 0.0);
+    let mut remaining = vec![(a, b)];
+
+    let mut iterations = 0;
+    while !remaining.is_empty() && iterations < 10 {
+        iterations += 1;
+        let mut next_remaining = Vec::new();
+
+        for &(x_a, x_b) in &remaining {
+            let coarse = gauss_quadrature_segment_multilayer(
+                k0, rho, z, z_prime, materials, x_a, x_b, 8,
+            );
+            let fine = gauss_quadrature_segment_multilayer(
+                k0, rho, z, z_prime, materials, x_a, x_b, 16,
+            );
+
+            let error = (fine - coarse).norm();
+            let threshold = rel_tol * fine.norm().max(1e-16);
+
+            if error > threshold {
+                let mid = (x_a + x_b) / 2.0;
+                next_remaining.push((x_a, mid));
+                next_remaining.push((mid, x_b));
+            } else {
+                total += fine;
+            }
+        }
+
+        remaining = next_remaining;
+    }
+
+    if !remaining.is_empty() {
+        total = gauss_quadrature_segment_multilayer(
+            k0, rho, z, z_prime, materials, a, b, 16,
+        );
+    }
+
+    total
+}
+
+/// Single-segment Gaussian quadrature for multi-layer Green's function.
+fn gauss_quadrature_segment_multilayer(
+    k0: f64,
+    rho: f64,
+    z: f64,
+    z_prime: f64,
+    materials: &[MaterialProps],
+    a: f64,
+    b: f64,
+    n: usize,
+) -> Complex64 {
+    let (weights, nodes) = gauss_legendre_quadrature(n);
+    let mut result = Complex64::new(0.0, 0.0);
+
+    for (w, x) in weights.iter().zip(nodes.iter()) {
+        let k_rho = a + (b - a) * (x + 1.0) / 2.0;
+        let dk_rho = (b - a) / 2.0;
+
+        let g_spec = spectral_green_multilayer(k0, k_rho, z, z_prime, materials);
+        let j0_val = bessel_j0(k_rho * rho);
+
+        result += w * g_spec * j0_val * k_rho * dk_rho;
+    }
+
+    result
 }
 
 /// Adaptive Gaussian quadrature integration

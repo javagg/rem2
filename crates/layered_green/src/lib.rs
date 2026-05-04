@@ -18,7 +18,7 @@ mod transfer_matrix;
 
 use discrete_image::{DcimApproximation, GpofFitter};
 use num_complex::Complex64;
-use sommerfeld::{compute_green_sommerfeld, SommerfeldOptions};
+use sommerfeld::{compute_green_sommerfeld, compute_green_sommerfeld_multilayer, SommerfeldOptions};
 use std::f64::consts::PI;
 use transfer_matrix::MaterialProps;
 
@@ -156,8 +156,8 @@ impl LayeredGreen {
         self.z_obs = z_obs;
         self.z_src = z_src;
 
-        // Build material properties for Sommerfeld integral
-        let material = self.build_material_properties();
+        // Build full layer material stack
+        let materials = self.build_material_stack();
 
         // Sample Sommerfeld integral over range of horizontal distances
         let mut fitter = GpofFitter::new(8); // 8 poles typically sufficient
@@ -171,12 +171,12 @@ impl LayeredGreen {
             .collect::<Vec<_>>();
 
         for rho in rho_samples {
-            let g_val = compute_green_sommerfeld(
+            let g_val = compute_green_sommerfeld_multilayer(
                 self.k0,
                 rho,
                 z_obs,
                 z_src,
-                &material,
+                &materials,
                 &options,
             );
             fitter.add_sample(rho, g_val);
@@ -186,29 +186,45 @@ impl LayeredGreen {
         self.dcim = Some(fitter.fit());
     }
 
-    /// Build material properties from layer definition
-    fn build_material_properties(&self) -> MaterialProps {
+    /// Build material properties for all layers.
+    ///
+    /// Returns a vector of `MaterialProps` from bottom-most to top-most layer.
+    /// If no layers are defined, returns a single free-space layer.
+    fn build_material_stack(&self) -> Vec<MaterialProps> {
         if self.layers.is_empty() {
-            // Free space
-            return MaterialProps {
+            return vec![MaterialProps {
                 eps_r: Complex64::new(1.0, 0.0),
                 mu_r: Complex64::new(1.0, 0.0),
                 thickness: 1e10,
-            };
+            }];
         }
 
-        // Use first layer (single-layer assumption for now)
-        let layer = &self.layers[0];
+        self.layers
+            .iter()
+            .map(|layer| {
+                let eps_r_real = layer.eps_r;
+                let eps_r_imag = -layer.eps_r * layer.loss_tan;
+                MaterialProps {
+                    eps_r: Complex64::new(eps_r_real, eps_r_imag),
+                    mu_r: Complex64::new(layer.mu_r, 0.0),
+                    thickness: layer.thickness_m,
+                }
+            })
+            .collect()
+    }
 
-        // Compute complex permittivity: εᵣ = ε'ᵣ - jε''ᵣ = εᵣ(1 - j tan(δ))
-        let eps_r_real = layer.eps_r;
-        let eps_r_imag = -layer.eps_r * layer.loss_tan;
-
-        MaterialProps {
-            eps_r: Complex64::new(eps_r_real, eps_r_imag),
-            mu_r: Complex64::new(layer.mu_r, 0.0),
-            thickness: layer.thickness_m,
-        }
+    /// Build material properties from layer definition (legacy single-layer).
+    /// For multi-layer, use `build_material_stack`.
+    #[allow(dead_code)]
+    fn build_material_properties(&self) -> MaterialProps {
+        self.build_material_stack()
+            .first()
+            .copied()
+            .unwrap_or(MaterialProps {
+                eps_r: Complex64::new(1.0, 0.0),
+                mu_r: Complex64::new(1.0, 0.0),
+                thickness: 1e10,
+            })
     }
 
     /// Euclidean distance between r and r'.
@@ -241,10 +257,10 @@ impl GreenFunction for LayeredGreen {
             return Complex64::ZERO;
         }
 
-        // Use Sommerfeld integral directly (DCIM caching happens inside)
-        let material = self.build_material_properties();
+        // Use full multi-layer Sommerfeld integral
+        let materials = self.build_material_stack();
         let options = SommerfeldOptions::balanced();
-        compute_green_sommerfeld(self.k0, rho, z, z_prime, &material, &options)
+        compute_green_sommerfeld_multilayer(self.k0, rho, z, z_prime, &materials, &options)
     }
 
     fn grad_g(&self, r: &[f64; 3], r_prime: &[f64; 3]) -> [Complex64; 3] {
@@ -364,5 +380,98 @@ mod tests {
             assert!(!component.re.is_infinite());
             assert!(!component.im.is_infinite());
         }
+    }
+
+    #[test]
+    fn multilayer_stack_builds_correctly() {
+        // 3-layer stack: ground, substrate, air
+        let layers = vec![
+            DielectricLayer {
+                eps_r: 1.0,
+                loss_tan: 0.0,
+                mu_r: 1.0,
+                thickness_m: 1e10, // bottom: air half-space
+            },
+            DielectricLayer {
+                eps_r: 4.5,
+                loss_tan: 0.02,
+                mu_r: 1.0,
+                thickness_m: 1.6e-3, // FR4 substrate
+            },
+            DielectricLayer {
+                eps_r: 1.0,
+                loss_tan: 0.0,
+                mu_r: 1.0,
+                thickness_m: 1e10, // top: air half-space
+            },
+        ];
+        let green = LayeredGreen::new(layers, 10.0);
+        assert_eq!(green.layers.len(), 3);
+
+        let materials = green.build_material_stack();
+        assert_eq!(materials.len(), 3);
+        assert!((materials[1].eps_r.re - 4.5).abs() < 1e-12);
+        assert!(materials[1].eps_r.im < 0.0); // loss tangent creates imaginary part
+    }
+
+    #[test]
+    fn multilayer_green_evaluates() {
+        // 3-layer PCB: air substrate | thin dielectric | air top
+        // Both source and observation in the top air layer, well above substrate
+        let layers = vec![
+            DielectricLayer {
+                eps_r: 1.0,
+                loss_tan: 0.0,
+                mu_r: 1.0,
+                thickness_m: 1e10, // bottom: air half-space
+            },
+            DielectricLayer {
+                eps_r: 4.5,
+                loss_tan: 0.02,
+                mu_r: 1.0,
+                thickness_m: 1.6e-3, // FR4
+            },
+            DielectricLayer {
+                eps_r: 1.0,
+                loss_tan: 0.0,
+                mu_r: 1.0,
+                thickness_m: 1e10, // top: air half-space
+            },
+        ];
+        // 1 GHz, λ ≈ 0.3 m
+        let k0 = 2.0 * PI * 1.0e9 / 299792458.0;
+        let green = LayeredGreen::new(layers, k0);
+        // Source and observation clearly in the top air region, separated by λ/2
+        let distance = 0.15; // ~ λ/2
+        let r = [distance, 0.0, 0.01];
+        let r_prime = [0.0, 0.0, 0.01];
+        let g = green.g(&r, &r_prime);
+        // Should produce a finite complex value with reasonable magnitude
+        assert!(g.re.is_finite(), "g.re is not finite: {}", g.re);
+        assert!(g.im.is_finite(), "g.im is not finite: {}", g.im);
+        // |G| should be non-zero and finite (magnitude depends on layer stack)
+        assert!(g.norm() > 0.0, "g.norm() = {} is zero", g.norm());
+    }
+
+    #[test]
+    fn multilayer_singular_handling() {
+        let layers = vec![
+            DielectricLayer {
+                eps_r: 3.0,
+                loss_tan: 0.0,
+                mu_r: 1.0,
+                thickness_m: 1.0,
+            },
+            DielectricLayer {
+                eps_r: 1.0,
+                loss_tan: 0.0,
+                mu_r: 1.0,
+                thickness_m: 1e10,
+            },
+        ];
+        let green = LayeredGreen::new(layers, 5.0);
+        let r = [0.0, 0.0, 0.001];
+        let g = green.g(&r, &r);
+        assert_eq!(g, Complex64::ZERO);
     }
 }

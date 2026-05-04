@@ -118,6 +118,9 @@ pub enum ProblemType {
     /// Hybrid Finite Element – Boundary Integral — REM extension, not in Palace
     #[serde(rename = "FEBI")]
     FEBI,
+    /// Planar Method of Moments (uniform grid + FFT) — REM extension, not in Palace
+    #[serde(rename = "Planar")]
+    Planar,
 }
 
 // ---------------------------------------------------------------------------
@@ -581,6 +584,10 @@ pub struct SolverConfig {
     #[serde(rename = "DDM", default)]
     pub ddm: Option<DdmSolverConfig>,
 
+    /// REM extension: Planar MoM solver parameters (ignored by Palace).
+    #[serde(rename = "Planar", default)]
+    pub planar: Option<PlanarSolverConfig>,
+
     /// REM extension: near-to-far-field transform postprocessing.
     #[serde(rename = "FarField", default)]
     pub far_field: Option<FarFieldConfig>,
@@ -626,6 +633,7 @@ impl Default for SolverConfig {
             sbr: None,
             febi: None,
             ddm: None,
+            planar: None,
             far_field: None,
         }
     }
@@ -1157,6 +1165,16 @@ pub struct FeBiSolverConfig {
     #[serde(rename = "RefImpedance", default = "default_ref_impedance")]
     pub ref_impedance: f64,
 
+    /// Relative permittivity of the exterior (background) medium.
+    /// Default: 1.0 (vacuum / air).
+    #[serde(rename = "ExteriorEpsR", default = "default_exterior_eps")]
+    pub exterior_eps_r: f64,
+
+    /// Relative permeability of the exterior medium.
+    /// Default: 1.0 (vacuum / air).
+    #[serde(rename = "ExteriorMuR", default = "default_exterior_mu")]
+    pub exterior_mu_r: f64,
+
     /// Output directory for postprocessing results
     #[serde(rename = "OutputDir", default = "default_febi_output_dir")]
     pub output_dir: String,
@@ -1169,6 +1187,8 @@ fn default_febi_aca_tol()       -> f64    { 1.0e-3 }
 fn default_febi_gmres_tol()     -> f64    { 1.0e-6 }
 fn default_febi_gmres_max_iter() -> usize { 500 }
 fn default_febi_output_dir()    -> String { "postpro".to_string() }
+fn default_exterior_eps()       -> f64    { 1.0 }
+fn default_exterior_mu()        -> f64    { 1.0 }
 
 // ---------------------------------------------------------------------------
 // DDM solver config (REM extension — ignored by Palace)
@@ -1210,6 +1230,78 @@ fn default_ddm_robin_order()    -> u8     { 1 }
 fn default_ddm_tolerance()      -> f64    { 1.0e-6 }
 fn default_ddm_max_iter()       -> usize  { 100 }
 fn default_ddm_partition_type() -> String { "Dual".to_string() }
+
+// ── Planar MoM solver config ───────────────────────────────────────────────────────
+
+/// Planar MoM solver configuration for layered-media RF passives.
+///
+/// Generates a uniform rectangular grid with RWG basis functions and solves
+/// the MoM system for S-parameter extraction.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PlanarSolverConfig {
+    /// X-direction length of the simulation domain [m]
+    #[serde(rename = "Lx")]
+    pub lx: f64,
+    /// Y-direction length of the simulation domain [m]
+    #[serde(rename = "Ly")]
+    pub ly: f64,
+    /// Number of grid segments in X
+    #[serde(rename = "Nx", default = "default_planar_n")]
+    pub nx: usize,
+    /// Number of grid segments in Y
+    #[serde(rename = "Ny", default = "default_planar_n")]
+    pub ny: usize,
+
+    /// Start frequency [Hz]
+    #[serde(rename = "FreqMin")]
+    pub freq_min: f64,
+    /// End frequency [Hz]
+    #[serde(rename = "FreqMax")]
+    pub freq_max: f64,
+    /// Frequency step [Hz]
+    #[serde(rename = "FreqStep")]
+    pub freq_step: f64,
+
+    /// Dielectric layers for the substrate (bottom-to-top).
+    /// Format: `[eps_r, thickness_mm, ...]` per layer.
+    #[serde(rename = "SubstrateLayers", default)]
+    pub substrate_layers: Vec<PlanarLayerSpec>,
+
+    /// Edge port definitions for S-parameter extraction.
+    #[serde(rename = "Ports", default)]
+    pub ports: Vec<PlanarPortSpec>,
+
+    /// Characteristic impedance for S-parameter normalisation [Ω].
+    #[serde(rename = "RefImpedance", default = "default_ref_impedance")]
+    pub ref_impedance: f64,
+}
+
+/// A single dielectric layer in the planar substrate stack.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PlanarLayerSpec {
+    /// Relative permittivity ε_r
+    #[serde(rename = "EpsR")]
+    pub eps_r: f64,
+    /// Loss tangent tan δ
+    #[serde(rename = "LossTan", default)]
+    pub loss_tan: f64,
+    /// Layer thickness [m]
+    #[serde(rename = "Thickness")]
+    pub thickness: f64,
+}
+
+/// An edge port on the planar grid for S-parameter extraction.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PlanarPortSpec {
+    /// Port index (1-based, for S-matrix ordering)
+    #[serde(rename = "Index")]
+    pub index: usize,
+    /// Edge index on the grid to attach the port
+    #[serde(rename = "Edge", default)]
+    pub edge: usize,
+}
+
+fn default_planar_n() -> usize { 20 }
 
 // ---------------------------------------------------------------------------
 // Postprocessing (REM extension — ignored by Palace)

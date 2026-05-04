@@ -1,5 +1,36 @@
 use rem_core::constants::{EPS0, MU0};
 
+/// Surface roughness model for conductor loss correction.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum RoughnessModel {
+    /// Hammerstad-Jensen (classic): K = 1 + (2/π) arctan(1.4 (Δ/δ)²)
+    Hammerstad,
+    /// Groisse: K = 1 + exp(−δ/(2Δ))
+    Groisse,
+    /// Huray snowball model: K = 1 + (3/2) (Δ/δ)
+    Huray,
+}
+
+/// Surface roughness parameters for conductor materials.
+#[derive(Debug, Clone)]
+pub struct SurfaceRoughness {
+    /// RMS surface roughness [m]
+    pub rms: f64,
+    /// Roughness correction model
+    pub model: RoughnessModel,
+}
+
+/// Temperature-dependent material coefficients.
+#[derive(Debug, Clone)]
+pub struct TemperatureCoefficient {
+    /// Reference temperature for given properties [K] (typically 293.15 = 20°C)
+    pub t_ref: f64,
+    /// Temperature coefficient of permittivity [ppm/K]
+    pub permittivity_tc: f64,
+    /// Temperature coefficient of conductivity [ppm/K]
+    pub conductivity_tc: f64,
+}
+
 /// Physical material properties.
 ///
 /// All values are in SI units and represent relative quantities where noted.
@@ -25,6 +56,10 @@ pub struct Material {
     /// ε(ω) = εᵣ + Σ ωp² / (ω0² − ω² + jγω)
     /// Empty for most materials (static permittivity only).
     pub drude_lorentz_poles: Vec<(f64, f64, f64)>,
+    /// Optional surface roughness parameters for conductor loss correction.
+    pub surface_roughness: Option<SurfaceRoughness>,
+    /// Optional temperature coefficient for thermal-dependent properties.
+    pub temperature_coefficient: Option<TemperatureCoefficient>,
 }
 
 impl Default for Material {
@@ -39,6 +74,8 @@ impl Default for Material {
             epsilon_tensor: [[EPS0, 0.0, 0.0], [0.0, EPS0, 0.0], [0.0, 0.0, EPS0]],
             nu_tensor: [[nu, 0.0, 0.0], [0.0, nu, 0.0], [0.0, 0.0, nu]],
             drude_lorentz_poles: Vec::new(),
+            surface_roughness: None,
+            temperature_coefficient: None,
         }
     }
 }
@@ -57,6 +94,8 @@ impl Material {
             epsilon_tensor: [[eps, 0.0, 0.0], [0.0, eps, 0.0], [0.0, 0.0, eps]],
             nu_tensor: [[nu, 0.0, 0.0], [0.0, nu, 0.0], [0.0, 0.0, nu]],
             drude_lorentz_poles: Vec::new(),
+            surface_roughness: None,
+            temperature_coefficient: None,
         }
     }
 
@@ -73,6 +112,7 @@ impl Material {
         axes: &[Vec<f64>],
     ) -> Self {
         let mut mat = Self::from_scalars(permittivity, permeability, conductivity, loss_tangent);
+        // from_scalars sets roughness/temperature to None — they are set separately
         if axes.len() >= 3
             && axes[0].len() >= 3
             && axes[1].len() >= 3
@@ -174,6 +214,62 @@ impl Material {
         let identity = [[nu, 0.0, 0.0], [0.0, nu, 0.0], [0.0, 0.0, nu]];
         self.nu_tensor != identity
     }
+
+    /// Effective conductivity accounting for surface roughness at a given frequency.
+    ///
+    /// Returns the roughness-corrected conductivity σ_eff [S/m].
+    ///
+    /// **Hammerstad-Jensen**: K = 1 + (2/π) arctan(1.4 · (Δ/δ)²)
+    ///
+    /// **Groisse**: K = 1 + exp(−δ / (2Δ))
+    ///
+    /// **Huray snowball**: K = 1 + (3/2) · (Δ/δ)
+    ///
+    /// where Δ = RMS roughness [m], δ = skin depth [m] = √(2 / (ω μ₀ σ)).
+    ///
+    /// The corrected conductivity is σ_eff = σ / K² (power-loss correction).
+    /// Returns the DC conductivity if `surface_roughness` is `None` or `freq <= 0`.
+    pub fn effective_conductivity(&self, freq: f64) -> f64 {
+        let sigma = self.conductivity;
+        let roughness = match &self.surface_roughness {
+            Some(r) if r.rms > 0.0 && sigma > 0.0 && freq > 0.0 => r,
+            _ => return sigma,
+        };
+
+        use std::f64::consts::PI;
+        let omega = 2.0 * PI * freq;
+        let delta = (2.0 / (omega * MU0 * sigma)).sqrt();
+        let ratio = roughness.rms / delta;
+
+        let k = match roughness.model {
+            RoughnessModel::Hammerstad => {
+                1.0 + (2.0 / PI) * (1.4 * ratio * ratio).atan()
+            }
+            RoughnessModel::Groisse => {
+                1.0 + (-0.5 / ratio.max(1e-15)).exp()
+            }
+            RoughnessModel::Huray => {
+                1.0 + 1.5 * ratio
+            }
+        };
+
+        sigma / (k * k)
+    }
+
+    /// Temperature-corrected conductivity at temperature `t` [K].
+    ///
+    /// Uses linear model: σ(T) = σ(T_ref) / (1 + α_T · (T − T_ref))
+    /// where α_T = conductivity_tc × 10⁻⁶ [1/K].
+    ///
+    /// Returns the DC conductivity if no temperature coefficient is set.
+    pub fn conductivity_at_temperature(&self, t: f64) -> f64 {
+        let tc = match &self.temperature_coefficient {
+            Some(tc) => tc,
+            None => return self.conductivity,
+        };
+        let alpha = tc.conductivity_tc * 1e-6;
+        self.conductivity / (1.0 + alpha * (t - tc.t_ref))
+    }
 }
 
 #[cfg(test)]
@@ -213,5 +309,76 @@ mod tests {
     fn isotropic_not_anisotropic() {
         let m = Material::from_scalars(2.0, 1.0, 0.0, 0.0);
         assert!(!m.is_anisotropic());
+    }
+
+    #[test]
+    fn no_roughness_returns_dc_conductivity() {
+        let m = Material { conductivity: 5.8e7, ..Default::default() };
+        let sigma = m.effective_conductivity(10.0e9);
+        assert!((sigma - 5.8e7).abs() < 1e-7);
+    }
+
+    #[test]
+    fn hammerstad_increases_loss() {
+        let mut m = Material { conductivity: 5.8e7, ..Default::default() };
+        m.surface_roughness = Some(SurfaceRoughness {
+            rms: 1.0e-6, // 1 µm RMS
+            model: RoughnessModel::Hammerstad,
+        });
+        let sigma = m.effective_conductivity(10.0e9);
+        // Roughness reduces effective conductivity (increases loss)
+        assert!(sigma < 5.8e7, "sigma_eff={} should be < bulk", sigma);
+        assert!(sigma > 0.0);
+    }
+
+    #[test]
+    fn groisse_model_reduces_conductivity() {
+        let mut m = Material { conductivity: 4.1e7, ..Default::default() };
+        m.surface_roughness = Some(SurfaceRoughness {
+            rms: 0.5e-6,
+            model: RoughnessModel::Groisse,
+        });
+        let s1 = m.effective_conductivity(1.0e9);
+        let s2 = m.effective_conductivity(10.0e9);
+        // Higher frequency → thinner skin depth → more roughness effect → lower sigma
+        assert!(s2 < s1, "s2={} should be < s1={}", s2, s1);
+    }
+
+    #[test]
+    fn huray_scales_with_roughness() {
+        let mut m = Material { conductivity: 5.0e7, ..Default::default() };
+        m.surface_roughness = Some(SurfaceRoughness {
+            rms: 2.0e-6,
+            model: RoughnessModel::Huray,
+        });
+        let s_rough = m.effective_conductivity(5.0e9);
+        m.surface_roughness = Some(SurfaceRoughness {
+            rms: 0.2e-6,
+            model: RoughnessModel::Huray,
+        });
+        let s_smooth = m.effective_conductivity(5.0e9);
+        // Rougher surface → more loss
+        assert!(s_rough < s_smooth);
+    }
+
+    #[test]
+    fn temperature_reduces_conductivity() {
+        let mut m = Material { conductivity: 5.8e7, ..Default::default() };
+        m.temperature_coefficient = Some(TemperatureCoefficient {
+            t_ref: 293.15, // 20°C
+            permittivity_tc: 0.0,
+            conductivity_tc: 3930.0, // copper: ~3930 ppm/K
+        });
+        let s_cold = m.conductivity_at_temperature(293.15);
+        let s_hot = m.conductivity_at_temperature(373.15); // 100°C
+        assert!((s_cold - 5.8e7).abs() < 1e-7); // at ref temp
+        assert!(s_hot < s_cold, "s_hot={} should be < s_cold={}", s_hot, s_cold);
+    }
+
+    #[test]
+    fn no_temperature_coeff_returns_dc() {
+        let m = Material { conductivity: 5.8e7, ..Default::default() };
+        let s = m.conductivity_at_temperature(500.0);
+        assert!((s - 5.8e7).abs() < 1e-7);
     }
 }

@@ -41,13 +41,17 @@ pub fn assemble_febi_system(
     freq: f64,
 ) -> RemResult<FebiSystem> {
     let omega = 2.0 * std::f64::consts::PI * freq;
-    let k = omega / 2.997_924_58e8;
+    let c0 = 299_792_458.0;
+    let k0 = omega / c0;
+    let eps_r = febi_cfg.exterior_eps_r;
+    let mu_r = febi_cfg.exterior_mu_r;
+    let k = k0 * (eps_r * mu_r).sqrt();
     let k2 = k * k;
     let n_vol = mesh.n_nodes();
     let n_rwg = z_bi.nrows();
 
     // 1. FEM 系统矩阵 A_fem = K − k²M
-    let eps_fn = |_tag: u32| 1.0_f64;
+    let eps_fn = |_tag: u32| eps_r;
     let k_csr = assemble_stiffness(mesh, eps_fn)?.to_csr();
     let m_csr = assemble_mass(mesh, eps_fn)?.to_csr();
     let mut a_fem = csr_to_complex_dense(&k_csr, n_vol);

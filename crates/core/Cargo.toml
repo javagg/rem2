@@ -9,5 +9,6 @@ rem-parallel = { workspace = true }
 log          = { workspace = true }
 fem-linalg   = { workspace = true }
 fem-solver   = { workspace = true }
+fem-amg      = { workspace = true }
 num-complex  = { workspace = true }
 nalgebra     = { workspace = true }

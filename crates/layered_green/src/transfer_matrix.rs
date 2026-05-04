@@ -159,13 +159,178 @@ pub fn spectral_green_single_layer(
     // Propagation factor
     let phase = -Complex64::new(0.0, 1.0) * k_z0 * dz;
     let prop = phase.exp();
-    
+
     // For both TE and TM (average contribution)
     let g_te = gamma_te * prop / k_z0;
     let g_tm = gamma_tm * prop / k_z0;
-    
+
     // Proper normalization
     (g_te + g_tm) / (2.0 * ETA0 * k_z0)
+}
+
+/// Compute the spectral-domain Green's function kernel for a multi-layer stack.
+///
+/// Uses Transfer Matrix Method (TMM) to cascade all layers and compute
+/// the total reflection coefficient at the observation height.
+///
+/// # Arguments
+/// * `k0` - Free-space wavenumber [rad/m]
+/// * `k_rho` - Horizontal wavenumber [rad/m]
+/// * `z` - Observation height [m]
+/// * `z_prime` - Source height [m]
+/// * `materials` - Layer stack from bottom to top (first = bottom layer)
+///
+/// # Returns
+/// Spectral Green's function g_A(k_rho) for multi-layer media
+pub fn spectral_green_multilayer(
+    k0: f64,
+    k_rho: f64,
+    z: f64,
+    z_prime: f64,
+    materials: &[MaterialProps],
+) -> Complex64 {
+    const ETA0: f64 = 376.73031346177066;
+
+    if materials.is_empty() {
+        return Complex64::ZERO;
+    }
+
+    // Vertical wavenumber in air (background)
+    let k_z0_sq = k0 * k0 - k_rho * k_rho;
+    let k_z0 = if k_z0_sq >= 0.0 {
+        Complex64::new(k_z0_sq.sqrt(), 0.0)
+    } else {
+        Complex64::new(0.0, (-k_z0_sq).sqrt())
+    };
+
+    if k_z0.norm() < 1e-16 {
+        return Complex64::ZERO;
+    }
+
+    // Vertical spacing
+    let dz = z - z_prime;
+
+    // Compute effective reflection coefficients for the full layer stack using TMM
+    let (gamma_te_total, gamma_tm_total) =
+        compute_stack_reflection_coefficients(k0, k_rho, k_z0, materials);
+
+    // Direct contribution: exp(-j k_z0 |dz|) / (2 j k_z0)
+    // (this is the free-space spectral Green for a homogeneous background)
+    let abs_dz = dz.abs();
+    let phase_dir = -Complex64::new(0.0, 1.0) * k_z0 * abs_dz;
+    let direct = if abs_dz > 1e-14 {
+        phase_dir.exp() / (Complex64::new(0.0, 2.0) * k_z0)
+    } else {
+        // when dz ≈ 0, direct = 1/(2 j k_z0)
+        Complex64::new(0.0, -0.5) / k_z0
+    };
+
+    // Reflected contribution: Γ * exp(-j k_z0 (z+z')) / (2 j k_z0)
+    let z_sum = z + z_prime;
+    let phase_ref = -Complex64::new(0.0, 1.0) * k_z0 * z_sum;
+    let prop_ref = phase_ref.exp();
+
+    let gamma_total = (gamma_te_total + gamma_tm_total) * 0.5;
+    let reflected = gamma_total * prop_ref / (Complex64::new(0.0, 2.0) * k_z0);
+
+    // Total spectral kernel = direct + reflected
+    (direct + reflected) / ETA0
+}
+
+/// Compute TE and TM reflection coefficients for a multi-layer stack
+/// using the Transfer Matrix Method (TMM).
+///
+/// Cascades ABCD matrices from bottom layer to top, then computes
+/// the total input impedance and reflection coefficient.
+fn compute_stack_reflection_coefficients(
+    k0: f64,
+    k_rho: f64,
+    k_z0: Complex64,
+    materials: &[MaterialProps],
+) -> (Complex64, Complex64) {
+    const ETA0: f64 = 376.73031346177066;
+
+    // For each mode (TE, TM), cascade all layers and compute reflection
+    let compute_gamma = |is_te: bool| -> Complex64 {
+        // Termination: if bottom layer is very thick (> 1e8 m), treat as
+        // half-space (matched). Otherwise use PEC at the bottom.
+        let bottom = materials.first().unwrap();
+        let is_half_space = bottom.thickness > 1e8;
+
+        let mut z_input = if is_half_space {
+            let k_sub = k0 * (bottom.eps_r * bottom.mu_r).sqrt();
+            let k_z_sub_sq = k_sub * k_sub - k_rho * k_rho;
+            let k_z_sub = if k_z_sub_sq.norm_sqr() > 0.0 {
+                k_z_sub_sq.sqrt()
+            } else {
+                Complex64::new(0.0, 0.0)
+            };
+            if is_te {
+                ETA0 * k_z_sub / k_sub
+            } else {
+                ETA0 * k_sub / (bottom.eps_r * k_z_sub)
+            }
+        } else {
+            Complex64::ZERO // PEC
+        };
+
+        // Cascade from bottom+1 to top (skip bottom if it's a half-space)
+        let start_idx = if is_half_space { 1 } else { 0 };
+
+        for layer in materials[start_idx..].iter().rev() {
+            // Wavenumber in this layer
+            let k_sub = k0 * (layer.eps_r * layer.mu_r).sqrt();
+
+            // Vertical wavenumber in this layer
+            let k_z_sub_sq = k_sub * k_sub - k_rho * k_rho;
+            let k_z_sub = if k_z_sub_sq.norm_sqr() > 0.0 {
+                k_z_sub_sq.sqrt()
+            } else {
+                Complex64::new(0.0, 0.0)
+            };
+
+            if k_z_sub.norm() < 1e-16 {
+                continue;
+            }
+
+            // Characteristic impedance
+            let z_layer = if is_te {
+                ETA0 * k_z_sub / k_sub
+            } else {
+                ETA0 * k_sub / (layer.eps_r * k_z_sub)
+            };
+
+            // Electrical thickness
+            let gamma_l = Complex64::new(0.0, -1.0) * k_z_sub * layer.thickness;
+            let tanh_gamma_l = gamma_l.tanh();
+
+            // Z_in = Z_layer * (Z_load + Z_layer*tanh(γl)) / (Z_layer + Z_load*tanh(γl))
+            if z_input.norm() < 1e-30 {
+                z_input = z_layer * tanh_gamma_l;
+            } else {
+                let num = z_input + z_layer * tanh_gamma_l;
+                let den = z_layer + z_input * tanh_gamma_l;
+                if den.norm() > 1e-30 {
+                    z_input = z_layer * num / den;
+                }
+            }
+        }
+
+        // Impedance looking into air half-space
+        let z0 = if is_te {
+            ETA0 / k_z0 * Complex64::new(k0, 0.0)
+        } else {
+            ETA0 * Complex64::new(k0, 0.0) / k_z0
+        };
+
+        // Reflection coefficient at top of stack
+        (z_input - z0) / (z_input + z0)
+    };
+
+    let gamma_te = compute_gamma(true);
+    let gamma_tm = compute_gamma(false);
+
+    (gamma_te, gamma_tm)
 }
 
 /// Compute vertical Green's function for a single layer over ground plane

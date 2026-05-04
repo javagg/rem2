@@ -24,6 +24,7 @@ pub mod excitation;
 pub mod postprocess;
 pub mod basis;
 pub mod mie;
+pub mod gpu;
 pub mod aca;
 pub mod pmchwt;
 pub mod port;

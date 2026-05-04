@@ -105,6 +105,8 @@ mod tests {
             gmres_max_iter: 500,
             ports: vec![],
             ref_impedance: 50.0,
+            exterior_eps_r: 1.0,
+            exterior_mu_r: 1.0,
             output_dir: "output/febi".to_string(),
         };
         let freqs = build_freq_list(&cfg);
@@ -125,6 +127,8 @@ mod tests {
             gmres_max_iter: 500,
             ports: vec![],
             ref_impedance: 50.0,
+            exterior_eps_r: 1.0,
+            exterior_mu_r: 1.0,
             output_dir: "output/febi".to_string(),
         };
         let freqs = build_freq_list(&cfg);

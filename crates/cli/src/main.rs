@@ -73,6 +73,11 @@ struct Args {
     /// Increase log verbosity (-v info, -vv debug, -vvv trace)
     #[arg(short, long, action = clap::ArgAction::Count)]
     verbose: u8,
+
+    /// JSON API mode: read config from stdin, output results JSON to stdout.
+    /// All logging goes to stderr.
+    #[arg(long, default_value_t = false)]
+    json: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -163,6 +168,42 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // JSON API mode: read config from stdin, output results to stdout
+    if args.json {
+        let mut input = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut input)
+            .context("reading config from stdin")?;
+
+        let mut config = rem_config::load_config_from_str(&input, rem_config::ConfigFormat::Json)
+            .context("parsing JSON config from stdin")?;
+
+        if let Some(out) = args.output {
+            config.problem.output = Some(out.to_string_lossy().into_owned());
+        }
+
+        let comm: Box<dyn Comm> = if cfg!(target_arch = "wasm32") {
+            Box::new(WorldComm::new())
+        } else {
+            Box::new(NoComm)
+        };
+
+        let start = std::time::Instant::now();
+        let result = run_solver(&config, comm.as_ref());
+
+        let elapsed_s = start.elapsed().as_secs_f64();
+        let output = serde_json::json!({
+            "status": if result.is_ok() { "ok" } else { "error" },
+            "problem_type": format!("{:?}", config.problem.problem_type),
+            "elapsed_s": elapsed_s,
+            "output_dir": config.problem.output_dir(),
+            "error": result.as_ref().err().map(|e| e.to_string()),
+        });
+
+        // Print JSON result to stdout (logs go to stderr)
+        println!("{}", serde_json::to_string_pretty(&output).unwrap());
+        return result;
+    }
+
     let config_path = args
         .config
         .as_ref()
@@ -181,33 +222,40 @@ fn main() -> anyhow::Result<()> {
         Box::new(NoComm) as Box<dyn Comm>
     };
 
+    run_solver(&config, comm.as_ref())
+}
+
+fn run_solver(config: &rem_config::PalaceConfig, comm: &dyn Comm) -> anyhow::Result<()> {
     match config.problem.problem_type {
         ProblemType::Electrostatic => {
-            rem_electrostatic::run(&config, comm.as_ref() as &dyn Comm)?;
+            rem_electrostatic::run(config, comm)?;
         }
         ProblemType::Magnetostatic => {
-            rem_magnetostatic::run(&config, comm.as_ref() as &dyn Comm)?;
+            rem_magnetostatic::run(config, comm)?;
         }
         ProblemType::Eigenmode => {
-            rem_eigenmode::run(&config, comm.as_ref() as &dyn Comm)?;
+            rem_eigenmode::run(config, comm)?;
         }
         ProblemType::Driven => {
-            rem_driven::run(&config, comm.as_ref() as &dyn Comm)?;
+            rem_driven::run(config, comm)?;
         }
         ProblemType::Transient => {
-            rem_transient::run(&config, comm.as_ref() as &dyn Comm)?;
+            rem_transient::run(config, comm)?;
         }
         ProblemType::MoM => {
-            rem_mom::run(&config)?;
+            rem_mom::run(config)?;
         }
         ProblemType::BEM => {
-            anyhow::bail!("BEM solver not yet implemented (v0.7)");
+            rem_bem::run(config)?;
+        }
+        ProblemType::Planar => {
+            rem_planar::run(config)?;
         }
         ProblemType::SBR => {
-            rem_sbr::run(&config)?;
+            rem_sbr::run(config)?;
         }
         ProblemType::FEBI => {
-            rem_febi::run(&config)?;
+            rem_febi::run(config)?;
         }
     }
 

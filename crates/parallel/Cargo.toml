@@ -3,9 +3,15 @@ name = "rem-parallel"
 version.workspace = true
 edition = "2021"
 
+[features]
+default = []
+native-mpi = []
+
 [dependencies]
 wasm-bindgen = "0.2"
 js-sys = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 log = "0.4"
+
+[build-dependencies]

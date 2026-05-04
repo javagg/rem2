@@ -4,6 +4,9 @@
 //!   Z_s * \int_\Gamma f_m · f_n dS
 //! to the PEC EFIE/CFIE impedance matrix, which models conductor loss through
 //! a surface impedance rather than a perfect electric conductor.
+//!
+//! Supports roughness-corrected effective conductivity via
+//! `rem_materials::Material::effective_conductivity(freq)`.
 
 use crate::basis::rwg::RwgBasis;
 use crate::quadrature::TriQuad;
@@ -16,6 +19,9 @@ use std::f64::consts::PI;
 /// Skin-depth surface impedance for a good conductor.
 ///
 /// Zs = (1 + j) / (sigma * delta_s),   delta_s = sqrt(2 / (omega * mu0 * sigma))
+///
+/// `sigma` should be the effective conductivity, possibly roughness-corrected
+/// (use [`rem_materials::Material::effective_conductivity`] before calling).
 pub fn surface_impedance_from_conductivity(sigma: f64, freq: f64) -> Complex64 {
     if sigma <= 0.0 || freq <= 0.0 {
         return Complex64::ZERO;
@@ -27,6 +33,11 @@ pub fn surface_impedance_from_conductivity(sigma: f64, freq: f64) -> Complex64 {
 
 /// Apply the SIBC correction Z += Zs * M_surf where
 /// M_surf[m,n] = \int_\Gamma f_m · f_n dS.
+///
+/// `sigma` should be the conductor's **effective** conductivity including
+/// surface roughness correction if applicable. Use
+/// `rem_materials::Material::effective_conductivity(freq)` to compute it
+/// from bulk conductivity and roughness parameters.
 pub fn apply_sibc_rwg(
     z_mat: &mut DMatrix<Complex64>,
     surf: &SurfaceMesh,

@@ -55,6 +55,7 @@ rem-driven        = { path = "crates/driven" }
 rem-parallel      = { path = "crates/parallel" }
 rem-transient     = { path = "crates/transient" }
 rem-mom           = { path = "crates/mom" }
+rem-bem           = { path = "crates/bem" }
 rem-febi          = { path = "crates/febi" }
 rem-ddm           = { path = "crates/ddm" }
 rem-planar        = { path = "crates/planar" }
