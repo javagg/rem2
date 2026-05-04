@@ -404,6 +404,15 @@ fn run_s_param_sweep(
                 log::info!("MoM FFT S-param: planar mesh N={}, building FFT operator", surf.nodes.len());
                 let fft_op = fft_accel::FftMomSolver::build(&surf.nodes, k)?;
                 sparams::compute_s_matrix_op(surf, &bases, &lumped_ports, &fft_op, freq)?
+            } else if mom_cfg.fast_solver.eq_ignore_ascii_case("FMM") {
+                let k = 2.0 * std::f64::consts::PI * freq / rem_core::C0;
+                let quad_fmm = quadrature::TriQuad::new(3);
+                log::info!("MoM FMM S-param: building 3-D FFT monopole FMM (N={})", bases.len());
+                let fmm_op = fmm::FmmMomSolver::build(
+                    surf, &bases, green.as_ref(), freq, mom_cfg.alpha, &quad_fmm,
+                )?;
+                let _ = k;
+                sparams::compute_s_matrix_op(surf, &bases, &lumped_ports, &fmm_op, freq)?
             } else {
                 let z_mat = assemble::assemble_cfie_rwg_green(
                     surf, &bases, green.as_ref(), freq, mom_cfg.alpha, &quad, mom_cfg.singular_tol,
@@ -775,6 +784,13 @@ pub fn compute_s_param_sweep_for_optim(
                 let k = 2.0 * std::f64::consts::PI * freq / rem_core::C0;
                 let fft_op = fft_accel::FftMomSolver::build(&surf.nodes, k)?;
                 sparams::compute_s_matrix_op(&surf, &bases, &lumped_ports, &fft_op, freq)?
+            } else if mom_cfg.fast_solver.eq_ignore_ascii_case("FMM") {
+                let quad_fmm = quadrature::TriQuad::new(3);
+                log::info!("MoM FMM S-param (ROM path): building FMM (N={})", bases.len());
+                let fmm_op = fmm::FmmMomSolver::build(
+                    &surf, &bases, green.as_ref(), freq, mom_cfg.alpha, &quad_fmm,
+                )?;
+                sparams::compute_s_matrix_op(&surf, &bases, &lumped_ports, &fmm_op, freq)?
             } else {
                 let mut z_mat = assemble::assemble_cfie_rwg_green(
                     &surf, &bases, green.as_ref(), freq, mom_cfg.alpha, &quad, mom_cfg.singular_tol,
