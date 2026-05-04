@@ -125,10 +125,17 @@ Solver.Transient: { Type, MaxTime, TimeStep, SaveStep }
 Solver.Linear:    { Tol, MaxIter }
 Solver.Mom:       { FreqMin, FreqMax, FreqStep, Equation, Basis, Alpha, SingularTol, FastSolver,
                     WallConductivity, RefImpedance, Ports, RomOrder, AmrIter, AmrTheta,
-                    NearFieldSource, Substrate }
+                    NearFieldSource, NearFieldProbes, TlineLength,
+                    DeembedEpsEff, DeembedAlpha, Substrate }
   # Phase 19 (v0.20.0) additions:
   # RomOrder > 0 enables snapshot ROM acceleration for S-param sweeps (anchor-point Galerkin projection)
   # AmrIter > 0 enables Dörfler-marking AMR with RWG current error indicator
   # AmrTheta: Dörfler fraction (default 0.5)
   # Full Touchstone 1.0 reader (RI/MA/DB; multi-line N≥3 format) available in rem-touchstone crate
+  # Phase 22 (ongoing) additions:
+  # Ports[].Type: "Lumped" | "WavePort" (WavePort mode metadata accepted in MoM)
+  # Ports[].Mode: WavePort mode index (mode>1 currently logs fallback warning)
+  # Ports[].PairWith: differential pairing for mixed-mode S output (port-S-mixed.csv, s_params_mixed.sNp)
+  # Ports[].DeembedLength: per-port reference plane shift [m]
+  # DeembedEpsEff, DeembedAlpha: global de-embedding propagation model parameters
 ```

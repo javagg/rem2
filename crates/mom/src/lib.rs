@@ -300,14 +300,26 @@ fn run_s_param_sweep(
     let bases = basis::rwg::generate_rwg_bases(surf);
     let quad  = quadrature::TriQuad::new(5);
 
-    // Build lumped ports
+    // Build physical ports (Lumped/WavePort currently share the same MoM
+    // surface-excitation kernel; WavePort mode metadata is preserved for
+    // output/de-embedding bookkeeping).
     let lumped_ports: Vec<MomLumpedPort> = mom_cfg.ports.iter().map(|p| {
         let z0 = p.impedance.unwrap_or(mom_cfg.ref_impedance);
         MomLumpedPort::from_surface(surf, &bases, &p.attributes, p.index, &p.direction, z0)
     }).collect::<RemResult<_>>()?;
 
+    for p in &mom_cfg.ports {
+        if p.port_type.eq_ignore_ascii_case("waveport") && p.mode > 1 {
+            log::warn!(
+                "MoM WavePort {} mode {} requested; higher-order modal profile is not yet modeled, using mode-1 profile",
+                p.index,
+                p.mode
+            );
+        }
+    }
+
     // Frequency sweep — use ROM if RomOrder > 0
-    let mut freq = mom_cfg.freq_min;
+    let freq = mom_cfg.freq_min;
     let freq_max  = mom_cfg.freq_max;
     let freq_step = mom_cfg.freq_step;
     let mut all_matrices: Vec<sparams::SMatrix> = Vec::new();
@@ -368,6 +380,42 @@ fn run_s_param_sweep(
         }
     }
 
+    // Optional per-port de-embedding before writing outputs.
+    let deembed_lengths: Vec<f64> = mom_cfg.ports.iter().map(|p| p.deembed_length).collect();
+    if deembed_lengths.iter().any(|&l| l.abs() > 0.0) {
+        all_matrices = all_matrices.iter()
+            .map(|s| sparams::apply_reference_plane_deembed(
+                s,
+                &deembed_lengths,
+                mom_cfg.deembed_eps_eff,
+                mom_cfg.deembed_alpha_np_per_m,
+            ))
+            .collect::<RemResult<_>>()?;
+        log::info!(
+            "MoM reference-plane de-embedding enabled: eps_eff={:.4}, alpha={:.4e} Np/m",
+            mom_cfg.deembed_eps_eff,
+            mom_cfg.deembed_alpha_np_per_m,
+        );
+    }
+
+    // Build differential-pair index list (0-based positions in `lumped_ports`).
+    let mut differential_pairs: Vec<(usize, usize)> = Vec::new();
+    if !mom_cfg.ports.is_empty() {
+        let mut by_index = std::collections::HashMap::<u32, usize>::new();
+        for (i, p) in mom_cfg.ports.iter().enumerate() {
+            by_index.insert(p.index, i);
+        }
+        for (i, p) in mom_cfg.ports.iter().enumerate() {
+            if let Some(pair_idx) = p.pair_with {
+                if let Some(&j) = by_index.get(&pair_idx) {
+                    if i < j {
+                        differential_pairs.push((i, j));
+                    }
+                }
+            }
+        }
+    }
+
     // Write outputs
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -378,6 +426,25 @@ fn run_s_param_sweep(
 
         let csv_path = output_dir.join("postpro").join("port-S.csv");
         sparams::append_palace_csv(&all_matrices, &csv_path)?;
+
+        // Mixed-mode differential output (all ports must be paired).
+        if !differential_pairs.is_empty() && differential_pairs.len() * 2 == lumped_ports.len() {
+            let mixed_matrices: Vec<sparams::SMatrix> = all_matrices.iter()
+                .map(|s| sparams::single_ended_to_mixed_mode(s, &differential_pairs))
+                .collect::<RemResult<_>>()?;
+            let mm_ts_ext = format!("s{}p", lumped_ports.len());
+            let mm_ts_path = output_dir.join("postpro").join(format!("s_params_mixed.{}", mm_ts_ext));
+            sparams::write_touchstone(&mixed_matrices, &mm_ts_path, mom_cfg.ref_impedance)?;
+            sparams::append_palace_csv(&mixed_matrices, &output_dir.join("postpro").join("port-S-mixed.csv"))?;
+            log::info!(
+                "MoM mixed-mode S-parameter output written for {} differential pairs",
+                differential_pairs.len()
+            );
+        } else if !differential_pairs.is_empty() {
+            log::warn!(
+                "MoM differential pairs detected but not all ports are paired; skipping mixed-mode output"
+            );
+        }
 
         // ── Z/Y matrices ──────────────────────────────────────────────────
         let z_matrices: Vec<sparams::SMatrix> = all_matrices.iter()

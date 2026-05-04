@@ -9,7 +9,7 @@ use crate::basis::rwg::RwgBasis;
 use crate::assemble::lu_solve;
 use nalgebra::DMatrix;
 use num_complex::Complex64;
-use rem_core::{RemResult, RemError};
+use rem_core::{RemResult, C0};
 use rem_touchstone::{write_snp, TsFormat, TsFreqUnit};
 use std::path::Path;
 
@@ -244,6 +244,91 @@ pub fn write_param_csv(matrices: &[SMatrix], path: &Path, param_name: &str) -> R
         writeln!(f, "{line}")?;
     }
     Ok(())
+}
+
+/// Apply per-port reference-plane de-embedding to an S matrix.
+///
+/// For each entry, applies a two-sided shift:
+///   S'_{ij} = S_{ij} · exp[(α + jβ)·(l_i + l_j)]
+/// where β = 2πf/c0·sqrt(eps_eff).
+pub fn apply_reference_plane_deembed(
+    s: &SMatrix,
+    lengths_m: &[f64],
+    eps_eff: f64,
+    alpha_np_per_m: f64,
+) -> RemResult<SMatrix> {
+    if lengths_m.len() != s.n_ports {
+        return Err(rem_core::RemError::Config(format!(
+            "Deembed length count {} does not match n_ports {}",
+            lengths_m.len(), s.n_ports,
+        )));
+    }
+    let mut out = s.clone();
+    let beta = 2.0 * std::f64::consts::PI * s.freq_hz / C0 * eps_eff.max(1.0e-12).sqrt();
+    let gamma = Complex64::new(alpha_np_per_m, beta);
+    for i in 0..s.n_ports {
+        for j in 0..s.n_ports {
+            let idx = i * s.n_ports + j;
+            let phase = gamma * Complex64::new(lengths_m[i] + lengths_m[j], 0.0);
+            out.data[idx] = s.data[idx] * phase.exp();
+        }
+    }
+    Ok(out)
+}
+
+/// Convert single-ended S-matrix to mixed-mode S-matrix for differential pairs.
+///
+/// `pairs` are 0-based single-ended port indices `(p, n)`.
+/// The output ordering is `[d1, c1, d2, c2, ...]`.
+pub fn single_ended_to_mixed_mode(
+    s: &SMatrix,
+    pairs: &[(usize, usize)],
+) -> RemResult<SMatrix> {
+    if pairs.is_empty() {
+        return Err(rem_core::RemError::Config("Mixed-mode conversion requires at least one pair".into()));
+    }
+    if 2 * pairs.len() != s.n_ports {
+        return Err(rem_core::RemError::Config(format!(
+            "Mixed-mode conversion requires all ports paired: got {} ports, {} pairs",
+            s.n_ports,
+            pairs.len(),
+        )));
+    }
+
+    let mut seen = vec![false; s.n_ports];
+    for &(p, n) in pairs {
+        if p >= s.n_ports || n >= s.n_ports || p == n {
+            return Err(rem_core::RemError::Config("Invalid differential pair indices".into()));
+        }
+        if seen[p] || seen[n] {
+            return Err(rem_core::RemError::Config("Differential pair indices overlap".into()));
+        }
+        seen[p] = true;
+        seen[n] = true;
+    }
+
+    let n = s.n_ports;
+    let inv_sqrt2 = 1.0 / 2.0_f64.sqrt();
+    let mut m = DMatrix::<Complex64>::zeros(n, n);
+    for (k, &(p, nneg)) in pairs.iter().enumerate() {
+        // Differential mode row: (p - n)/sqrt(2)
+        let rd = 2 * k;
+        m[(rd, p)] = Complex64::new(inv_sqrt2, 0.0);
+        m[(rd, nneg)] = Complex64::new(-inv_sqrt2, 0.0);
+        // Common mode row: (p + n)/sqrt(2)
+        let rc = rd + 1;
+        m[(rc, p)] = Complex64::new(inv_sqrt2, 0.0);
+        m[(rc, nneg)] = Complex64::new(inv_sqrt2, 0.0);
+    }
+
+    let s_se = DMatrix::from_row_slice(n, n, &s.data);
+    let m_t = m.transpose();
+    let s_mm = &m * s_se * m_t;
+
+    let data: Vec<Complex64> = (0..n)
+        .flat_map(|r| (0..n).map(|c| s_mm[(r, c)]).collect::<Vec<_>>())
+        .collect();
+    Ok(SMatrix { n_ports: n, freq_hz: s.freq_hz, data })
 }
 
 // ── Transmission-line RLGC extraction ─────────────────────────────────────
@@ -485,5 +570,40 @@ mod tests {
             assert!((z0_lc - z0_tl).abs() / z0_tl < 0.01,
                 "√(L/C) = {z0_lc:.2}, expected ≈ {z0_tl}");
         }
+    }
+
+    #[test]
+    fn deembed_identity_when_zero_lengths() {
+        let s = SMatrix {
+            n_ports: 2,
+            freq_hz: 1.0e9,
+            data: vec![
+                Complex64::new(0.1, 0.2), Complex64::new(0.3, -0.1),
+                Complex64::new(0.4, 0.5), Complex64::new(-0.2, 0.05),
+            ],
+        };
+        let out = apply_reference_plane_deembed(&s, &[0.0, 0.0], 1.0, 0.0).unwrap();
+        for i in 0..s.data.len() {
+            assert!((out.data[i] - s.data[i]).norm() < 1.0e-12);
+        }
+    }
+
+    #[test]
+    fn mixed_mode_identity_for_through_pair() {
+        // Single-ended 2-port ideal through: S21=S12=1, S11=S22=0
+        let s = SMatrix {
+            n_ports: 2,
+            freq_hz: 1.0e9,
+            data: vec![
+                Complex64::ZERO, Complex64::new(1.0, 0.0),
+                Complex64::new(1.0, 0.0), Complex64::ZERO,
+            ],
+        };
+        let mm = single_ended_to_mixed_mode(&s, &[(0, 1)]).unwrap();
+        // dd and cc both through, dc/cd ~ 0 for symmetric pair
+        assert!((mm.data[0] - Complex64::new(-1.0, 0.0)).norm() < 1.0e-12 ||
+                (mm.data[0] - Complex64::new(1.0, 0.0)).norm() < 1.0e-12);
+        assert!(mm.data[1].norm() < 1.0e-12);
+        assert!(mm.data[2].norm() < 1.0e-12);
     }
 }

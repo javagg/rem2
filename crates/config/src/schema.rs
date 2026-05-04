@@ -1016,6 +1016,16 @@ pub struct MomSolverConfig {
     /// `postpro/tline_params.csv`.  Default 0 (disabled).
     #[serde(rename = "TlineLength", default)]
     pub tline_length: f64,
+
+    /// Effective relative permittivity used for simple port reference-plane
+    /// de-embedding phase correction.  Default 1.0 (free-space velocity).
+    #[serde(rename = "DeembedEpsEff", default = "default_deembed_eps_eff")]
+    pub deembed_eps_eff: f64,
+
+    /// Optional global attenuation constant α [Np/m] used by de-embedding.
+    /// Default 0.0 (phase-only correction).
+    #[serde(rename = "DeembedAlpha", default)]
+    pub deembed_alpha_np_per_m: f64,
 }
 
 fn default_mom_equation() -> String { "CFIE".to_string() }
@@ -1027,6 +1037,8 @@ fn default_polarization()  -> String { "theta".to_string() }
 fn default_ref_impedance() -> f64    { 50.0 }
 fn default_port_direction() -> String { "x".to_string() }
 fn default_amr_theta()     -> f64    { 0.5 }
+fn default_deembed_eps_eff() -> f64  { 1.0 }
+fn default_mom_port_kind() -> String { "Lumped".to_string() }
 
 /// A near-field probe point for E-field evaluation during S-parameter sweep.
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -1056,6 +1068,19 @@ pub struct MomPort {
     #[serde(rename = "Attributes", default)]
     pub attributes: Vec<u32>,
 
+    /// Port type: "Lumped" | "WavePort".
+    ///
+    /// `WavePort` currently reuses the same MoM surface-excitation machinery
+    /// as lumped ports, while enabling mode/de-embedding metadata in outputs.
+    #[serde(rename = "Type", default = "default_mom_port_kind")]
+    pub port_type: String,
+
+    /// WavePort mode index (1-based).  Used when `Type = "WavePort"`.
+    /// Higher-order modal field extraction is not yet modeled in MoM and
+    /// currently falls back to mode-1 excitation profile.
+    #[serde(rename = "Mode", default = "default_mode")]
+    pub mode: u32,
+
     /// Dominant E-field direction: "x" | "y" | "z".  Determines how
     /// the RHS excitation voltage is projected onto the port RWG functions.
     #[serde(rename = "Direction", default = "default_port_direction")]
@@ -1064,6 +1089,18 @@ pub struct MomPort {
     /// Per-port reference impedance [Ω].  When None, uses `MomSolverConfig::ref_impedance`.
     #[serde(rename = "Impedance", default)]
     pub impedance: Option<f64>,
+
+    /// Differential pair partner port index (1-based).
+    ///
+    /// If set on both ports of a pair, mixed-mode S-parameters are generated
+    /// in addition to single-ended S-parameters.
+    #[serde(rename = "PairWith", default)]
+    pub pair_with: Option<u32>,
+
+    /// Reference-plane de-embedding length [m] for this port.
+    /// Positive values shift the reference plane away from the port.
+    #[serde(rename = "DeembedLength", default)]
+    pub deembed_length: f64,
 }
 
 // ---------------------------------------------------------------------------
