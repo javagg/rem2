@@ -632,14 +632,14 @@ members = [
 ]
 
 [workspace.dependencies]
-# FEM 基础库（vendor/fem-rs submodule）
-fem-core    = { path = "vendor/fem-rs/crates/core" }
-fem-mesh    = { path = "vendor/fem-rs/crates/mesh" }
-fem-element = { path = "vendor/fem-rs/crates/element" }
-fem-linalg  = { path = "vendor/fem-rs/crates/linalg" }
-fem-space   = { path = "vendor/fem-rs/crates/space" }
-fem-assembly= { path = "vendor/fem-rs/crates/assembly" }
-fem-solver  = { path = "vendor/fem-rs/crates/solver" }
+# FEM 基础库（git dep，rev = bc210d0）
+fem-core    = { git = "https://github.com/rem-rs/fem-rs.git", rev = "bc210d0" }
+fem-mesh    = { git = "https://github.com/rem-rs/fem-rs.git", rev = "bc210d0" }
+fem-element = { git = "https://github.com/rem-rs/fem-rs.git", rev = "bc210d0" }
+fem-linalg  = { git = "https://github.com/rem-rs/fem-rs.git", rev = "bc210d0" }
+fem-space   = { git = "https://github.com/rem-rs/fem-rs.git", rev = "bc210d0" }
+fem-assembly= { git = "https://github.com/rem-rs/fem-rs.git", rev = "bc210d0" }
+fem-solver  = { git = "https://github.com/rem-rs/fem-rs.git", rev = "bc210d0" }
 
 # 配置解析
 serde       = { version = "1", features = ["derive"] }
