@@ -1070,14 +1070,14 @@ pub struct MomPort {
 
     /// Port type: "Lumped" | "WavePort".
     ///
-    /// `WavePort` currently reuses the same MoM surface-excitation machinery
-    /// as lumped ports, while enabling mode/de-embedding metadata in outputs.
+    /// `WavePort` uses a port-surface modal profile (graph-Laplacian
+    /// eigenmode on the selected port patch) to weight RWG excitation.
     #[serde(rename = "Type", default = "default_mom_port_kind")]
     pub port_type: String,
 
     /// WavePort mode index (1-based).  Used when `Type = "WavePort"`.
-    /// Higher-order modal field extraction is not yet modeled in MoM and
-    /// currently falls back to mode-1 excitation profile.
+    /// Mode 1 is the fundamental profile; mode > 1 selects higher-order
+    /// eigenmodes when available on the port patch.
     #[serde(rename = "Mode", default = "default_mode")]
     pub mode: u32,
 

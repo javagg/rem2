@@ -305,16 +305,33 @@ fn run_s_param_sweep(
     // output/de-embedding bookkeeping).
     let lumped_ports: Vec<MomLumpedPort> = mom_cfg.ports.iter().map(|p| {
         let z0 = p.impedance.unwrap_or(mom_cfg.ref_impedance);
-        MomLumpedPort::from_surface(surf, &bases, &p.attributes, p.index, &p.direction, z0)
+        MomLumpedPort::from_surface(
+            surf,
+            &bases,
+            &p.attributes,
+            p.index,
+            &p.direction,
+            &p.port_type,
+            p.mode,
+            z0,
+        )
     }).collect::<RemResult<_>>()?;
 
-    for p in &mom_cfg.ports {
-        if p.port_type.eq_ignore_ascii_case("waveport") && p.mode > 1 {
-            log::warn!(
-                "MoM WavePort {} mode {} requested; higher-order modal profile is not yet modeled, using mode-1 profile",
-                p.index,
-                p.mode
-            );
+    for (cfg_p, port_p) in mom_cfg.ports.iter().zip(lumped_ports.iter()) {
+        if cfg_p.port_type.eq_ignore_ascii_case("waveport") {
+            if port_p.modal_profile.is_some() {
+                log::info!(
+                    "MoM WavePort {} mode {}: modal profile enabled",
+                    cfg_p.index,
+                    cfg_p.mode
+                );
+            } else {
+                log::warn!(
+                    "MoM WavePort {} mode {}: modal solve unavailable on current port patch, fallback to uniform excitation",
+                    cfg_p.index,
+                    cfg_p.mode
+                );
+            }
         }
     }
 
@@ -405,13 +422,25 @@ fn run_s_param_sweep(
         for (i, p) in mom_cfg.ports.iter().enumerate() {
             by_index.insert(p.index, i);
         }
+        let mut paired_member = vec![false; mom_cfg.ports.len()];
         for (i, p) in mom_cfg.ports.iter().enumerate() {
             if let Some(pair_idx) = p.pair_with {
                 if let Some(&j) = by_index.get(&pair_idx) {
-                    if i < j {
+                    let reciprocal = mom_cfg.ports[j].pair_with == Some(p.index);
+                    if i < j && reciprocal {
                         differential_pairs.push((i, j));
+                        paired_member[i] = true;
+                        paired_member[j] = true;
                     }
                 }
+            }
+        }
+        for (i, p) in mom_cfg.ports.iter().enumerate() {
+            if p.pair_with.is_some() && !paired_member[i] {
+                log::warn!(
+                    "MoM differential pair ignored for port {}: PairWith requires reciprocal reference",
+                    p.index
+                );
             }
         }
     }
@@ -427,23 +456,49 @@ fn run_s_param_sweep(
         let csv_path = output_dir.join("postpro").join("port-S.csv");
         sparams::append_palace_csv(&all_matrices, &csv_path)?;
 
-        // Mixed-mode differential output (all ports must be paired).
-        if !differential_pairs.is_empty() && differential_pairs.len() * 2 == lumped_ports.len() {
-            let mixed_matrices: Vec<sparams::SMatrix> = all_matrices.iter()
-                .map(|s| sparams::single_ended_to_mixed_mode(s, &differential_pairs))
-                .collect::<RemResult<_>>()?;
-            let mm_ts_ext = format!("s{}p", lumped_ports.len());
-            let mm_ts_path = output_dir.join("postpro").join(format!("s_params_mixed.{}", mm_ts_ext));
-            sparams::write_touchstone(&mixed_matrices, &mm_ts_path, mom_cfg.ref_impedance)?;
-            sparams::append_palace_csv(&mixed_matrices, &output_dir.join("postpro").join("port-S-mixed.csv"))?;
-            log::info!(
-                "MoM mixed-mode S-parameter output written for {} differential pairs",
-                differential_pairs.len()
-            );
-        } else if !differential_pairs.is_empty() {
-            log::warn!(
-                "MoM differential pairs detected but not all ports are paired; skipping mixed-mode output"
-            );
+        // Mixed-mode differential output.
+        if !differential_pairs.is_empty() {
+            // Full mixed-mode matrix when all ports are paired.
+            if differential_pairs.len() * 2 == lumped_ports.len() {
+                let mixed_matrices: Vec<sparams::SMatrix> = all_matrices.iter()
+                    .map(|s| sparams::single_ended_to_mixed_mode(s, &differential_pairs))
+                    .collect::<RemResult<_>>()?;
+                let mm_ts_ext = format!("s{}p", lumped_ports.len());
+                let mm_ts_path = output_dir.join("postpro").join(format!("s_params_mixed.{}", mm_ts_ext));
+                sparams::write_touchstone(&mixed_matrices, &mm_ts_path, mom_cfg.ref_impedance)?;
+                sparams::append_palace_csv(&mixed_matrices, &output_dir.join("postpro").join("port-S-mixed.csv"))?;
+                log::info!(
+                    "MoM full mixed-mode S output written for {} differential pairs",
+                    differential_pairs.len()
+                );
+            } else {
+                log::info!(
+                    "MoM partial mixed-mode: {} paired ports over {} total ports",
+                    differential_pairs.len() * 2,
+                    lumped_ports.len()
+                );
+            }
+
+            // Per-pair 2x2 mixed-mode blocks are always emitted for each valid pair.
+            for &(pi, ni) in &differential_pairs {
+                let pair_idx_p = mom_cfg.ports[pi].index;
+                let pair_idx_n = mom_cfg.ports[ni].index;
+                let pair_matrices: Vec<sparams::SMatrix> = all_matrices.iter()
+                    .map(|s| sparams::pair_mixed_mode_block(s, (pi, ni)))
+                    .collect::<RemResult<_>>()?;
+
+                let pair_ts_path = output_dir.join("postpro").join(format!(
+                    "s_params_mixed_p{}_p{}.s2p",
+                    pair_idx_p, pair_idx_n,
+                ));
+                sparams::write_touchstone(&pair_matrices, &pair_ts_path, mom_cfg.ref_impedance)?;
+
+                let pair_csv_path = output_dir.join("postpro").join(format!(
+                    "port-S-mixed-p{}_p{}.csv",
+                    pair_idx_p, pair_idx_n,
+                ));
+                sparams::append_palace_csv(&pair_matrices, &pair_csv_path)?;
+            }
         }
 
         // ── Z/Y matrices ──────────────────────────────────────────────────

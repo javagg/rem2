@@ -331,6 +331,46 @@ pub fn single_ended_to_mixed_mode(
     Ok(SMatrix { n_ports: n, freq_hz: s.freq_hz, data })
 }
 
+/// Extract a 2×2 mixed-mode block for a single differential pair `(p, n)`.
+///
+/// Uses the submatrix
+///   [Spp Spn; Snp Snn]
+/// and converts with T = (1/sqrt(2))*[[1,-1],[1,1]] to produce
+///   [Sdd Sdc; Scd Scc].
+pub fn pair_mixed_mode_block(
+    s: &SMatrix,
+    pair: (usize, usize),
+) -> RemResult<SMatrix> {
+    let (p, n) = pair;
+    if p >= s.n_ports || n >= s.n_ports || p == n {
+        return Err(rem_core::RemError::Config("Invalid pair indices for mixed-mode block".into()));
+    }
+
+    let spp = s.data[p * s.n_ports + p];
+    let spn = s.data[p * s.n_ports + n];
+    let snp = s.data[n * s.n_ports + p];
+    let snn = s.data[n * s.n_ports + n];
+
+    let s2 = DMatrix::from_row_slice(2, 2, &[spp, spn, snp, snn]);
+    let inv_sqrt2 = 1.0 / 2.0_f64.sqrt();
+    let t = DMatrix::from_row_slice(
+        2,
+        2,
+        &[
+            Complex64::new(inv_sqrt2, 0.0), Complex64::new(-inv_sqrt2, 0.0),
+            Complex64::new(inv_sqrt2, 0.0), Complex64::new(inv_sqrt2, 0.0),
+        ],
+    );
+    let t_t = t.transpose();
+    let mm = &t * s2 * t_t;
+
+    Ok(SMatrix {
+        n_ports: 2,
+        freq_hz: s.freq_hz,
+        data: vec![mm[(0, 0)], mm[(0, 1)], mm[(1, 0)], mm[(1, 1)]],
+    })
+}
+
 // ── Transmission-line RLGC extraction ─────────────────────────────────────
 
 /// Per-unit-length RLGC parameters extracted from a 2-port S-matrix.
@@ -470,7 +510,7 @@ mod tests {
     fn s_matrix_shape_single_port() {
         let surf = two_tri_surf_with_attrs(1);
         let bases = generate_rwg_bases(&surf);
-        let port = MomLumpedPort::from_surface(&surf, &bases, &[1], 1, "x", 50.0).unwrap();
+        let port = MomLumpedPort::from_surface(&surf, &bases, &[1], 1, "x", "Lumped", 1, 50.0).unwrap();
         let ports = vec![port];
         let z = identity_z(bases.len());
         let sm = compute_s_matrix(&surf, &bases, &ports, &z, 1e9).unwrap();
@@ -605,5 +645,23 @@ mod tests {
                 (mm.data[0] - Complex64::new(1.0, 0.0)).norm() < 1.0e-12);
         assert!(mm.data[1].norm() < 1.0e-12);
         assert!(mm.data[2].norm() < 1.0e-12);
+    }
+
+    #[test]
+    fn pair_mixed_mode_block_extracts_2x2() {
+        let s = SMatrix {
+            n_ports: 4,
+            freq_hz: 1.0e9,
+            data: vec![
+                Complex64::new(0.1, 0.0), Complex64::new(0.2, 0.0), Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0),
+                Complex64::new(0.3, 0.0), Complex64::new(0.4, 0.0), Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0),
+                Complex64::ZERO, Complex64::ZERO, Complex64::new(0.5, 0.0), Complex64::new(0.6, 0.0),
+                Complex64::ZERO, Complex64::ZERO, Complex64::new(0.7, 0.0), Complex64::new(0.8, 0.0),
+            ],
+        };
+        let mm = pair_mixed_mode_block(&s, (0, 1)).unwrap();
+        assert_eq!(mm.n_ports, 2);
+        assert_eq!(mm.data.len(), 4);
+        assert!(mm.data.iter().all(|v| v.re.is_finite() && v.im.is_finite()));
     }
 }
