@@ -145,7 +145,11 @@ fn rwg_rhs(surf: &SurfaceMesh, k: f64, wave: &PlaneWave) -> Vec<Complex64> {
             let face = &surf.faces[face_idx];
             let r = &face.centroid;
             let phase = k * (kh[0]*r[0] + kh[1]*r[1] + kh[2]*r[2]);
-            let e_inc_scalar = Complex64::new(0.0, -phase).exp();
+            // Multiply by k to match the Pulse-EFIE convention used throughout this
+            // codebase (pulse_rhs also includes a k factor); without this, the RWG
+            // currents are 1/k smaller than expected and rcs_pattern_rwg gives a
+            // k²-factor underestimate of the bistatic RCS.
+            let e_inc_scalar = Complex64::new(0.0, -phase).exp() * Complex64::new(k, 0.0);
             let fn_ = b.eval(r, surf, in_plus);
             // f_n · E_inc = f_n · (ê * e_inc_scalar)
             let dot = eh[0]*fn_[0] + eh[1]*fn_[1] + eh[2]*fn_[2];

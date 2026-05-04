@@ -22,14 +22,15 @@
 use rem_mom::{
     surface_mesh::{SurfaceMesh, TriFace, SharedEdge, tri_geometry, patch_edge_lengths},
     quadrature::TriQuad,
-    assemble::{assemble_efie_pulse, assemble_cfie_rwg_block, lu_solve},
+    assemble::{assemble_efie_pulse, assemble_cfie_rwg, lu_solve},
     excitation::plane_wave_rhs,
-    postprocess::rcs_pattern,
+    postprocess::{rcs_pattern, rcs_pattern_rwg},
     mie::pec_sphere_rcs,
     basis::rwg::generate_rwg_bases,
 };
 use rem_core::{C0, ETA0};
-use rem_layered_green::FreeSpaceGreen;use std::f64::consts::PI;
+
+use std::f64::consts::PI;
 
 // ---------------------------------------------------------------------------
 // Mesh helpers
@@ -318,13 +319,13 @@ fn sibc_impedance_formula_validation() {
 // Accuracy benchmarks — Phase 25
 // ---------------------------------------------------------------------------
 
-/// Quantitative Mie accuracy benchmark: CFIE-RWG sphere at ka ≈ 2.
+/// Quantitative Mie accuracy benchmark: EFIE-RWG sphere at ka ≈ 2.
 ///
-/// With icosphere level-1 subdivision (80 faces, ~120 RWG edges) the monopole
-/// approximation gives moderate accuracy; this test verifies the mean bistatic
-/// RCS error is < 3 dB vs the Mie analytical series.
+/// Uses icosphere level-1 (80 faces, ~120 RWG edges) with pure EFIE (α=1).
+/// Verifies that the mean bistatic RCS error is < 6 dB vs Mie series.
+/// RWG vector basis gives full-polarization accuracy vs scalar Pulse basis.
 ///
-/// Tagged `#[ignore]` because full dense assembly at N≈120 takes a few seconds.
+/// Tagged `#[ignore]` because dense 120×120 EFIE-RWG assembly takes a few seconds.
 #[test]
 #[ignore]
 fn cfie_rwg_sphere_mie_accuracy_ka2() {
@@ -334,36 +335,41 @@ fn cfie_rwg_sphere_mie_accuracy_ka2() {
     let freq = 2.0 * C0 / (2.0 * PI * a);          // ka = 2
     let k    = 2.0 * PI * freq / C0;
 
-    let surf  = icosphere(a, 1);                    // 80 faces
+    let surf  = icosphere(a, 1);                    // 80 faces, ~120 RWG
+    let bases = generate_rwg_bases(&surf);
+    let n     = bases.len();
     let quad  = TriQuad::new(4);
+    // alpha=1.0 → pure EFIE (CFIE requires a combined RHS that is not yet implemented)
+    let alpha = 1.0_f64;
 
-    // Assemble EFIE-Pulse and solve
-    let z = assemble_efie_pulse(&surf, freq, &quad, 1e-6).expect("EFIE assembly");
-    let rhs = plane_wave_rhs(&surf, k, "Pulse");
+    let z = assemble_cfie_rwg(&surf, &bases, freq, alpha, &quad, 1e-6)
+        .expect("EFIE-RWG assembly");
+    let rhs = plane_wave_rhs(&surf, k, "RWG");
     let currents = lu_solve(&z, &rhs).expect("LU solve");
+    println!("EFIE-RWG ka=2: N={}", n);
 
-    // Compute bistatic RCS at θ ∈ 0°..180°
+    // Compute bistatic RCS at θ ∈ 0°..180° using RWG-aware far-field
     let theta_deg: Vec<f64> = (0..=18).map(|i| i as f64 * 10.0).collect();
     let phi_deg = vec![0.0_f64];
-    let rcs_mom_grid = rcs_pattern(&currents, &surf, k, &theta_deg, &phi_deg);
+    let rcs_mom_grid = rcs_pattern_rwg(&currents, &surf, &bases, k, &theta_deg, &phi_deg);
     let rcs_mie = pec_sphere_rcs(a, k, &theta_deg, None);
 
     let mut sum_err_db = 0.0_f64;
     let mut n_pts = 0usize;
-    for (ti, (&th, rcs_mie_pt)) in theta_deg.iter().zip(rcs_mie.iter()).enumerate() {
+    for (ti, (&th, &rcs_mie_pt)) in theta_deg.iter().zip(rcs_mie.iter()).enumerate() {
         let rcs_mom_pt = rcs_mom_grid[ti][0];
-        if rcs_mie_pt.abs() < 1e-30 || rcs_mom_pt < 1e-30 { continue; }
+        if rcs_mie_pt < 1e-30 || rcs_mom_pt < 1e-30 { continue; }
         let err_db = (10.0 * (rcs_mom_pt / rcs_mie_pt).log10()).abs();
         sum_err_db += err_db;
         n_pts += 1;
         println!("θ={:5.1}°  RCS_MoM={:.3e}  RCS_Mie={:.3e}  err={:.2} dB", th, rcs_mom_pt, rcs_mie_pt, err_db);
     }
     let mean_err_db = sum_err_db / n_pts.max(1) as f64;
-    println!("EFIE-Pulse ka=2 benchmark: mean={:.2} dB", mean_err_db);
+    println!("EFIE-RWG ka=2 benchmark: mean={:.2} dB  (N={})", mean_err_db, n);
 
     assert!(
         mean_err_db < 6.0,
-        "Mean bistatic RCS error {:.2} dB > 6 dB threshold (ka=2 EFIE-Pulse)",
+        "Mean bistatic RCS error {:.2} dB > 6 dB threshold (ka=2 EFIE-RWG)",
         mean_err_db
     );
 }
@@ -405,4 +411,67 @@ fn efie_pulse_sphere_mie_fast_ka1() {
         "Forward RCS error {:.2} dB > 6 dB (EFIE-Pulse sphere ka=1)",
         err_db
     );
+}
+
+/// Diagnostic: compare EFIE-Pulse vs EFIE-RWG forward-scatter N_x on the same sphere.
+///
+/// This test is `#[ignore]` and purely diagnostic — it prints the N_x radiation vector
+/// from both formulations at θ=0° to expose any scale discrepancy.
+#[test]
+#[ignore]
+fn debug_pulse_vs_rwg_nx_comparison() {
+    use std::f64::consts::PI;
+    let a    = 0.1_f64;
+    let freq = 2.0 * C0 / (2.0 * PI * a); // ka=2
+    let k    = 2.0 * PI * freq / C0;
+    let surf = icosphere(a, 1);
+    let quad = TriQuad::new(4);
+    let bases = generate_rwg_bases(&surf);
+
+    // ---- Pulse ----
+    let zp  = assemble_efie_pulse(&surf, freq, &quad, 1e-6).unwrap();
+    let vp  = plane_wave_rhs(&surf, k, "Pulse");
+    let ip  = lu_solve(&zp, &vp).unwrap();
+    let rcs_pulse = rcs_pattern(&ip, &surf, k, &[0.0], &[0.0]);
+    let rcs_pulse_fwd = rcs_pulse[0][0];
+    // N_x via Pulse formula
+    let nx_pulse: num_complex::Complex64 = ip.iter().zip(surf.faces.iter()).map(|(&jm, face)| {
+        let phase = k * face.centroid[2]; // θ=0 → r̂=ẑ
+        jm * num_complex::Complex64::new(0.0, phase).exp() * face.area
+    }).sum();
+
+    // ---- RWG ----
+    let zr  = assemble_cfie_rwg(&surf, &bases, freq, 1.0, &quad, 1e-6).unwrap();
+    let vr  = plane_wave_rhs(&surf, k, "RWG");
+    let ir  = lu_solve(&zr, &vr).unwrap();
+    let rcs_rwg = rcs_pattern_rwg(&ir, &surf, &bases, k, &[0.0], &[0.0]);
+    let rcs_rwg_fwd = rcs_rwg[0][0];
+    // N_x via RWG formula
+    let mut nx_rwg = num_complex::Complex64::ZERO;
+    for (idx, base) in bases.iter().enumerate() {
+        let i_n = ir[idx];
+        for &(fi, in_plus) in &[(base.plus_face, true), (base.minus_face, false)] {
+            let face = &surf.faces[fi];
+            let phase = k * face.centroid[2];
+            let exp_phase = num_complex::Complex64::new(0.0, phase).exp();
+            let fv = base.eval(&face.centroid, &surf, in_plus);
+            nx_rwg += i_n * fv[0] * exp_phase * face.area;
+        }
+    }
+
+    let rcs_mie = pec_sphere_rcs(a, k, &[0.0], None)[0];
+    let nx_expected = (rcs_mie / (k*k * rem_core::ETA0*rem_core::ETA0 / (4.0*PI))).sqrt();
+
+    println!("ka=2 Sphere forward-scatter comparison:");
+    println!("  |N_x| Pulse formula:  {:.4e}  (RCS={:.4e})", nx_pulse.norm(), rcs_pulse_fwd);
+    println!("  |N_x| RWG formula:    {:.4e}  (RCS={:.4e})", nx_rwg.norm(), rcs_rwg_fwd);
+    println!("  |N_x| Mie expected:   {:.4e}  (RCS={:.4e})", nx_expected, rcs_mie);
+    println!("  |Z_Pulse|_F={:.3e}  |V_Pulse|={:.3e}  |I_Pulse|={:.3e}",
+        zp.iter().map(|v| v.norm_sqr()).sum::<f64>().sqrt(),
+        vp.iter().map(|v| v.norm_sqr()).sum::<f64>().sqrt(),
+        ip.iter().map(|v| v.norm_sqr()).sum::<f64>().sqrt());
+    println!("  |Z_RWG|_F={:.3e}    |V_RWG|={:.3e}    |I_RWG|={:.3e}",
+        zr.iter().map(|v| v.norm_sqr()).sum::<f64>().sqrt(),
+        vr.iter().map(|v| v.norm_sqr()).sum::<f64>().sqrt(),
+        ir.iter().map(|v| v.norm_sqr()).sum::<f64>().sqrt());
 }

@@ -499,11 +499,11 @@ fn zmn_efie_rwg_green(
                         val += integrand * (wm * wn * 4.0 * face_m.area * face_n.area);
                     }
                 }
-                val *= Complex64::new(0.0, omega_mu0);
             }
         }
     }
-    val
+    // Apply jωμ₀ factor once at the end (same convention as zmn_efie_rwg)
+    Complex64::new(0.0, -omega_mu0) * val
 }
 
 /// MFIE assembly using a pluggable [`GreenFunction`].

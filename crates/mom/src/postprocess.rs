@@ -42,6 +42,66 @@ pub fn rcs_pattern(
 }
 
 
+/// Compute bistatic RCS [m²] from RWG basis-function current coefficients.
+///
+/// Far-field radiation vector is computed via centroid quadrature (one point
+/// per face per basis, exact for linearly-varying RWG functions under PO):
+///
+///   **N**(r̂) = Σₙ Iₙ [ **f**ₙ(r'₊) A₊ e^{jk r̂·r'₊} + **f**ₙ(r'₋) A₋ e^{jk r̂·r'₋} ]
+///   σ = k²/(4π) |r̂ × (r̂ × η₀**N**)·x̂|²   [m²]  (x-pol incident)
+///
+/// Returns a 2-D array: `result[i_theta][i_phi]`.
+pub fn rcs_pattern_rwg(
+    currents: &[Complex64],
+    surf: &SurfaceMesh,
+    bases: &[crate::basis::rwg::RwgBasis],
+    k: f64,
+    theta_deg: &[f64],
+    phi_deg: &[f64],
+) -> Vec<Vec<f64>> {
+    use crate::basis::rwg::RwgBasis;
+    let eta_k2 = ETA0 * ETA0 * k * k / (4.0 * PI);
+
+    theta_deg.iter().map(|&theta_d| {
+        let theta = theta_d.to_radians();
+        phi_deg.iter().map(|&phi_d| {
+            let phi = phi_d.to_radians();
+            let rhat = [theta.sin() * phi.cos(),
+                        theta.sin() * phi.sin(),
+                        theta.cos()];
+
+            // Radiation vector N = [Nx, Ny, Nz]
+            let mut n = [Complex64::ZERO; 3];
+            for (idx, base) in bases.iter().enumerate() {
+                let i_n = currents[idx];
+                for &(fi, in_plus) in &[(base.plus_face, true), (base.minus_face, false)] {
+                    let face = &surf.faces[fi];
+                    let c = &face.centroid;
+                    let phase = k * (rhat[0]*c[0] + rhat[1]*c[1] + rhat[2]*c[2]);
+                    let exp_phase = Complex64::new(0.0, phase).exp();
+                    let fv = base.eval(c, surf, in_plus);
+                    let contrib = i_n * exp_phase * face.area;
+                    n[0] += fv[0] * contrib;
+                    n[1] += fv[1] * contrib;
+                    n[2] += fv[2] * contrib;
+                }
+            }
+
+            // Cross-pol projection: r̂ × (r̂ × η₀N), take x-component
+            // r̂ × N = [ry*Nz - rz*Ny, rz*Nx - rx*Nz, rx*Ny - ry*Nx]
+            // r̂ × (r̂ × N) = r̂(r̂·N) - N  → (r̂ × (r̂ × ηN))·x̂ = r̂ₓ(r̂·ηN) - ηNx
+            let eta_n = [ETA0 * n[0], ETA0 * n[1], ETA0 * n[2]];
+            let rdot = rhat[0]*eta_n[0] + rhat[1]*eta_n[1] + rhat[2]*eta_n[2];
+            let ff_x = rhat[0] * rdot - eta_n[0];
+            let ff_y = rhat[1] * rdot - eta_n[1];
+            let ff_z = rhat[2] * rdot - eta_n[2];
+
+            eta_k2 / (ETA0 * ETA0) * (ff_x.norm_sqr() + ff_y.norm_sqr() + ff_z.norm_sqr())
+        }).collect()
+    }).collect()
+}
+
+
 /// Write surface current distribution to VTK Legacy ASCII format.
 ///
 /// Generates a `.vtk` file with the triangular surface mesh and
