@@ -101,6 +101,81 @@ pub fn rcs_pattern_rwg(
     }).collect()
 }
 
+/// Compute bistatic RCS [m²] from PMCHWT solution (J + M RWG current coefficients).
+///
+/// The PMCHWT far-field includes both electric (J) and magnetic (M) surface currents:
+///
+///   **N**(r̂) = Σₙ Iₙᴶ [**f**ₙ(c₊) A₊ e^{jkr̂·c₊} + **f**ₙ(c₋) A₋ e^{jkr̂·c₋}]
+///   **L**(r̂) = Σₙ Iₙᴹ [**f**ₙ(c₊) A₊ e^{jkr̂·c₊} + **f**ₙ(c₋) A₋ e^{jkr̂·c₋}]
+///
+///   σ = k²/(4π) |η₀ (I − r̂r̂)**N** + r̂ × **L**|²
+///
+/// PMCHWT currents are **not** k-scaled (unlike CFIE-RWG via `rwg_rhs`).
+/// Returns a 2-D array: `result[i_theta][i_phi]`.
+pub fn rcs_pattern_pmchwt(
+    j_coeffs: &[Complex64],
+    m_coeffs: &[Complex64],
+    surf: &SurfaceMesh,
+    bases: &[crate::basis::rwg::RwgBasis],
+    k: f64,
+    theta_deg: &[f64],
+    phi_deg: &[f64],
+) -> Vec<Vec<f64>> {
+    let prefactor = k * k / (4.0 * PI);
+
+    theta_deg.iter().map(|&theta_d| {
+        let theta = theta_d.to_radians();
+        phi_deg.iter().map(|&phi_d| {
+            let phi = phi_d.to_radians();
+            let rhat = [theta.sin() * phi.cos(),
+                        theta.sin() * phi.sin(),
+                        theta.cos()];
+
+            let mut nv = [Complex64::ZERO; 3]; // electric radiation vector N
+            let mut lv = [Complex64::ZERO; 3]; // magnetic radiation vector L
+
+            for (idx, base) in bases.iter().enumerate() {
+                let ij = j_coeffs[idx];
+                let im = m_coeffs[idx];
+                for &(fi, in_plus) in &[(base.plus_face, true), (base.minus_face, false)] {
+                    let face = &surf.faces[fi];
+                    let c = &face.centroid;
+                    let phase = k * (rhat[0]*c[0] + rhat[1]*c[1] + rhat[2]*c[2]);
+                    let exp_ph = Complex64::new(0.0, phase).exp();
+                    let fv = base.eval(c, surf, in_plus);
+                    let contrib_j = ij * exp_ph * face.area;
+                    let contrib_m = im * exp_ph * face.area;
+                    nv[0] += Complex64::new(fv[0], 0.0) * contrib_j;
+                    nv[1] += Complex64::new(fv[1], 0.0) * contrib_j;
+                    nv[2] += Complex64::new(fv[2], 0.0) * contrib_j;
+                    lv[0] += Complex64::new(fv[0], 0.0) * contrib_m;
+                    lv[1] += Complex64::new(fv[1], 0.0) * contrib_m;
+                    lv[2] += Complex64::new(fv[2], 0.0) * contrib_m;
+                }
+            }
+
+            // η₀(I − r̂r̂)N = η₀(N − (r̂·N)r̂)
+            let rdotn = rhat[0]*nv[0] + rhat[1]*nv[1] + rhat[2]*nv[2];
+            let eta_nt = [
+                ETA0 * (nv[0] - rdotn * rhat[0]),
+                ETA0 * (nv[1] - rdotn * rhat[1]),
+                ETA0 * (nv[2] - rdotn * rhat[2]),
+            ];
+
+            // r̂ × L
+            let rxl = [
+                rhat[1]*lv[2] - rhat[2]*lv[1],
+                rhat[2]*lv[0] - rhat[0]*lv[2],
+                rhat[0]*lv[1] - rhat[1]*lv[0],
+            ];
+
+            // Balanis eq. 3-58: E_t ∝ η₀N_t + r̂×L  (with PMCHWT M convention M = -n̂×E).
+            let total = [eta_nt[0] + rxl[0], eta_nt[1] + rxl[1], eta_nt[2] + rxl[2]];
+            prefactor * (total[0].norm_sqr() + total[1].norm_sqr() + total[2].norm_sqr())
+        }).collect()
+    }).collect()
+}
+
 
 /// Write surface current distribution to VTK Legacy ASCII format.
 ///

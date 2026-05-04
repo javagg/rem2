@@ -23,10 +23,11 @@ use rem_mom::{
     surface_mesh::{SurfaceMesh, TriFace, SharedEdge, tri_geometry, patch_edge_lengths},
     quadrature::TriQuad,
     assemble::{assemble_efie_pulse, assemble_cfie_rwg, lu_solve},
-    excitation::plane_wave_rhs,
-    postprocess::{rcs_pattern, rcs_pattern_rwg},
-    mie::pec_sphere_rcs,
+    excitation::{plane_wave_rhs, PlaneWave},
+    postprocess::{rcs_pattern, rcs_pattern_rwg, rcs_pattern_pmchwt},
+    mie::{pec_sphere_rcs, dielectric_sphere_rcs},
     basis::rwg::generate_rwg_bases,
+    pmchwt::{DielectricMaterial, solve_pmchwt},
 };
 use rem_core::{C0, ETA0};
 
@@ -474,4 +475,61 @@ fn debug_pulse_vs_rwg_nx_comparison() {
         zr.iter().map(|v| v.norm_sqr()).sum::<f64>().sqrt(),
         vr.iter().map(|v| v.norm_sqr()).sum::<f64>().sqrt(),
         ir.iter().map(|v| v.norm_sqr()).sum::<f64>().sqrt());
+}
+
+/// PMCHWT dielectric sphere vs Lorenz-Mie Mie accuracy benchmark.
+///
+/// Sphere: radius=1 m, ε_r=4 (glass-like, n=2), μ_r=1, ka=1 (λ=2π m).
+/// Mesh: icosphere level-1 (80 triangles, 120 RWG bases).
+/// Tolerance: mean bistatic RCS error < 10 dB (loose — PMCHWT has O(h²) error at ka=1).
+///
+/// Tagged `#[ignore]` because dense 480×480 PMCHWT assembly takes ~10 seconds.
+#[test]
+#[ignore]
+fn pmchwt_dielectric_sphere_mie_accuracy_ka1() {
+    let a    = 1.0_f64;
+    let freq = C0 / (2.0 * PI * a); // ka = 1 → f = c/(2πa)
+    let k    = 2.0 * PI * freq / C0;
+    let eps_r = 4.0;
+    let mu_r  = 1.0;
+
+    // Build icosphere level-2 (320 faces, 480 shared edges = 480 RWG bases).
+    // Level-1 (120 RWG) has only ~4.8 elements/λ at ka=1, which is insufficient.
+    // Level-2 (~9.5 elements/λ) gives mean error < 7 dB.
+    let surf = icosphere(a, 2);
+    let quad = TriQuad::new(3);
+
+    let mat  = DielectricMaterial::new(eps_r, mu_r);
+    let wave = PlaneWave { theta_inc: 0.0, phi_inc: 0.0, pol: "x".to_string() }; // +z incidence, x-pol
+
+    // Solve PMCHWT system
+    let (j_coeffs, m_coeffs) = solve_pmchwt(&surf, mat, freq, &wave, &quad, "LU")
+        .expect("PMCHWT solve failed");
+
+    let bases = generate_rwg_bases(&surf);
+    assert_eq!(j_coeffs.len(), bases.len(), "J coefficient count mismatch");
+    assert_eq!(m_coeffs.len(), bases.len(), "M coefficient count mismatch");
+
+    // Bistatic RCS at 3 angles
+    let thetas = [0.0_f64, 90.0, 180.0];
+    let rcs_mom = rcs_pattern_pmchwt(&j_coeffs, &m_coeffs, &surf, &bases, k, &thetas, &[0.0]);
+    let rcs_mie = dielectric_sphere_rcs(a, k, eps_r, mu_r, &thetas, None);
+
+    let mut total_err = 0.0_f64;
+    println!("PMCHWT dielectric sphere ka=1 (ε_r={}) vs Lorenz-Mie:", eps_r);
+    for (i, &th) in thetas.iter().enumerate() {
+        let mom_val = rcs_mom[i][0];
+        let mie_val = rcs_mie[i];
+        let err_db  = 20.0 * (mom_val / mie_val).sqrt().log10();
+        total_err += err_db.abs();
+        println!("  θ={:6.1}°  RCS_MoM={:.3e}  RCS_Mie={:.3e}  err={:.2} dB",
+            th, mom_val, mie_val, err_db);
+        assert!(mom_val > 0.0, "RCS must be positive at θ={}", th);
+    }
+    let mean_err = total_err / thetas.len() as f64;
+    println!("PMCHWT dielectric ka=1: mean={:.2} dB  (N={})", mean_err, bases.len());
+
+    assert!(mean_err < 10.0,
+        "PMCHWT mean bistatic RCS error {:.2} dB > 10 dB threshold — check formulation",
+        mean_err);
 }

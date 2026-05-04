@@ -88,6 +88,8 @@ pub fn assemble_pmchwt(
     wave: &PlaneWave,
     quad: &TriQuad,
 ) -> RemResult<(DMatrix<Complex64>, Vec<Complex64>)> {
+    use crate::assemble::{assemble_efie_rwg_medium, assemble_mfie_rwg_k};
+
     let bases = generate_rwg_bases(surf);
     let n = bases.len();
     if n == 0 {
@@ -97,43 +99,40 @@ pub fn assemble_pmchwt(
     }
 
     let omega  = 2.0 * PI * freq;
-    let k1     = omega / C0;                    // exterior (free space)
-    let k2     = mat.wave_number(omega);        // interior
-    let eta1   = (MU0 / EPS0).sqrt();           // η₁ = η₀
-    let eta2   = mat.impedance();               // η₂ = η₀ √(μ_r/ε_r)
+    let k1     = omega / C0;
+    let k2     = mat.wave_number(omega);
+    let eta1   = (MU0 / EPS0).sqrt();
+    let eta2   = mat.impedance();
 
-    // Assemble T (EFIE-like) and K (MFIE-like) for both media
-    let t1 = assemble_t_matrix(surf, &bases, k1, omega, MU0, EPS0, quad)?;
-    let t2 = assemble_t_matrix(surf, &bases, k2, omega, MU0 * mat.mu_r, EPS0 * mat.eps_r, quad)?;
-    let k1m = assemble_k_matrix(surf, &bases, k1, quad)?;
-    let k2m = assemble_k_matrix(surf, &bases, k2, quad)?;
+    // T matrices via validated assemble_efie_rwg_medium (proper singularity treatment,
+    // correct -jωμ sign convention matching zmn_efie_rwg)
+    let t1 = assemble_efie_rwg_medium(surf, &bases, k1, omega, MU0, EPS0, quad)?;
+    let t2 = assemble_efie_rwg_medium(surf, &bases, k2, omega, MU0 * mat.mu_r, EPS0 * mat.eps_r, quad)?;
+    // K matrices via validated assemble_mfie_rwg_k
+    let k1m = assemble_mfie_rwg_k(surf, &bases, k1, quad)?;
+    let k2m = assemble_mfie_rwg_k(surf, &bases, k2, quad)?;
 
-    // Build 2N×2N block matrix
+    // Build 2N×2N PMCHWT block matrix.
+    // Peterson "Computational Methods for EM" (2001) §8.5 eqs (8.46)-(8.47):
+    //   E equation: (T₁+T₂)J + (K₁+K₂)M = -E_i^tan
+    //   H equation: (K₁+K₂)J − (T₁/η₁²+T₂/η₂²)M = -H_i^tan
     let two_n = 2 * n;
     let mut z = DMatrix::<Complex64>::zeros(two_n, two_n);
 
-    // Block (0,0): T₁ + T₂
-    // Block (0,1): K₁ + K₂
-    // Block (1,0): -(K₁ + K₂)
-    // Block (1,1): T₁/η₁² + T₂/η₂²  (normalization for H equation)
     for i in 0..n {
         for j in 0..n {
-            let t_sum  = t1[(i,j)] + t2[(i,j)];
-            let k_sum  = k1m[(i,j)] + k2m[(i,j)];
-
-            // Row block 0 (E equation, test fn f_i)
-            z[(i, j)]     = t_sum;          // [0,0] block
-            z[(i, j+n)]   = k_sum;          // [0,1] block
-
-            // Row block 1 (H equation, test fn f_i)
+            let t_sum   = t1[(i,j)] + t2[(i,j)];
+            let k_sum   = k1m[(i,j)] + k2m[(i,j)];
             let t_h_sum = t1[(i,j)] / Complex64::new(eta1 * eta1, 0.0)
                         + t2[(i,j)] / Complex64::new(eta2 * eta2, 0.0);
-            z[(i+n, j)]   = -k_sum;         // [1,0] block
-            z[(i+n, j+n)] = t_h_sum;        // [1,1] block
+
+            z[(i,   j  )] =  t_sum;    // [0,0]: T₁+T₂
+            z[(i,   j+n)] =  k_sum;    // [0,1]: K₁+K₂
+            z[(i+n, j  )] =  k_sum;    // [1,0]: K₁+K₂
+            z[(i+n, j+n)] = -t_h_sum;  // [1,1]: -(T₁/η₁²+T₂/η₂²)
         }
     }
 
-    // Build 2N RHS: [-⟨f_m, E_inc⟩, -⟨f_m, H_inc⟩]
     let rhs = build_pmchwt_rhs(surf, &bases, k1, wave, quad);
 
     Ok((z, rhs))
@@ -161,156 +160,6 @@ pub fn solve_pmchwt(
     let m_coeffs = x[two_n/2..].to_vec();
 
     Ok((j_coeffs, m_coeffs))
-}
-
-// ---------------------------------------------------------------------------
-// T matrix (EFIE operator, medium with wave number k, permittivity eps, permeability mu)
-// ---------------------------------------------------------------------------
-
-/// Assemble EFIE-type T matrix for medium with parameters (k, mu, eps).
-///
-/// T[m,n] = jωμ ⟨f_m, L(f_n)⟩ where L is the EFIE integral operator.
-fn assemble_t_matrix(
-    surf: &SurfaceMesh,
-    bases: &[RwgBasis],
-    k: f64,
-    omega: f64,
-    mu: f64,
-    eps: f64,
-    quad: &TriQuad,
-) -> RemResult<DMatrix<Complex64>> {
-    use crate::green::green3d;
-
-    let n = bases.len();
-    let omega_mu      = omega * mu;
-    let inv_omega_eps = 1.0 / (omega * eps);
-    let jomega_mu     = Complex64::new(0.0, omega_mu);
-
-    let mut t = DMatrix::<Complex64>::zeros(n, n);
-
-    for ni in 0..n {
-        let bn = &bases[ni];
-        for mi in 0..n {
-            let bm = &bases[mi];
-            let mut val = Complex64::ZERO;
-
-            for &(m_face, m_plus) in &[(bm.plus_face, true), (bm.minus_face, false)] {
-                for &(n_face, n_plus) in &[(bn.plus_face, true), (bn.minus_face, false)] {
-                    let face_m = &surf.faces[m_face];
-                    let face_n = &surf.faces[n_face];
-                    let div_n = bn.divergence(surf, n_plus);
-
-                    for (bm_pt, &wm) in quad.bary.iter().zip(quad.weights.iter()) {
-                        let rm = crate::quadrature::TriQuad::global_point(bm_pt, face_m, &surf.nodes);
-                        let fm = bm.eval(&rm, surf, m_plus);
-
-                        for (bn_pt, &wn) in quad.bary.iter().zip(quad.weights.iter()) {
-                            let rn = crate::quadrature::TriQuad::global_point(bn_pt, face_n, &surf.nodes);
-                            let fn_ = bn.eval(&rn, surf, n_plus);
-                            let g = green3d(&rm, &rn, k);
-
-                            let dot_ff = fm[0]*fn_[0] + fm[1]*fn_[1] + fm[2]*fn_[2];
-                            let div_m = bm.divergence(surf, m_plus);
-
-                            let integrand = g * (dot_ff - inv_omega_eps / omega_mu * div_m * div_n);
-                            val += integrand * (wm * wn * 4.0 * face_m.area * face_n.area);
-                        }
-                    }
-                }
-            }
-
-            t[(mi, ni)] = jomega_mu * val;
-        }
-    }
-
-    Ok(t)
-}
-
-// ---------------------------------------------------------------------------
-// K matrix (MFIE operator)
-// ---------------------------------------------------------------------------
-
-/// Assemble MFIE-type K matrix for medium with wave number k.
-///
-/// K[m,n] = ⟨f_m, (1/2 δ_{mn} + K_op) f_n⟩ where K_op uses the
-/// curl of the Green's function.
-fn assemble_k_matrix(
-    surf: &SurfaceMesh,
-    bases: &[RwgBasis],
-    k: f64,
-    quad: &TriQuad,
-) -> RemResult<DMatrix<Complex64>> {
-    let n = bases.len();
-    let mut km = DMatrix::<Complex64>::zeros(n, n);
-
-    for ni in 0..n {
-        let bn = &bases[ni];
-        for mi in 0..n {
-            let bm = &bases[mi];
-
-            // Identity term: δ_{mn}/2 * ⟨f_m, f_n⟩ = δ_{mn}/2 * overlap
-            let identity_term = if bm.edge_idx == bn.edge_idx {
-                let mut overlap = 0.0f64;
-                for &(face_idx, in_plus) in &[(bm.plus_face, true), (bm.minus_face, false)] {
-                    let face = &surf.faces[face_idx];
-                    for (b_pt, &w) in quad.bary.iter().zip(quad.weights.iter()) {
-                        let r = crate::quadrature::TriQuad::global_point(b_pt, face, &surf.nodes);
-                        let f = bm.eval(&r, surf, in_plus);
-                        overlap += (f[0]*f[0] + f[1]*f[1] + f[2]*f[2]) * (w * 2.0 * face.area);
-                    }
-                }
-                Complex64::new(0.5 * overlap, 0.0)
-            } else {
-                Complex64::ZERO
-            };
-
-            // Curl-Green integral
-            let mut curl_term = Complex64::ZERO;
-            for &(m_face, m_plus) in &[(bm.plus_face, true), (bm.minus_face, false)] {
-                for &(n_face, n_plus) in &[(bn.plus_face, true), (bn.minus_face, false)] {
-                    let face_m = &surf.faces[m_face];
-                    let face_n = &surf.faces[n_face];
-                    let nm = face_m.normal;
-
-                    for (bm_pt, &wm) in quad.bary.iter().zip(quad.weights.iter()) {
-                        let rm = crate::quadrature::TriQuad::global_point(bm_pt, face_m, &surf.nodes);
-                        let fm = bm.eval(&rm, surf, m_plus);
-
-                        for (bn_pt, &wn) in quad.bary.iter().zip(quad.weights.iter()) {
-                            let rn = crate::quadrature::TriQuad::global_point(bn_pt, face_n, &surf.nodes);
-                            let fn_ = bn.eval(&rn, surf, n_plus);
-                            let grad_g = green_gradient_k(&rm, &rn, k);
-
-                            let fn_c = [
-                                Complex64::new(fn_[0], 0.0),
-                                Complex64::new(fn_[1], 0.0),
-                                Complex64::new(fn_[2], 0.0),
-                            ];
-                            let curl_gfn = cross_c(&grad_g, &fn_c);
-
-                            let nm_c = [
-                                Complex64::new(nm[0], 0.0),
-                                Complex64::new(nm[1], 0.0),
-                                Complex64::new(nm[2], 0.0),
-                            ];
-                            let n_x_curl = cross_c(&nm_c, &curl_gfn);
-                            let dot_val = Complex64::new(
-                                fm[0]*n_x_curl[0].re + fm[1]*n_x_curl[1].re + fm[2]*n_x_curl[2].re,
-                                fm[0]*n_x_curl[0].im + fm[1]*n_x_curl[1].im + fm[2]*n_x_curl[2].im,
-                            );
-
-                            curl_term += dot_val
-                                       * (wm * wn * 4.0 * face_m.area * face_n.area);
-                        }
-                    }
-                }
-            }
-
-            km[(mi, ni)] = identity_term + curl_term;
-        }
-    }
-
-    Ok(km)
 }
 
 // ---------------------------------------------------------------------------
@@ -382,28 +231,6 @@ fn build_pmchwt_rhs(
     }
 
     rhs
-}
-
-// ---------------------------------------------------------------------------
-// Helpers (duplicated locally to avoid coupling with assemble.rs internals)
-// ---------------------------------------------------------------------------
-
-fn green_gradient_k(r: &[f64; 3], rp: &[f64; 3], k: f64) -> [Complex64; 3] {
-    use crate::green::green3d;
-    let dr = [r[0]-rp[0], r[1]-rp[1], r[2]-rp[2]];
-    let dist = (dr[0]*dr[0] + dr[1]*dr[1] + dr[2]*dr[2]).sqrt();
-    if dist < 1e-14 { return [Complex64::ZERO; 3]; }
-    let g = green3d(r, rp, k);
-    let factor = g * Complex64::new(1.0/dist, k) / dist;
-    [factor * dr[0], factor * dr[1], factor * dr[2]]
-}
-
-fn cross_c(a: &[Complex64; 3], b: &[Complex64; 3]) -> [Complex64; 3] {
-    [
-        a[1]*b[2] - a[2]*b[1],
-        a[2]*b[0] - a[0]*b[2],
-        a[0]*b[1] - a[1]*b[0],
-    ]
 }
 
 // ---------------------------------------------------------------------------

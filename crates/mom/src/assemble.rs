@@ -423,6 +423,62 @@ fn zmn_mfie_rwg(
 }
 
 // ---------------------------------------------------------------------------
+// PMCHWT medium-parameterized assemblers
+// ---------------------------------------------------------------------------
+
+/// Assemble EFIE impedance matrix for arbitrary medium (k, μ, ε).
+///
+/// Used by PMCHWT to build T₁ and T₂ for interior/exterior media separately.
+/// Handles near-singular pairs via `zmn_efie_rwg` (Sauter-Schwab/Duffy quadrature).
+pub(crate) fn assemble_efie_rwg_medium(
+    surf: &SurfaceMesh,
+    bases: &[RwgBasis],
+    k: f64,
+    omega: f64,
+    mu: f64,
+    eps: f64,
+    quad: &TriQuad,
+) -> RemResult<DMatrix<Complex64>> {
+    let omega_mu = omega * mu;
+    let inv_oe   = 1.0 / (omega * eps);
+    let n = bases.len();
+
+    let cols: Vec<Vec<Complex64>> = {
+        let compute = |ni: usize| -> Vec<Complex64> {
+            let bn = &bases[ni];
+            let mut col = vec![Complex64::ZERO; n];
+            for mi in 0..n {
+                let bm = &bases[mi];
+                col[mi] = zmn_efie_rwg(bm, bn, surf, k, omega_mu, inv_oe, quad);
+            }
+            col
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        { (0..n).into_par_iter().map(compute).collect() }
+        #[cfg(target_arch = "wasm32")]
+        { (0..n).map(compute).collect() }
+    };
+
+    let mut z = DMatrix::<Complex64>::from_element(n, n, Complex64::ZERO);
+    for (ni, col) in cols.into_iter().enumerate() {
+        for mi in 0..n { z[(mi, ni)] = col[mi]; }
+    }
+    Ok(z)
+}
+
+/// Assemble MFIE impedance matrix for arbitrary wave number k.
+///
+/// Used by PMCHWT to build K₁ and K₂.
+pub(crate) fn assemble_mfie_rwg_k(
+    surf: &SurfaceMesh,
+    bases: &[RwgBasis],
+    k: f64,
+    quad: &TriQuad,
+) -> RemResult<DMatrix<Complex64>> {
+    assemble_mfie_rwg(surf, bases, k, quad)
+}
+
+// ---------------------------------------------------------------------------
 // Green-function-trait variants (for layered-media / DCIM support)
 // ---------------------------------------------------------------------------
 

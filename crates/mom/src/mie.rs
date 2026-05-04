@@ -1,9 +1,12 @@
-//! Mie series analytical solution for plane-wave scattering by a PEC sphere.
+//! Mie series analytical solutions for plane-wave scattering.
 //!
-//! Used for validation of the MoM EFIE pulse solver.
+//! Supports:
+//! - PEC sphere: EFIE/CFIE pulse-basis and RWG-basis validation
+//! - Homogeneous dielectric sphere: PMCHWT validation (Lorenz-Mie theory)
 //!
-//! Reference: Bohren & Huffman, *Absorption and Scattering of Light by Small Particles*,
-//!            Chapter 4; Stratton, *Electromagnetic Theory*, §9.25.
+//! References:
+//! - Bohren & Huffman, *Absorption and Scattering of Light by Small Particles*, Ch. 4
+//! - Stratton, *Electromagnetic Theory*, §9.25
 
 use num_complex::Complex64;
 use std::f64::consts::PI;
@@ -34,6 +37,81 @@ pub fn pec_sphere_rcs(
         // σ = λ²/(π) * |S|²   (bistatic, unpolarized average)
         let sigma = (wavelength * wavelength / PI) * 0.5 * (s1.norm_sqr() + s2.norm_sqr());
         sigma
+    }).collect()
+}
+
+/// Compute the bistatic RCS σ(θ) [m²] of a homogeneous dielectric sphere
+/// using Lorenz-Mie theory (Bohren & Huffman, Ch. 4, eqs. 4.53–4.56).
+///
+/// # Parameters
+/// - `a`       — sphere radius [m]
+/// - `k`       — free-space wave number k₁ = ω/c [1/m]
+/// - `eps_r`   — relative permittivity of sphere (real, ≥ 1)
+/// - `mu_r`    — relative permeability of sphere (real, ≥ 1)
+/// - `theta_deg` — bistatic angles [°] from forward scatter (0° = forward, 180° = backward)
+/// - `n_terms` — number of Mie terms (auto-selected by Wiscombe criterion if None)
+///
+/// Returns bistatic RCS [m²] as unpolarized average ½(|S₁|² + |S₂|²) × λ²/π.
+pub fn dielectric_sphere_rcs(
+    a: f64,
+    k: f64,
+    eps_r: f64,
+    mu_r: f64,
+    theta_deg: &[f64],
+    n_terms: Option<usize>,
+) -> Vec<f64> {
+    let ka  = k * a;
+    let m   = (eps_r * mu_r).sqrt(); // real refractive index ratio n₂/n₁
+    let mx  = m * ka;                // internal size parameter
+
+    let n_max = n_terms.unwrap_or_else(|| (ka + 4.0*ka.powf(1.0/3.0) + 2.0).ceil() as usize + 5);
+
+    let an = mie_an_diel(ka, mx, m, n_max);
+    let bn = mie_bn_diel(ka, mx, m, n_max);
+
+    theta_deg.iter().map(|&theta| {
+        let cos_t = theta.to_radians().cos();
+        let (s1, s2) = scattering_amplitudes(cos_t, &an, &bn);
+        let wavelength = 2.0 * PI / k;
+        (wavelength * wavelength / PI) * 0.5 * (s1.norm_sqr() + s2.norm_sqr())
+    }).collect()
+}
+
+/// Lorenz-Mie a_n for a homogeneous dielectric sphere (TM modes).
+///
+/// a_n = [m ψ_n(mx) ψ'_n(x) − ψ_n(x) ψ'_n(mx)] /
+///       [m ψ_n(mx) ξ'_n(x) − ξ_n(x) ψ'_n(mx)]
+fn mie_an_diel(ka: f64, mx: f64, m: f64, n_max: usize) -> Vec<Complex64> {
+    let mc = Complex64::new(m, 0.0);
+    (1..=n_max).map(|n| {
+        let psi_mx  = sph_jn(n, mx) * Complex64::new(mx, 0.0);
+        let dpsi_mx = Complex64::new(d_sph_jn(n, mx), 0.0);
+        let psi_x   = sph_jn(n, ka) * Complex64::new(ka, 0.0);
+        let dpsi_x  = Complex64::new(d_sph_jn(n, ka), 0.0);
+        let xi_x    = sph_hn1(n, ka) * Complex64::new(ka, 0.0);
+        let dxi_x   = d_sph_hn1(n, ka);
+        let num = mc * psi_mx * dpsi_x - psi_x * dpsi_mx;
+        let den = mc * psi_mx * dxi_x  - xi_x  * dpsi_mx;
+        num / den
+    }).collect()
+}
+
+/// Lorenz-Mie b_n for a homogeneous dielectric sphere (TE modes).
+///
+/// b_n = [ψ_n(mx) ψ'_n(x) − m ψ_n(x) ψ'_n(mx)] /
+///       [ψ_n(mx) ξ'_n(x) − m ξ_n(x) ψ'_n(mx)]
+fn mie_bn_diel(ka: f64, mx: f64, m: f64, n_max: usize) -> Vec<Complex64> {
+    let mc = Complex64::new(m, 0.0);
+    (1..=n_max).map(|n| {
+        let psi_mx  = sph_jn(n, mx) * Complex64::new(mx, 0.0);
+        let dpsi_mx = Complex64::new(d_sph_jn(n, mx), 0.0);
+        let psi_x   = sph_jn(n, ka) * Complex64::new(ka, 0.0);
+        let dpsi_x  = Complex64::new(d_sph_jn(n, ka), 0.0);
+        let xi_x    = sph_hn1(n, ka) * Complex64::new(ka, 0.0);
+        let dxi_x   = d_sph_hn1(n, ka);
+        let num = psi_mx * dpsi_x - mc * psi_x * dpsi_mx;
+        let den = psi_mx * dxi_x  - mc * xi_x  * dpsi_mx;
+        num / den
     }).collect()
 }
 
