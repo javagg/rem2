@@ -23,6 +23,7 @@ members = [
     "crates/febi",
     "crates/ddm",
     "crates/planar",
+    "crates/optim",
     "crates/layered_green",
     "vendor/rmetis",
     "vendor/rmsh-model",
@@ -56,6 +57,7 @@ rem-parallel      = { path = "crates/parallel" }
 rem-transient     = { path = "crates/transient" }
 rem-mom           = { path = "crates/mom" }
 rem-bem           = { path = "crates/bem" }
+rem-optim         = { path = "crates/optim" }
 rem-febi          = { path = "crates/febi" }
 rem-ddm           = { path = "crates/ddm" }
 rem-planar        = { path = "crates/planar" }

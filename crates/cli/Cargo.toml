@@ -19,6 +19,7 @@ rem-eigenmode     = { workspace = true }
 rem-driven        = { workspace = true }
 rem-transient     = { workspace = true }
 rem-mom           = { workspace = true }
+rem-optim         = { workspace = true }
 rem-sbr           = { workspace = true }
 rem-febi          = { workspace = true }
 rem-ddm           = { workspace = true }

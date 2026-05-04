@@ -100,7 +100,7 @@ fn partition_with_rmetis(
     }
 
     // Call rmetis
-    let graph = rmetis::graph::Graph::new(n_elems as i32, &xadj, &adjncy)
+    let graph = rmetis::graph::Graph::new_unweighted(n_elems, xadj, adjncy)
         .map_err(|e| RemError::Other(format!("rmetis graph build: {e}")))?;
 
     let options = rmetis::types::Options::default();

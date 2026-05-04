@@ -121,6 +121,8 @@ pub enum ProblemType {
     /// Planar Method of Moments (uniform grid + FFT) — REM extension, not in Palace
     #[serde(rename = "Planar")]
     Planar,
+    /// Parametric sweep or gradient optimization over design parameters — REM extension, not in Palace
+    Parametric,
 }
 
 // ---------------------------------------------------------------------------
@@ -591,6 +593,10 @@ pub struct SolverConfig {
     /// REM extension: near-to-far-field transform postprocessing.
     #[serde(rename = "FarField", default)]
     pub far_field: Option<FarFieldConfig>,
+
+    /// REM extension: parametric sweep / gradient optimization over design parameters.
+    #[serde(rename = "Parametric", default)]
+    pub parametric: Option<ParametricConfig>,
 }
 
 /// REM near-to-far-field configuration.
@@ -635,6 +641,7 @@ impl Default for SolverConfig {
             ddm: None,
             planar: None,
             far_field: None,
+            parametric: None,
         }
     }
 }
@@ -1506,6 +1513,193 @@ pub struct PlanarPortSpec {
 }
 
 fn default_planar_n() -> usize { 20 }
+
+// ---------------------------------------------------------------------------
+// Parametric sweep / gradient optimization (REM extension — ignored by Palace)
+// ---------------------------------------------------------------------------
+
+/// Mode for parametric run: full grid sweep or gradient optimization.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub enum ParametricMode {
+    /// Exhaustive grid sweep over all parameter combinations.
+    Sweep,
+    /// Derivative-free Nelder-Mead optimization.
+    Optimize,
+}
+
+impl Default for ParametricMode {
+    fn default() -> Self { ParametricMode::Sweep }
+}
+
+/// Target design variable that a parametric parameter controls.
+///
+/// JSON: `{"Type": "SubstratePermittivity", "Layer": 0}`
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "Type")]
+pub enum ParamTarget {
+    /// Lateral relative permittivity of substrate layer `layer` (0-indexed).
+    SubstratePermittivity { #[serde(rename = "Layer")] layer: usize },
+    /// Physical thickness [m] of substrate layer `layer` (0-indexed).
+    SubstrateThickness    { #[serde(rename = "Layer")] layer: usize },
+    /// Loss tangent of substrate layer `layer` (0-indexed).
+    SubstrateLossTangent  { #[serde(rename = "Layer")] layer: usize },
+    /// Reference impedance [Ω] of MoM lumped port `port` (1-indexed, matching `Index`).
+    PortZ0 { #[serde(rename = "Port")] port: usize },
+    /// Start frequency [Hz] of the MoM sweep.
+    FreqMin,
+    /// End frequency [Hz] of the MoM sweep.
+    FreqMax,
+}
+
+/// A single named design parameter with its sweep values (Sweep mode) or
+/// initial value and bounds (Optimize mode).
+#[derive(Debug, Clone, Deserialize)]
+pub struct SweepParam {
+    /// Human-readable name used as CSV column header.
+    #[serde(rename = "Name")]
+    pub name: String,
+
+    /// Physical target that this parameter controls.
+    #[serde(rename = "Target")]
+    pub target: ParamTarget,
+
+    /// Explicit list of values (Sweep mode).
+    /// If omitted, values are generated from `Min`, `Max`, `Steps`.
+    #[serde(rename = "Values", default)]
+    pub values: Vec<f64>,
+
+    /// Sweep range start (inclusive, Sweep mode).
+    #[serde(rename = "Min")]
+    pub min: Option<f64>,
+
+    /// Sweep range end (inclusive, Sweep mode).
+    #[serde(rename = "Max")]
+    pub max: Option<f64>,
+
+    /// Number of equally-spaced steps from `Min` to `Max` (Sweep mode, ≥ 2).
+    #[serde(rename = "Steps")]
+    pub steps: Option<usize>,
+
+    /// Starting value for the Nelder-Mead optimizer (Optimize mode).
+    #[serde(rename = "Initial")]
+    pub initial: Option<f64>,
+
+    /// Optimizer parameter bounds `[lower, upper]` (Optimize mode).
+    /// The optimizer clamps to these bounds at each evaluation.
+    #[serde(rename = "Bounds")]
+    pub bounds: Option<[f64; 2]>,
+}
+
+impl SweepParam {
+    /// Resolve the list of values to use in Sweep mode.
+    pub fn resolved_values(&self) -> Vec<f64> {
+        if !self.values.is_empty() {
+            return self.values.clone();
+        }
+        if let (Some(lo), Some(hi), Some(n)) = (self.min, self.max, self.steps) {
+            let n = n.max(2);
+            (0..n).map(|i| lo + (hi - lo) * i as f64 / (n - 1) as f64).collect()
+        } else {
+            vec![]
+        }
+    }
+}
+
+/// Optimization objective (what to minimize; larger = worse).
+///
+/// JSON: `{"Type": "MinS11dB", "Port": 1, "FreqHz": 2.4e9}`
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "Type")]
+pub enum OptimObjective {
+    /// Minimize |S_{port,port}| in dB at a single frequency.
+    MinS11dB {
+        #[serde(rename = "Port")]    port:    usize,
+        #[serde(rename = "FreqHz")] freq_hz: f64,
+    },
+    /// Minimize |S_{i,j}| in dB (e.g., insertion loss).
+    MinSijdB {
+        #[serde(rename = "PortI")]  port_i:  usize,
+        #[serde(rename = "PortJ")]  port_j:  usize,
+        #[serde(rename = "FreqHz")] freq_hz: f64,
+    },
+    /// Maximize bandwidth where |S_{port,port}| < `thresh_db` [dB] (return loss).
+    /// Objective = negative bandwidth (minimizer makes it most negative).
+    MaxBandwidthS11dB {
+        #[serde(rename = "Port")]       port:       usize,
+        #[serde(rename = "ThreshDb")]   thresh_db:  f64,
+        #[serde(rename = "FreqMinHz")]  freq_min_hz: f64,
+        #[serde(rename = "FreqMaxHz")]  freq_max_hz: f64,
+    },
+    /// Minimize squared deviation from a target S11 value in dB.
+    TargetS11dB {
+        #[serde(rename = "Port")]      port:      usize,
+        #[serde(rename = "FreqHz")]    freq_hz:   f64,
+        #[serde(rename = "TargetDb")]  target_db: f64,
+    },
+}
+
+/// Top-level parametric sweep / optimization configuration.
+///
+/// Place under `Solver.Parametric` in a MoM config JSON.
+///
+/// # Sweep example
+/// ```json
+/// "Parametric": {
+///   "Mode": "Sweep",
+///   "Parameters": [
+///     {"Name": "eps_r", "Target": {"Type": "SubstratePermittivity", "Layer": 0},
+///      "Min": 3.0, "Max": 5.0, "Steps": 5}
+///   ]
+/// }
+/// ```
+///
+/// # Optimize example
+/// ```json
+/// "Parametric": {
+///   "Mode": "Optimize",
+///   "Parameters": [
+///     {"Name": "eps_r",     "Target": {"Type": "SubstratePermittivity", "Layer": 0},
+///      "Initial": 4.0, "Bounds": [3.0, 5.0]},
+///     {"Name": "thickness", "Target": {"Type": "SubstrateThickness", "Layer": 0},
+///      "Initial": 0.254e-3, "Bounds": [0.1e-3, 0.5e-3]}
+///   ],
+///   "Objectives": [
+///     {"Type": "MinS11dB", "Port": 1, "FreqHz": 2.4e9}
+///   ],
+///   "MaxIter": 200,
+///   "Tolerance": 1e-4
+/// }
+/// ```
+#[derive(Debug, Clone, Deserialize)]
+pub struct ParametricConfig {
+    /// Sweep or optimization mode.
+    #[serde(rename = "Mode", default)]
+    pub mode: ParametricMode,
+
+    /// Named design parameters.
+    #[serde(rename = "Parameters", default)]
+    pub parameters: Vec<SweepParam>,
+
+    /// Objective functions to minimize (required for Optimize mode).
+    #[serde(rename = "Objectives", default)]
+    pub objectives: Vec<OptimObjective>,
+
+    /// Maximum optimizer iterations (Optimize mode, default: 500).
+    #[serde(rename = "MaxIter", default = "default_optim_max_iter")]
+    pub max_iter: usize,
+
+    /// Convergence tolerance on simplex size (Optimize mode, default: 1e-4).
+    #[serde(rename = "Tolerance", default = "default_optim_tolerance")]
+    pub tolerance: f64,
+
+    /// Number of parallel evaluations for grid sweep (default: 1 = serial).
+    #[serde(rename = "NParallel", default = "default_one")]
+    pub n_parallel: usize,
+}
+
+fn default_optim_max_iter() -> usize { 500 }
+fn default_optim_tolerance() -> f64  { 1e-4 }
+fn default_one()             -> usize { 1 }
 
 // ---------------------------------------------------------------------------
 // Postprocessing (REM extension — ignored by Palace)

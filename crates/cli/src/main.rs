@@ -257,6 +257,9 @@ fn run_solver(config: &rem_config::PalaceConfig, comm: &dyn Comm) -> anyhow::Res
         ProblemType::FEBI => {
             rem_febi::run(config)?;
         }
+        ProblemType::Parametric => {
+            rem_optim::run(&config)?;
+        }
     }
 
     Ok(())

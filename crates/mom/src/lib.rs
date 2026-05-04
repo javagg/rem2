@@ -694,3 +694,111 @@ fn run_s_param_sweep(
     Ok(MomResult { rcs: vec![] })  // no RCS in S-param mode
 }
 
+/// Compute S-parameter sweep without writing any output files.
+///
+/// Used by `rem-optim` for parametric sweeps and gradient optimization.
+/// Returns one [`sparams::SMatrix`] per frequency point in ascending order.
+///
+/// The caller must supply:
+/// - a [`PalaceConfig`] with `Solver.MoM.Ports` populated (non-empty), and
+/// - the already-loaded [`RemMesh`] for the geometry.
+///
+/// De-embedding (if configured via `DeembedLength`) is applied on the returned matrices.
+pub fn compute_s_param_sweep_for_optim(
+    config: &PalaceConfig,
+    mom_cfg: &MomSolverConfig,
+    mesh: &RemMesh,
+) -> RemResult<Vec<sparams::SMatrix>> {
+    use port::MomLumpedPort;
+
+    let pec_attrs: Vec<u32> = config.boundaries.pec
+        .as_ref()
+        .map(|p| p.attributes.clone())
+        .unwrap_or_default();
+    let surf = surface_mesh::SurfaceMesh::extract(mesh, &pec_attrs)?;
+    let bases = basis::rwg::generate_rwg_bases(&surf);
+    let quad  = quadrature::TriQuad::new(5);
+
+    let lumped_ports: Vec<MomLumpedPort> = mom_cfg.ports.iter().map(|p| {
+        let z0 = p.impedance.unwrap_or(mom_cfg.ref_impedance);
+        MomLumpedPort::from_surface(
+            &surf, &bases, &p.attributes, p.index,
+            &p.direction, &p.port_type, p.mode, z0,
+        )
+    }).collect::<RemResult<_>>()?;
+
+    let mut freq_list: Vec<f64> = Vec::new();
+    let mut f = mom_cfg.freq_min;
+    while f <= mom_cfg.freq_max + 1e-3 * mom_cfg.freq_step {
+        freq_list.push(f);
+        f += mom_cfg.freq_step;
+    }
+
+    let mut all_matrices: Vec<sparams::SMatrix> = Vec::new();
+
+    if mom_cfg.rom_order > 0 && freq_list.len() > mom_cfg.rom_order {
+        let alpha    = mom_cfg.alpha;
+        let sing_tol = mom_cfg.singular_tol;
+        let sigma    = mom_cfg.wall_conductivity;
+        let build_z = |fq: f64| -> RemResult<nalgebra::DMatrix<num_complex::Complex64>> {
+            let green = build_green(mom_cfg, fq);
+            let mut z = assemble::assemble_cfie_rwg_green(
+                &surf, &bases, green.as_ref(), fq, alpha, &quad, sing_tol,
+            )?;
+            if sigma > 0.0 {
+                sibc::apply_sibc_rwg(&mut z, &surf, &bases, fq, sigma, &quad);
+            }
+            Ok(z)
+        };
+        all_matrices = rom::mom_rom_sweep(
+            &surf, &bases, &lumped_ports,
+            &freq_list, mom_cfg.rom_order, 1e-10, &build_z,
+        )?;
+    } else {
+        for &freq in &freq_list {
+            let green = build_green(mom_cfg, freq);
+            let sm = if mom_cfg.fast_solver.eq_ignore_ascii_case("FFT")
+                && fft_accel::FftMomSolver::is_applicable(&surf.nodes)
+            {
+                let k = 2.0 * std::f64::consts::PI * freq / rem_core::C0;
+                let fft_op = fft_accel::FftMomSolver::build(&surf.nodes, k)?;
+                sparams::compute_s_matrix_op(&surf, &bases, &lumped_ports, &fft_op, freq)?
+            } else {
+                let mut z_mat = assemble::assemble_cfie_rwg_green(
+                    &surf, &bases, green.as_ref(), freq, mom_cfg.alpha, &quad, mom_cfg.singular_tol,
+                )?;
+                if mom_cfg.wall_conductivity > 0.0 {
+                    sibc::apply_sibc_rwg(&mut z_mat, &surf, &bases, freq, mom_cfg.wall_conductivity, &quad);
+                }
+                sparams::compute_s_matrix(&surf, &bases, &lumped_ports, &z_mat, freq)?
+            };
+            all_matrices.push(sm);
+        }
+    }
+
+    // De-embedding (mirrors run_s_param_sweep logic)
+    let deembed_lengths: Vec<f64> = mom_cfg.ports.iter().map(|p| p.deembed_length).collect();
+    if deembed_lengths.iter().any(|&l| l.abs() > 0.0) {
+        let has_modal = lumped_ports.iter().any(|p| p.modal_eigenvalue.is_some());
+        if has_modal {
+            let first_freq = freq_list.first().copied().unwrap_or(mom_cfg.freq_min);
+            let modal_data: Vec<sparams::ModalPortData> = lumped_ports.iter()
+                .map(|p| p.compute_modal_data(&surf, first_freq,
+                    mom_cfg.deembed_eps_eff, mom_cfg.deembed_alpha_np_per_m))
+                .collect();
+            all_matrices = all_matrices.iter()
+                .map(|s| sparams::apply_modal_deembed(s, &deembed_lengths, &modal_data))
+                .collect::<RemResult<_>>()?;
+        } else {
+            all_matrices = all_matrices.iter()
+                .map(|s| sparams::apply_reference_plane_deembed(
+                    s, &deembed_lengths,
+                    mom_cfg.deembed_eps_eff, mom_cfg.deembed_alpha_np_per_m,
+                ))
+                .collect::<RemResult<_>>()?;
+        }
+    }
+
+    Ok(all_matrices)
+}
+
