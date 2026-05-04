@@ -1,7 +1,7 @@
 # REM MoM 求解器 vs Sonnet Suite 19 对比分析
 
-> 版本：2026-05-04（更新至 REM v0.21.0）
-> REM 基准版本：v0.21.0（`crates/mom/`）  
+> 版本：2026-05-04（更新至 REM v0.22.0）
+> REM 基准版本：v0.22.0（`crates/mom/`）  
 > Sonnet 基准版本：Suite 19（商业授权，Sonnet Software Inc.）
 
 ---
@@ -79,9 +79,9 @@
 |------|---------|-----------------|
 | **平面波（入射场）** | ✅ θ/φ 极化，任意入射角，频率扫描 | ❌ 不支持平面波激励（Sonnet 专注于端口激励） |
 | **集总端口激励** | ✅ v0.17.0 集总端口，内阻可配 | ✅ 集总端口，内阻可配 |
-| **波导端口** | ❌ MoM 中未实现（Driven FEM 求解器支持） | ✅ 矩形/同轴波导端口，去嵌入 |
-| **差分端口** | ❌ | ✅ |
-| **自动去嵌入（Deembedding）** | ❌ | ✅ 港口参考面精确去嵌入 |
+| **波导端口** | ✅ v0.22.0 WavePort 图 Laplacian 模式加权激励（`Type:"WavePort"`, `Mode:N`） | ✅ 矩形/同轴波导端口，去嵌入 |
+| **差分端口（混合模）** | ✅ v0.22.0 `PairWith` 字段 + `single_ended_to_mixed_mode` → 2×2 Sdd/Scc 及 2N×2N 全混合模矩阵 | ✅ |
+| **自动去嵌入（Deembedding）** | ✅ v0.22.0 参考面相位+衰减去嵌入（`DeembedLength` / `DeembedEpsEff` / `DeembedAlpha`） | ✅ 港口参考面精确去嵌入 |
 
 ### 4.2 后处理
 
@@ -90,9 +90,9 @@
 | **RCS 方向图** | ✅ θ/φ 扫描，`rcs.csv`（θ, φ, σ dBsm），全球面 | ❌ 不支持 RCS（非散射工具） |
 | **S 参数** | ✅ v0.17.0 集总端口 + Touchstone `.sNp` | ✅ 完整 S/Y/Z 参数矩阵，Touchstone `.sNp` 导出 |
 | **Z/Y 矩阵** | ✅ v0.21.0 port-Z.csv / port-Y.csv | ✅ |
-| **近场（任意点）** | ✅ v0.21.0 `probe_e_field.csv`（RWG 辐射积分） | ✅ 2D/3D 近场可视化 |
-| **表面电流 VTK** | ✅ `surface_current.vtk`（ParaView 直接打开） | ✅ 电流密度 2D 可视化（专有格式） |
-| **远场辐射方向图** | ✅（FEM Driven 求解器，Kirchhoff 积分） | ✅ 平面天线方向图后处理 |
+| **近场（任意点）** | ✅ v0.22.0 `probe_e_field_portN.csv`（全端口 × 全频率 RWG 辐射积分） | ✅ 2D/3D 近场可视化 |
+| **表面电流 VTK** | ✅ v0.22.0 `surface_current_portN_*.vtk`（RWG 矢量电流，J_real/J_imag/J_mag） | ✅ 电流密度 2D 可视化（专有格式） |
+| **远场辐射方向图（端口激励）** | ✅ v0.22.0 `far_field_portN.csv`（N_θ/N_φ/方向性 dBi，配置 `Solver.FarField`） | ✅ 平面天线方向图后处理 |
 | **传输线参数（R/L/G/C）** | ✅ v0.21.0 `tline_params.csv`（ABCD→RLGC，2-port） | ✅ 传输线参数提取 |
 | **等效电路综合** | ✅（Driven FEM：VF 极点-留数 + SPICE `.cir`） | ✅（Circuit Element 模型，导出 SPICE） |
 
@@ -105,7 +105,7 @@
 | **PEC 导体** | ✅ CFIE 公式，完美导体 | ✅ 理想 PEC 或有限电导率导体 |
 | **介质目标（均匀）** | ✅ PMCHWT（2N×2N）ε_r/μ_r 可配 | ❌ 不支持任意三维介质散射 |
 | **分层介质基板** | ✅ v0.18.0 Sommerfeld/DCIM 分层 Green 函数 | ✅ **核心优势**：Sommerfeld 积分精确建模任意层叠基板 |
-| **有损导体（表面阻抗）** | ✅ v0.19.0 Leontovich SIBC（WallConductivity 配置） | ✅ 表面电阻（σ 有限），R_s 建模 |
+| **有损导体（表面阻抗）** | ✅ v0.19.0 Leontovich SIBC（`WallConductivity` 配置） | ✅ 表面电阻（σ 有限），R_s 建模 |
 | **各向异性介质** | ❌ MoM 无；FEM 求解器支持 3×3 张量 | ❌ 各向同性基板 |
 | **频变材料** | ❌ MoM 中未实现 | ✅ 有限，通过宽带建模（Debye/Lorentz 近似） |
 
@@ -168,15 +168,17 @@
 
 2. **FFT 加速 MoM（O(N log N)）**：利用平面结构的移位不变性，用 FFT 加速矩阵填充和矩阵-向量积，可处理 N > 100,000 的超大平面电路。REM ACA 虽有效，但对平面问题效率不及 FFT。
 
-3. **波导端口与去嵌入**：Sonnet 波导端口（矩形/同轴）和端口参考面精确去嵌入仍是 REM 的差距；REM 已有集总端口（v0.17.0）和 S/Z/Y 参数输出（v0.21.0），但尚无差分端口和去嵌入。
+3. ~~**波导端口与去嵌入**：Sonnet 波导端口（矩形/同轴）和端口参考面精确去嵌入仍是 REM 的差距~~（✅ v0.22.0 已实现 WavePort 模式加权激励、`PairWith` 差分混合模、`DeembedLength` 参考面去嵌入）
 
 4. **EDA 生态集成**：与 ADS、Cadence、AWR 无缝联动，支持从版图直接驱动 EM 仿真，参数化扫描和优化闭环；REM 当前为独立工具，无 EDA 集成。
 
-5. **工程成熟度与支持**：Sonnet 商业产品有 40 年历史，大量工程师验证案例、技术支持、培训体系；REM MoM 为 v0.16.0 早期版本，部分高级功能仍在验证中。
+5. **工程成熟度与支持**：Sonnet 商业产品有 40 年历史，大量工程师验证案例、技术支持、培训体系；REM MoM 为 v0.22.0 活跃开发版本，主要 EM 功能已覆盖。
 
 6. ~~**自适应网格细化（MoM）**：Sonnet 在 MoM 内部支持自适应单元细化；REM MoM 暂无 AMR~~（✅ v0.20.0 已实现 Dörfler AMR）
 
 7. ~~**有损导体建模**：Sonnet 支持有限电导率导体（表面阻抗边界条件）；REM MoM 仅支持 PEC~~（✅ v0.19.0 已实现 SIBC/WallConductivity）
+
+8. ~~**远场辐射方向图（端口激励）**：Sonnet 支持平面天线远场方向图~~（✅ v0.22.0 已实现端口激励 RWG 远场辐射积分，输出 N_θ/N_φ/方向性 dBi）
 
 ---
 

@@ -132,7 +132,7 @@ Solver.Mom:       { FreqMin, FreqMax, FreqStep, Equation, Basis, Alpha, Singular
   # AmrIter > 0 enables Dörfler-marking AMR with RWG current error indicator
   # AmrTheta: Dörfler fraction (default 0.5)
   # Full Touchstone 1.0 reader (RI/MA/DB; multi-line N≥3 format) available in rem-touchstone crate
-  # Phase 22 additions:
+  # Phase 22 additions (v0.22.0):
   # Ports[].Type: "Lumped" | "WavePort" (MoM supports WavePort modal-weighted excitation)
   # Ports[].Mode: WavePort mode index (mode>1 selects higher-order profile when solvable)
   # Ports[].PairWith: differential pairing for mixed-mode S output
@@ -140,4 +140,10 @@ Solver.Mom:       { FreqMin, FreqMax, FreqStep, Equation, Basis, Alpha, Singular
   #   - partial pairing: per-pair files port-S-mixed-p<i>_p<j>.csv + s_params_mixed_p<i>_p<j>.s2p
   # Ports[].DeembedLength: per-port reference plane shift [m]
   # DeembedEpsEff, DeembedAlpha: global de-embedding propagation model parameters
+  # Phase 22 far-field + near-field (v0.22.0):
+  # Solver.FarField.NTheta / .NPhi: when present in MoM S-param path, emits
+  #   postpro/far_field_portN.csv per port (N_theta, N_phi, directivity dBi)
+  #   and postpro/surface_current_portN_<freq>Hz.vtk (RWG vector J_real/J_imag/J_mag)
+  # NearFieldProbes: now solved for ALL ports (not just port 1);
+  #   outputs probe_e_field_portN.csv per port + legacy probe_e_field.csv for port 1
 ```

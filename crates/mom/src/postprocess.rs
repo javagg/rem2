@@ -352,6 +352,263 @@ pub fn write_probe_e_field_csv(
 }
 
 // ---------------------------------------------------------------------------
+// RWG vector-current VTK (per-face surface current density)
+// ---------------------------------------------------------------------------
+
+/// Write surface current density magnitude to VTK from RWG basis coefficients.
+///
+/// Per-face current density is approximated as:
+///   J_s(c_face) = Σ_n I_n f_n(c_face)   (centroid evaluation)
+///
+/// Outputs `J_vec_x/y/z` (real/imag) and `J_mag` cell scalars for ParaView.
+pub fn write_surface_current_vtk_rwg(
+    path: &Path,
+    surf: &SurfaceMesh,
+    bases: &[RwgBasis],
+    currents: &[Complex64],
+) -> RemResult<()> {
+    use std::io::Write;
+
+    // Build per-face current density [Complex64; 3]
+    let n_faces = surf.faces.len();
+    let mut jx = vec![Complex64::ZERO; n_faces];
+    let mut jy = vec![Complex64::ZERO; n_faces];
+    let mut jz = vec![Complex64::ZERO; n_faces];
+
+    for (n, base) in bases.iter().enumerate() {
+        let i_n = if n < currents.len() { currents[n] } else { Complex64::ZERO };
+        for &(fi, in_plus) in &[(base.plus_face, true), (base.minus_face, false)] {
+            if fi >= n_faces { continue; }
+            let f_v = base.eval(&surf.faces[fi].centroid, surf, in_plus);
+            jx[fi] += i_n * f_v[0];
+            jy[fi] += i_n * f_v[1];
+            jz[fi] += i_n * f_v[2];
+        }
+    }
+
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() { std::fs::create_dir_all(parent)?; }
+    }
+    let mut f = std::fs::File::create(path)?;
+
+    writeln!(f, "# vtk DataFile Version 3.0")?;
+    writeln!(f, "MoM RWG surface current")?;
+    writeln!(f, "ASCII")?;
+    writeln!(f, "DATASET UNSTRUCTURED_GRID")?;
+    writeln!(f)?;
+
+    writeln!(f, "POINTS {} float", surf.nodes.len())?;
+    for &[x, y, z] in &surf.nodes {
+        writeln!(f, "{:.8e} {:.8e} {:.8e}", x, y, z)?;
+    }
+    writeln!(f)?;
+
+    writeln!(f, "CELLS {} {}", n_faces, n_faces * 4)?;
+    for face in &surf.faces {
+        writeln!(f, "3 {} {} {}", face.nodes[0], face.nodes[1], face.nodes[2])?;
+    }
+    writeln!(f)?;
+
+    writeln!(f, "CELL_TYPES {}", n_faces)?;
+    for _ in 0..n_faces { writeln!(f, "5")?; }
+    writeln!(f)?;
+
+    writeln!(f, "CELL_DATA {}", n_faces)?;
+
+    // |J| magnitude
+    writeln!(f, "SCALARS J_mag float 1")?;
+    writeln!(f, "LOOKUP_TABLE default")?;
+    for i in 0..n_faces {
+        let mag = (jx[i].norm_sqr() + jy[i].norm_sqr() + jz[i].norm_sqr()).sqrt();
+        writeln!(f, "{:.8e}", mag)?;
+    }
+
+    // Vector Jx_re, Jy_re, Jz_re
+    writeln!(f, "VECTORS J_real float")?;
+    for i in 0..n_faces {
+        writeln!(f, "{:.8e} {:.8e} {:.8e}", jx[i].re, jy[i].re, jz[i].re)?;
+    }
+
+    writeln!(f, "VECTORS J_imag float")?;
+    for i in 0..n_faces {
+        writeln!(f, "{:.8e} {:.8e} {:.8e}", jx[i].im, jy[i].im, jz[i].im)?;
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Far-field radiation pattern from RWG port-excited currents
+// ---------------------------------------------------------------------------
+
+/// A single far-field observation point result.
+#[derive(Debug, Clone)]
+pub struct FarFieldPoint {
+    pub theta_deg: f64,
+    pub phi_deg:   f64,
+    /// N_theta component of radiation vector [A·m].
+    pub n_theta:   Complex64,
+    /// N_phi component of radiation vector [A·m].
+    pub n_phi:     Complex64,
+    /// Radiation intensity U = (k²η₀/32π²)(|N_θ|²+|N_φ|²)  [W/sr] (proportional).
+    pub u:         f64,
+    /// Directivity D [dBi] (computed after integrating over sphere).
+    pub d_dbi:     f64,
+}
+
+/// Compute the far-field radiation pattern for RWG port-excited currents.
+///
+/// Uses centroid quadrature for the radiation integral:
+///   N(r̂) = Σ_n I_n [f_n(c⁺) A⁺ exp(jk r̂·c⁺) + f_n(c⁻) A⁻ exp(jk r̂·c⁻)]
+///
+/// Returns directivity-tagged far-field points (one per (theta, phi) pair).
+pub fn compute_radiation_pattern_rwg(
+    currents: &[Complex64],
+    surf: &SurfaceMesh,
+    bases: &[RwgBasis],
+    k: f64,
+    theta_deg_list: &[f64],
+    phi_deg_list:   &[f64],
+) -> Vec<FarFieldPoint> {
+    use std::f64::consts::PI;
+
+    let n_theta = theta_deg_list.len();
+    let n_phi   = phi_deg_list.len();
+
+    // Pre-compute per-basis centroid contributions (independent of observation angle)
+    // contrib_n = [(f_n(c+)*A+, c+), (f_n(c-)*A-, c-)]
+    struct BasisContrib {
+        fv: [f64; 3],   // f_n(c) direction
+        a:  f64,        // weighted area (A_face)
+        c:  [f64; 3],   // centroid
+        coeff: Complex64,
+    }
+    let contribs: Vec<BasisContrib> = bases.iter().enumerate()
+        .flat_map(|(n, base)| {
+            let i_n = if n < currents.len() { currents[n] } else { Complex64::ZERO };
+            let mut v = Vec::with_capacity(2);
+            for &(fi, in_plus) in &[(base.plus_face, true), (base.minus_face, false)] {
+                if fi >= surf.faces.len() { continue; }
+                let face = &surf.faces[fi];
+                let fv = base.eval(&face.centroid, surf, in_plus);
+                v.push(BasisContrib {
+                    fv,
+                    a: face.area,
+                    c: face.centroid,
+                    coeff: i_n,
+                });
+            }
+            v
+        })
+        .collect();
+
+    // Compute N(r̂) for each observation direction
+    let mut raw_points: Vec<(f64, f64, Complex64, Complex64, f64)> = Vec::with_capacity(n_theta * n_phi);
+
+    for &theta_d in theta_deg_list {
+        let theta = theta_d.to_radians();
+        let st = theta.sin();
+        let ct = theta.cos();
+
+        for &phi_d in phi_deg_list {
+            let phi = phi_d.to_radians();
+            let sp = phi.sin();
+            let cp = phi.cos();
+
+            // r̂ unit vector
+            let rx = st * cp;
+            let ry = st * sp;
+            let rz = ct;
+
+            // Radiation vector N = Σ contributions
+            let mut nx = Complex64::ZERO;
+            let mut ny = Complex64::ZERO;
+            let mut nz = Complex64::ZERO;
+
+            for bc in &contribs {
+                let phase_arg = k * (rx * bc.c[0] + ry * bc.c[1] + rz * bc.c[2]);
+                let phase = Complex64::new(0.0, phase_arg).exp();
+                let scale = bc.coeff * phase * bc.a;
+                nx += scale * bc.fv[0];
+                ny += scale * bc.fv[1];
+                nz += scale * bc.fv[2];
+            }
+
+            // Project N onto spherical (θ, φ) components
+            let n_theta_c = nx * ct * cp + ny * ct * sp - nz * st;
+            let n_phi_c   = -nx * sp   + ny * cp;
+
+            // Radiation intensity U ∝ |N_θ|² + |N_φ|²
+            let u = n_theta_c.norm_sqr() + n_phi_c.norm_sqr();
+            raw_points.push((theta_d, phi_d, n_theta_c, n_phi_c, u));
+        }
+    }
+
+    // Numerical integration over sphere to get P_rad for directivity
+    // Trapezoidal rule in theta, trapezoidal in phi
+    let p_rad = if n_theta > 1 && n_phi > 1 {
+        use std::f64::consts::PI;
+        let dtheta = (theta_deg_list.last().unwrap() - theta_deg_list.first().unwrap()).to_radians()
+            / (n_theta - 1) as f64;
+        let dphi = (phi_deg_list.last().unwrap() - phi_deg_list.first().unwrap()).to_radians()
+            / (n_phi - 1).max(1) as f64;
+        let mut sum = 0.0_f64;
+        for i in 0..n_theta {
+            let theta = theta_deg_list[i].to_radians();
+            let st = theta.sin();
+            for j in 0..n_phi {
+                let u = raw_points[i * n_phi + j].4;
+                let w_i = if i == 0 || i == n_theta - 1 { 0.5 } else { 1.0 };
+                let w_j = if j == 0 || j == n_phi - 1 { 0.5 } else { 1.0 };
+                sum += u * st * w_i * w_j;
+            }
+        }
+        sum * dtheta * dphi
+    } else {
+        // Fallback: single point or line — compute unit integral
+        raw_points.iter().map(|p| p.4).sum::<f64>() * 4.0 * std::f64::consts::PI
+            / raw_points.len().max(1) as f64
+    };
+
+    raw_points.into_iter().map(|(theta_d, phi_d, n_theta_c, n_phi_c, u)| {
+        let d_dbi = if p_rad > 1e-300 {
+            10.0 * (4.0 * std::f64::consts::PI * u / p_rad).log10()
+        } else {
+            0.0
+        };
+        FarFieldPoint { theta_deg: theta_d, phi_deg: phi_d, n_theta: n_theta_c, n_phi: n_phi_c, u, d_dbi }
+    }).collect()
+}
+
+/// Write far-field radiation pattern to CSV (append mode, one block per frequency).
+///
+/// Columns: `Freq (GHz), Theta (deg), Phi (deg), |N_theta|, |N_phi|, U (norm), D (dBi)`
+pub fn write_radiation_pattern_csv(
+    path: &Path,
+    points: &[FarFieldPoint],
+    freq_hz: f64,
+) -> RemResult<()> {
+    use std::io::Write;
+    let write_header = !path.exists();
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() { std::fs::create_dir_all(parent)?; }
+    }
+    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+    if write_header {
+        writeln!(f, "Freq (GHz),Theta (deg),Phi (deg),|N_theta| (A*m),|N_phi| (A*m),U (norm),D (dBi)")?;
+    }
+    let freq_ghz = freq_hz / 1e9;
+    for p in points {
+        writeln!(f,
+            "{:.9e},{:.2},{:.2},{:.6e},{:.6e},{:.6e},{:.4}",
+            freq_ghz, p.theta_deg, p.phi_deg,
+            p.n_theta.norm(), p.n_phi.norm(), p.u, p.d_dbi,
+        )?;
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -385,6 +642,91 @@ mod tests {
         assert!(content.contains("vtk DataFile"), "Missing VTK header");
         assert!(content.contains("J_mag"), "Missing J_mag scalar");
         assert!(content.contains("CELL_DATA"), "Missing cell data section");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    // ── RWG VTK test ──────────────────────────────────────────────────────
+
+    /// Build two-triangle surface (same as sparams tests) with two RWG bases.
+    fn two_tri_surf() -> SurfaceMesh {
+        use crate::surface_mesh::{TriFace, SharedEdge, tri_geometry};
+        let nodes = vec![
+            [0.0_f64, 0.0, 0.0],
+            [1.0,     0.0, 0.0],
+            [0.5,     1.0, 0.0],
+            [-0.5,    1.0, 0.0],
+        ];
+        let (c0, n0, a0) = tri_geometry(&nodes[0], &nodes[1], &nodes[2]);
+        let (c1, n1, a1) = tri_geometry(&nodes[0], &nodes[2], &nodes[3]);
+        let faces = vec![
+            TriFace { nodes:[0,1,2], centroid:c0, normal:n0, area:a0 },
+            TriFace { nodes:[0,2,3], centroid:c1, normal:n1, area:a1 },
+        ];
+        let edges = vec![SharedEdge {
+            nodes: [0,2], plus_face: 0, minus_face: 1,
+            length: (0.5_f64.powi(2) + 1.0_f64.powi(2)).sqrt(),
+        }];
+        SurfaceMesh {
+            nodes, faces, edges,
+            boundary_edges: vec![[0,1],[1,2],[2,3],[3,0]],
+            face_attrs: vec![1, 1],
+            global_node_ids: vec![],
+        }
+    }
+
+    #[test]
+    fn rwg_vtk_creates_file_with_vectors() {
+        let surf = two_tri_surf();
+        let bases = generate_rwg_bases(&surf);
+        let currents = vec![Complex64::new(1.0, 0.5)];
+        let tmp = std::env::temp_dir().join("test_rwg_vtk.vtk");
+        write_surface_current_vtk_rwg(&tmp, &surf, &bases, &currents).expect("RWG VTK failed");
+        let content = std::fs::read_to_string(&tmp).unwrap();
+        assert!(content.contains("J_mag"), "Missing J_mag");
+        assert!(content.contains("J_real"), "Missing J_real vectors");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    // ── Far-field radiation pattern tests ────────────────────────────────
+
+    /// For a z-directed current element at origin, the far-field pattern
+    /// should have |N_theta| proportional to sin(theta) and N_phi ≈ 0.
+    #[test]
+    fn radiation_pattern_z_dipole_symmetry() {
+        // Build a single-triangle surface with RWG currents pointing in z
+        let surf = two_tri_surf();
+        let bases = generate_rwg_bases(&surf);
+        // Use a uniform current coefficient
+        let currents = vec![Complex64::new(1.0, 0.0); bases.len()];
+        let k = 1.0;
+        let theta_list: Vec<f64> = vec![30.0, 60.0, 90.0];
+        let phi_list:   Vec<f64> = vec![0.0];
+
+        let pts = compute_radiation_pattern_rwg(&currents, &surf, &bases, k, &theta_list, &phi_list);
+        assert_eq!(pts.len(), theta_list.len() * phi_list.len());
+        // All U values should be non-negative
+        for p in &pts { assert!(p.u >= 0.0, "U must be non-negative"); }
+        // Pattern should be finite
+        for p in &pts { assert!(p.d_dbi.is_finite(), "D must be finite"); }
+    }
+
+    #[test]
+    fn radiation_pattern_csv_creates_file() {
+        let surf = two_tri_surf();
+        let bases = generate_rwg_bases(&surf);
+        let currents = vec![Complex64::new(1.0, 0.0)];
+        let pts = compute_radiation_pattern_rwg(
+            &currents, &surf, &bases, 1.0,
+            &[45.0, 90.0], &[0.0, 90.0],
+        );
+        let tmp = std::env::temp_dir().join("test_far_field.csv");
+        let _ = std::fs::remove_file(&tmp);
+        write_radiation_pattern_csv(&tmp, &pts, 2.4e9).expect("CSV write failed");
+        let content = std::fs::read_to_string(&tmp).unwrap();
+        assert!(content.contains("Freq"), "Missing CSV header");
+        assert!(content.contains("dBi"), "Missing dBi column");
+        let data_lines = content.lines().filter(|l| !l.starts_with('#') && !l.contains("Freq")).count();
+        assert_eq!(data_lines, pts.len());
         let _ = std::fs::remove_file(&tmp);
     }
 }

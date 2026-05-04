@@ -526,40 +526,134 @@ fn run_s_param_sweep(
                 tline.len(), mom_cfg.tline_length);
         }
 
-        // ── Near-field probes ─────────────────────────────────────────────
+        // ── Near-field probes (all ports) ─────────────────────────────────
         if !mom_cfg.near_field_probes.is_empty() {
             let probes: Vec<[f64; 3]> = mom_cfg.near_field_probes.iter()
                 .map(|p| [p.x, p.y, p.z])
                 .collect();
-            // Re-solve for port-1 excitation at each frequency to get currents
             let bases = basis::rwg::generate_rwg_bases(surf);
             let quad  = quadrature::TriQuad::new(5);
-            let mut freq_e: Vec<(f64, Vec<[num_complex::Complex64; 3]>)> = Vec::new();
-            for &fq in &freq_list {
-                let green = build_green(mom_cfg, fq);
-                let mut z = assemble::assemble_cfie_rwg_green(
-                    surf, &bases, green.as_ref(), fq, mom_cfg.alpha, &quad, mom_cfg.singular_tol,
-                )?;
-                if mom_cfg.wall_conductivity > 0.0 {
-                    sibc::apply_sibc_rwg(&mut z, surf, &bases, fq, mom_cfg.wall_conductivity, &quad);
+
+            // Re-solve for each port's excitation at every frequency.
+            // Output: probe_e_field_portN.csv  (N = 1-based port index).
+            // For single-port (or when only port 1 needed), also write the
+            // legacy probe_e_field.csv for backward compatibility.
+            for (port_idx, port) in lumped_ports.iter().enumerate() {
+                let port_label = port.index;
+                let mut freq_e: Vec<(f64, Vec<[num_complex::Complex64; 3]>)> = Vec::new();
+                for &fq in &freq_list {
+                    let green = build_green(mom_cfg, fq);
+                    let mut z = assemble::assemble_cfie_rwg_green(
+                        surf, &bases, green.as_ref(), fq, mom_cfg.alpha, &quad, mom_cfg.singular_tol,
+                    )?;
+                    if mom_cfg.wall_conductivity > 0.0 {
+                        sibc::apply_sibc_rwg(&mut z, surf, &bases, fq, mom_cfg.wall_conductivity, &quad);
+                    }
+                    let n_rwg = bases.len();
+                    let v0 = num_complex::Complex64::new(1.0, 0.0);
+                    let rhs = port.excitation_rhs(surf, &bases, n_rwg, v0);
+                    let currents = assemble::lu_solve(&z, &rhs)?;
+                    let k = 2.0 * std::f64::consts::PI * fq / rem_core::C0;
+                    let e_vals = postprocess::compute_e_at_probes(surf, &bases, &currents, &probes, k);
+                    freq_e.push((fq, e_vals));
                 }
-                let n_rwg = bases.len();
-                let v0 = num_complex::Complex64::new(1.0, 0.0);
-                let rhs = lumped_ports[0].excitation_rhs(surf, &bases, n_rwg, v0);
-                let currents = assemble::lu_solve(&z, &rhs)?;
-                let k = 2.0 * std::f64::consts::PI * fq / rem_core::C0;
-                let e_vals = postprocess::compute_e_at_probes(surf, &bases, &currents, &probes, k);
-                freq_e.push((fq, e_vals));
+                let csv_name = if lumped_ports.len() == 1 {
+                    "probe_e_field.csv".to_string()
+                } else {
+                    format!("probe_e_field_port{}.csv", port_label)
+                };
+                postprocess::write_probe_e_field_csv(
+                    &output_dir.join("postpro").join(&csv_name),
+                    &probes, &freq_e,
+                )?;
+                // Backward-compatibility alias for port 1
+                if port_idx == 0 && lumped_ports.len() > 1 {
+                    postprocess::write_probe_e_field_csv(
+                        &output_dir.join("postpro").join("probe_e_field.csv"),
+                        &probes, &freq_e,
+                    )?;
+                }
             }
-            postprocess::write_probe_e_field_csv(
-                &output_dir.join("postpro").join("probe_e_field.csv"),
-                &probes, &freq_e,
-            )?;
-            log::info!("MoM near-field probe output: {} probes × {} frequencies",
-                probes.len(), freq_e.len());
+            log::info!("MoM near-field probe output: {} probes × {} frequencies × {} ports",
+                probes.len(), freq_list.len(), lumped_ports.len());
+        }
+
+        // ── Far-field radiation pattern (per port, if FarField config present) ─
+        if let Some(ff_cfg) = &config.solver.far_field {
+            let bases = basis::rwg::generate_rwg_bases(surf);
+            let quad  = quadrature::TriQuad::new(5);
+
+            let n_theta = ff_cfg.n_theta.max(2);
+            let n_phi   = ff_cfg.n_phi.max(2);
+            let theta_list: Vec<f64> = (0..n_theta)
+                .map(|i| i as f64 * 180.0 / (n_theta - 1) as f64)
+                .collect();
+            let phi_list: Vec<f64> = (0..n_phi)
+                .map(|i| i as f64 * 360.0 / n_phi as f64)
+                .collect();
+
+            log::info!(
+                "MoM far-field pattern: {} θ × {} φ points per port",
+                n_theta, n_phi
+            );
+
+            for (port_idx, port) in lumped_ports.iter().enumerate() {
+                let port_label = port.index;
+                // Use last-frequency solve for the far-field pattern (or
+                // sweep over all frequencies if needed).  Here we compute at
+                // every sweep frequency and append to CSV.
+                let csv_name = if lumped_ports.len() == 1 {
+                    "far_field.csv".to_string()
+                } else {
+                    format!("far_field_port{}.csv", port_label)
+                };
+                let ff_csv = output_dir.join("postpro").join(&csv_name);
+                // Remove stale file so write_radiation_pattern_csv writes a
+                // fresh header on the first frequency.
+                let _ = std::fs::remove_file(&ff_csv);
+
+                for &fq in &freq_list {
+                    let green = build_green(mom_cfg, fq);
+                    let mut z = assemble::assemble_cfie_rwg_green(
+                        surf, &bases, green.as_ref(), fq, mom_cfg.alpha, &quad, mom_cfg.singular_tol,
+                    )?;
+                    if mom_cfg.wall_conductivity > 0.0 {
+                        sibc::apply_sibc_rwg(&mut z, surf, &bases, fq, mom_cfg.wall_conductivity, &quad);
+                    }
+                    let n_rwg = bases.len();
+                    let v0 = num_complex::Complex64::new(1.0, 0.0);
+                    let rhs = port.excitation_rhs(surf, &bases, n_rwg, v0);
+                    let currents = assemble::lu_solve(&z, &rhs)?;
+                    let k = 2.0 * std::f64::consts::PI * fq / rem_core::C0;
+
+                    let pattern = postprocess::compute_radiation_pattern_rwg(
+                        &currents, surf, &bases, k, &theta_list, &phi_list,
+                    );
+                    postprocess::write_radiation_pattern_csv(&ff_csv, &pattern, fq)?;
+
+                    // Per-port surface current VTK at each frequency
+                    let vtk_name = if lumped_ports.len() == 1 {
+                        format!("surface_current_{:.3e}Hz.vtk", fq)
+                    } else {
+                        format!("surface_current_port{}_{:.3e}Hz.vtk", port_label, fq)
+                    };
+                    let vtk_path = output_dir.join("postpro").join(vtk_name);
+                    postprocess::write_surface_current_vtk_rwg(&vtk_path, surf, &bases, &currents)?;
+                }
+                log::info!(
+                    "MoM far-field pattern port {}: {} frequencies → {}",
+                    port_label, freq_list.len(), ff_csv.display()
+                );
+                // backward-compat alias for port 1
+                if port_idx == 0 && lumped_ports.len() > 1 {
+                    let _ = std::fs::remove_file(&output_dir.join("postpro").join("far_field.csv"));
+                    std::fs::copy(&ff_csv, output_dir.join("postpro").join("far_field.csv")).ok();
+                }
+            }
         }
     }
 
     log::info!("MoM S-param sweep complete. {} frequency points.", all_matrices.len());
     Ok(MomResult { rcs: vec![] })  // no RCS in S-param mode
 }
+
