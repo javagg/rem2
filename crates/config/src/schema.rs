@@ -1557,6 +1557,9 @@ pub enum ParametricMode {
     Optimize,
     /// Central finite-difference sensitivity (gradient) analysis at the nominal point.
     Sensitivity,
+    /// Monte Carlo yield analysis: sample parameters from Gaussian distributions
+    /// around nominal values, compute statistics over N trials.
+    MonteCarlo,
 }
 
 impl Default for ParametricMode {
@@ -1728,6 +1731,19 @@ pub struct ParametricConfig {
     #[serde(rename = "SensRelStep", default)]
     pub sens_rel_step: Option<f64>,
 
+    /// Number of Monte Carlo trials (MonteCarlo mode, default: 100).
+    #[serde(rename = "McSamples", default = "default_mc_samples")]
+    pub mc_samples: usize,
+
+    /// Relative 1-σ standard deviation for each parameter Gaussian in MonteCarlo mode
+    /// (e.g. 0.05 = 5 % of nominal value, default: 0.05).
+    #[serde(rename = "McSigmaRel", default = "default_mc_sigma")]
+    pub mc_sigma_rel: f64,
+
+    /// Optional random seed for reproducible Monte Carlo runs.
+    #[serde(rename = "McSeed", default)]
+    pub mc_seed: Option<u64>,
+
     /// Number of parallel evaluations for grid sweep (default: 1 = serial).
     #[serde(rename = "NParallel", default = "default_one")]
     pub n_parallel: usize,
@@ -1735,6 +1751,8 @@ pub struct ParametricConfig {
 
 fn default_optim_max_iter() -> usize { 500 }
 fn default_optim_tolerance() -> f64  { 1e-4 }
+fn default_mc_samples()      -> usize { 100 }
+fn default_mc_sigma()        -> f64   { 0.05 }
 fn default_one()             -> usize { 1 }
 
 // ---------------------------------------------------------------------------

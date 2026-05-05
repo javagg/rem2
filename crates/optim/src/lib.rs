@@ -44,6 +44,7 @@ pub mod optimize;
 pub mod objective;
 pub mod param_apply;
 pub mod sensitivity;
+pub mod monte_carlo;
 
 use rem_config::{PalaceConfig, ParametricMode};
 use rem_core::RemResult;
@@ -65,5 +66,6 @@ pub fn run(config: &PalaceConfig) -> RemResult<()> {
         ParametricMode::Sweep       => sweep::run_sweep(config, par_cfg),
         ParametricMode::Optimize    => optimize::run_optimize(config, par_cfg),
         ParametricMode::Sensitivity => sensitivity::run_sensitivity(config, par_cfg),
+        ParametricMode::MonteCarlo  => monte_carlo::run_monte_carlo(config, par_cfg),
     }
 }
