@@ -1,7 +1,7 @@
 # REM 电磁仿真能力文档
 
-> 版本：v2.0，2026-04-11
-> REM 版本：**v0.17.1**（~27,000 行 Rust 代码，21 个 crate，226+ 测试函数）
+> 版本：v2.1，2026-05-05
+> REM 版本：**v0.17.2**（~28,000 行 Rust 代码，21 个 crate，350+ 测试函数）
 > 对标基准：Palace v0.16、Ansys EM 2025（HFSS/Q3D Extractor）、Sonnet Suite 19、Keysight ADS 2026
 
 ---
@@ -24,7 +24,7 @@ REM 覆盖 Palace 全部主要求解器，并额外提供 Palace 不具备的矩
 | 求解器 | Crate | 方法 | 状态 |
 |--------|-------|------|------|
 | **静电场** (Electrostatic) | `rem-electrostatic` | P1 FEM，PCG+SSOR | ✅ 成熟 |
-| **静磁场** (Magnetostatic) | `rem-magnetostatic` | P1 FEM，2-D A_z + 3-D A=(Ax,Ay,Az) | ✅ 成熟 |
+| **静磁场** (Magnetostatic) | `rem-magnetostatic` | P1 FEM，2-D A_z + 3-D A=(Ax,Ay,Az)；3-D HCurl Nedelec 路径 | ✅ 成熟 |
 | **特征模** (Eigenmode) | `rem-eigenmode` | Lanczos + shift-invert + 完全再正交化 | ✅ 成熟 |
 | **频域驱动** (Driven) | `rem-driven` | Helmholtz FEM，频率扫描，ROM | ✅ 成熟 |
 | **时域瞬态** (Transient) | `rem-transient` | GeneralizedAlpha / IMEX-ARK / RK4 | ✅ 成熟 |
@@ -63,8 +63,8 @@ REM 覆盖 Palace 全部主要求解器，并额外提供 Palace 不具备的矩
 | **集总端口** | ✅ | ✅ | ❌ | ✅ | ✅ |
 | **波导端口** | ✅ TE/TM | ✅ 完整模式 | ❌ | ❌ | ✅（通过 FEM 引擎）|
 | **Floquet 周期** | ✅ Γ 点 | ✅ 完整 Floquet | ❌ | ✅ 周期单元 | ✅（通过 FEM 引擎）|
-| **AMR 自适应网格** | ✅ ZZ+Dörfler | ✅ **核心** h/p 自适应 | ✅ | ❌ | ✅（通过 FEM 引擎）|
-| **高阶基函数 p-FEM** | ⚠️ 配置已解析 | ✅ **核心** 高阶 Nedelec | ✅ | ❌ | ✅ |
+| **AMR 自适应网格** | ✅ ZZ+Dörfler；HCurl ND2 面积估计器 | ✅ **核心** h/p 自适应 | ✅ | ❌ | ✅（通过 FEM 引擎）|
+| **高阶基函数 p-FEM** | ✅ P1/P2（Tri6/Tet10）+ P3 Tri10/Tet20 | ✅ **核心** 高阶 Nedelec | ✅ | ❌ | ✅ |
 | **MoM 三维散射** | ✅ CFIE/PMCHWT/ACA | ✅ IE + **MLFMM** | ⚠️ 仅准静态 | ❌ | ❌ |
 | **MoM 平面电路** | ✅ Planar crate（FFT）| ❌ | ❌ | ✅ **核心** FFT MoM | ✅（通过 Sonnet 协同）|
 | **SBR+ 高频** | ✅ PO+PTD | ✅ SBR+（含 GPU）| ❌ | ❌ | ❌ |
@@ -82,10 +82,10 @@ REM 覆盖 Palace 全部主要求解器，并额外提供 Palace 不具备的矩
 | **ACA 矩阵压缩** | ✅ 部分主元 | ✅ ACA + MLFMM | ✅ ACA | ❌ | ❌ |
 | **FFT 加速 MoM** | ✅ Planar 2D FFT | ❌（用 MLFMM）| ❌ | ✅ **核心** | ❌（用 Sonnet）|
 | **MLFMM 多层快速多极** | ❌ | ✅ **核心** | ❌ | ❌ | ❌ |
-| **GPU 加速** | ❌ | ✅ SBR+ / IE | ❌ | ❌ | ✅ 部分 |
+| **GPU 加速** | ⚠️ wgpu 特性标志，运行时探针，CPU fallback | ✅ SBR+ / IE | ❌ | ❌ | ✅ 部分 |
 | **多物理场耦合** | ❌ | ✅ 热-应力-EM | ❌ | ❌ | ✅ 热-EM |
-| **参数化扫描** | ❌ | ✅ OptiSLang | ❌ | ✅ | ✅ **核心** 优化 |
-| **优化/灵敏度分析** | ❌ | ✅ 完整 | ❌ | ✅ | ✅ **核心** |
+| **参数化扫描** | ✅ rem-optim 参数扫描（sweep.csv） | ✅ OptiSLang | ❌ | ✅ | ✅ **核心** 优化 |
+| **优化/灵敏度分析** | ⚠️ Nelder-Mead 无梯度优化；FD 灵敏度待完成 | ✅ 完整 | ❌ | ✅ | ✅ **核心** |
 | **Touchstone 输出** | ✅ 独立 crate | ✅ | ❌ | ✅ | ✅ |
 | **SPICE 网表输出** | ✅ .cir | ✅ | ❌ | ❌ | ✅ **核心** |
 | **GMSH 网格导入** | ✅ .msh v2/v4 | ❌（自有网格器）| ❌ | ❌ | ❌ |
@@ -114,10 +114,10 @@ REM 覆盖 Palace 全部主要求解器，并额外提供 Palace 不具备的矩
 |--------|-----------|---------|------|
 | **Nedelec H(curl) 矢量 FEM** | 核心求解器，完整 Maxwell 方程 | 标量 P1 FEM，静磁用解耦矢量位 | 高频精度、波导模式精度 |
 | **MLFMM 多层快速多极子** | O(N log N) 大规模 MoM | ACA O(N·r)，规模有限 | 大规模三维散射（N > 10,000）|
-| **p-FEM 高阶基函数** | 自动 p 阶提升（1–10 阶） | order 配置已解析，P2+ 装配待完成 | 收敛速度、精度 |
-| **GPU 加速** | SBR+ 和 IE 求解器支持 GPU | 纯 CPU | 电大目标仿真速度 |
+| **p-FEM 高阶基函数** | 自动 p 阶提升（1–10 阶） | P1/P2 完整，P3 Tet20/Tri10 已支持（fem-rs Tet20 待原生实现） | 收敛速度、精度 |
+| **GPU 加速** | SBR+ 和 IE 求解器支持 GPU | wgpu 特性标志已加，WGSL 着色器 MoM 填充为 TODO | 电大目标仿真速度 |
 | **多物理场耦合** | 热-应力-EM 双向耦合 | 纯 EM | 热效应、形变影响 |
-| **参数化/优化** | OptiSLang 完整优化框架 | 无 | 设计自动化 |
+| **参数化/优化** | OptiSLang 完整优化框架 | rem-optim：参数扫描 + Nelder-Mead 已实现；梯度灵敏度待完成 | 设计自动化 |
 | **网格生成** | 自适应曲面/体网格生成器 | 仅导入 GMSH .msh | 几何建模工作流 |
 | **GUI** | 完整 3D CAD 集成 GUI | CLI + 基础 Web UI | 用户体验 |
 

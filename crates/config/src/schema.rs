@@ -1555,6 +1555,8 @@ pub enum ParametricMode {
     Sweep,
     /// Derivative-free Nelder-Mead optimization.
     Optimize,
+    /// Central finite-difference sensitivity (gradient) analysis at the nominal point.
+    Sensitivity,
 }
 
 impl Default for ParametricMode {
@@ -1721,6 +1723,10 @@ pub struct ParametricConfig {
     /// Convergence tolerance on simplex size (Optimize mode, default: 1e-4).
     #[serde(rename = "Tolerance", default = "default_optim_tolerance")]
     pub tolerance: f64,
+
+    /// Relative step size h/p for central finite-difference sensitivity (Sensitivity mode, default: 0.01).
+    #[serde(rename = "SensRelStep", default)]
+    pub sens_rel_step: Option<f64>,
 
     /// Number of parallel evaluations for grid sweep (default: 1 = serial).
     #[serde(rename = "NParallel", default = "default_one")]
