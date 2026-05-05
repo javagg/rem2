@@ -23,11 +23,13 @@
 //!   - Replace real PCG with complex GMRES (nalgebra DMatrix<Complex64>).
 //!   - S11 now carries both real and imaginary parts; |S11| and phase are correct.
 
+pub mod deembed;
 pub mod driven_hcurl;
 pub mod far_field;
 pub mod near_field;
 pub mod output;
 pub mod port_modal;
+pub mod rlgc_sweep;
 pub mod rom;
 pub mod vf;
 

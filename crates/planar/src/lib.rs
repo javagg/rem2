@@ -9,9 +9,12 @@ pub mod layered_green;
 pub mod grid;
 pub mod fft_conv;
 pub mod impedance;
+pub mod roughness;
 pub mod solver;
 
 pub use layered_green::{LayeredMedium, Layer, SpectralGreen};
+pub use roughness::{skin_depth, hammerstad_jensen_factor, groisse_factor,
+                    cannonball_huray_factor, apply_roughness_to_loss, hj_sweep};
 
 use rem_config::PalaceConfig;
 use rem_core::{RemResult, RemError};
