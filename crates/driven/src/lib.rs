@@ -31,6 +31,7 @@ pub mod output;
 pub mod port_modal;
 pub mod rlgc_sweep;
 pub mod rom;
+pub mod sparams_analysis;
 pub mod vf;
 
 use nalgebra::{DMatrix, DVector};

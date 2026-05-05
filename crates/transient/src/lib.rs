@@ -46,26 +46,96 @@ fn spmv(mat: &CsrMatrix, x: &[f64], y: &mut [f64]) {
 
 /// Evaluate the excitation amplitude at time `t` [s].
 ///
-/// - `""` / `"none"` / `"Step"`: unit step (constant 1.0)
-/// - `"ModulatedGaussian"`: exp(−(t−t0)²/(2σ²)) · cos(2π f0 t)
-///   - `freq_hz`: f0 (ExcitationFreq in GHz → Hz)
-///   - `sigma_s`: σ  (ExcitationWidth/2 in ns → s)
-/// - `"Gaussian"`: exp(−(t−t0)²/(2σ²))
+/// | Kind | Description |
+/// |------|-------------|
+/// | `""` / `"none"` / `"Step"` | Unit step at t=0 |
+/// | `"ModulatedGaussian"` | Gaussian-modulated sinusoid: exp(−(t−t₀)²/2σ²)·cos(2πf₀t) |
+/// | `"Gaussian"` | Unmodulated Gaussian envelope |
+/// | `"Ricker"` | Ricker wavelet (Mexican hat): 2nd derivative of Gaussian |
+/// | `"Sinusoidal"` | Pure sinusoid: sin(2πf₀t), zero before t=0 |
+/// | `"Chirp"` | Linear frequency sweep from f_start to f_end over duration T |
+/// | `"Trapezoidal"` | Trapezoidal pulse with configurable rise/hold/fall times |
+///
+/// For `"Chirp"`: `freq_hz` = start frequency, `sigma_s` = end frequency.
+/// Rise time uses sigma_s = 0.1·T, hold = 0.4·T, fall = 0.1·T by convention.
+/// For `"Trapezoidal"`: `sigma_s` = rise_time, `freq_hz` = hold_time.
 fn excitation_amplitude(t: f64, kind: &str, freq_hz: f64, sigma_s: f64) -> f64 {
     use std::f64::consts::PI;
     match kind {
         "" | "none" | "Step" => 1.0,
         "ModulatedGaussian" | "Gaussian" => {
-            let t0 = 5.0 * sigma_s;
-            let envelope = (-(t - t0).powi(2) / (2.0 * sigma_s.powi(2))).exp();
+            let sigma = if sigma_s > 0.0 { sigma_s } else { 1.0e-9 };
+            let t0 = 5.0 * sigma;
+            let envelope = (-(t - t0).powi(2) / (2.0 * sigma.powi(2))).exp();
             if kind == "ModulatedGaussian" {
                 envelope * (2.0 * PI * freq_hz * t).cos()
             } else {
                 envelope
             }
         }
-        _ => 1.0, // Unknown → step (warning already emitted by validate_palace_compat)
+        "Ricker" => {
+            // Ricker wavelet = (1 − 2π²f₀²(t−t₀)²)·exp(−π²f₀²(t−t₀)²)
+            // Peak frequency f₀ = freq_hz; t₀ chosen so pulse starts near 0 amplitude
+            let f0 = if freq_hz > 0.0 { freq_hz } else { 1.0e9 };
+            let t0 = 1.0 / f0; // one period delay to avoid non-causal artifacts
+            let u = std::f64::consts::PI * f0 * (t - t0);
+            (1.0 - 2.0 * u * u) * (-u * u).exp()
+        }
+        "Sinusoidal" => {
+            // Causal sinusoid: zero for t < 0
+            if t < 0.0 {
+                0.0
+            } else {
+                let f0 = if freq_hz > 0.0 { freq_hz } else { 1.0e9 };
+                (2.0 * PI * f0 * t).sin()
+            }
+        }
+        "Chirp" => {
+            // Linear chirp: f(t) = f_start + (f_end − f_start) · t / T
+            // freq_hz = f_start, sigma_s = f_end, T estimated from 5 periods of mean freq
+            let f_start = freq_hz.max(1e3);
+            let f_end   = sigma_s.max(f_start);
+            let t_dur   = 5.0 / ((f_start + f_end) * 0.5); // estimated sweep duration
+            if t < 0.0 || t > t_dur {
+                return 0.0;
+            }
+            let inst_phase = 2.0 * PI * (f_start * t + (f_end - f_start) * t * t / (2.0 * t_dur));
+            inst_phase.sin()
+        }
+        "Trapezoidal" => {
+            // Trapezoidal pulse:
+            //   sigma_s = rise_time, freq_hz = hold_time, fall_time = sigma_s
+            //   total duration = rise + hold + fall
+            let rise = if sigma_s > 0.0 { sigma_s } else { 1.0e-10 };
+            let hold = if freq_hz > 0.0 { freq_hz } else { 1.0e-9 };
+            let fall = rise;
+            let t_end = rise + hold + fall;
+            if t <= 0.0 || t >= t_end {
+                0.0
+            } else if t < rise {
+                t / rise
+            } else if t < rise + hold {
+                1.0
+            } else {
+                1.0 - (t - rise - hold) / fall
+            }
+        }
+        _ => 1.0, // Unknown → step
     }
+}
+
+/// Return a vector of (time [s], amplitude) samples for the named waveform.
+///
+/// Useful for plotting the excitation signal without running a full simulation.
+pub fn sample_waveform(kind: &str, freq_hz: f64, sigma_s: f64, dt: f64, n_steps: usize)
+    -> Vec<(f64, f64)>
+{
+    (0..n_steps)
+        .map(|i| {
+            let t = i as f64 * dt;
+            (t, excitation_amplitude(t, kind, freq_hz, sigma_s))
+        })
+        .collect()
 }
 
 // ─── Entry points ────────────────────────────────────────────────────────────
@@ -628,5 +698,90 @@ mod tests {
         let config = transient_config("CVODE");
         let result = run_with_mesh(&config, &mesh, &NoComm);
         assert!(result.is_err(), "Unknown solver type should return error");
+    }
+
+    // ─── Waveform unit tests ──────────────────────────────────────────────────
+
+    /// Step function is 1.0 everywhere.
+    #[test]
+    fn waveform_step_constant() {
+        for &t in &[0.0_f64, 1e-9, 1e-6, 1.0] {
+            let a = excitation_amplitude(t, "Step", 1e9, 1e-9);
+            assert_eq!(a, 1.0, "Step at t={t:.3e}");
+        }
+    }
+
+    /// Gaussian envelope: peak at t=5σ, tails near zero.
+    #[test]
+    fn waveform_gaussian_peak_and_tails() {
+        let sigma = 1.0e-9_f64;
+        let t_peak = 5.0 * sigma;
+        let peak = excitation_amplitude(t_peak, "Gaussian", 0.0, sigma);
+        assert!((peak - 1.0).abs() < 1e-10, "Gaussian peak={peak:.6}");
+        let tail = excitation_amplitude(20.0 * sigma, "Gaussian", 0.0, sigma).abs();
+        assert!(tail < 1e-30, "Gaussian tail={tail:.2e}");
+    }
+
+    /// Ricker wavelet: zero-mean (integrate over full support ≈ 0).
+    #[test]
+    fn waveform_ricker_zero_mean() {
+        let f0 = 1.0e9_f64;
+        let dt = 1.0e-11_f64;
+        let n  = 5000;
+        let sum: f64 = (0..n).map(|i| {
+            excitation_amplitude(i as f64 * dt, "Ricker", f0, 0.0) * dt
+        }).sum();
+        // Area should be much smaller than the max amplitude (~1) times total duration
+        assert!(sum.abs() < 0.05, "Ricker zero-mean integral = {sum:.4e}");
+    }
+
+    /// Sinusoidal: zero at t=0, sin(2πf₀t) thereafter.
+    #[test]
+    fn waveform_sinusoidal_causal() {
+        let f0 = 1.0e9_f64;
+        assert_eq!(excitation_amplitude(0.0, "Sinusoidal", f0, 0.0), 0.0);
+        let t_quarter = 0.25 / f0; // should be sin(π/2) = 1.0
+        let v = excitation_amplitude(t_quarter, "Sinusoidal", f0, 0.0);
+        assert!((v - 1.0).abs() < 1e-10, "sin(π/2)={v:.8}");
+    }
+
+    /// Chirp: non-zero in [0, T], zero outside.
+    #[test]
+    fn waveform_chirp_bounded() {
+        let f_start = 1.0e9_f64;
+        let f_end   = 5.0e9_f64;
+        // t=−1ns should give 0
+        assert_eq!(excitation_amplitude(-1e-9, "Chirp", f_start, f_end), 0.0);
+        // t=1ps should be in-band
+        let a = excitation_amplitude(1e-12, "Chirp", f_start, f_end);
+        assert!(a.abs() <= 1.0 + 1e-10, "Chirp amp={a:.4}");
+    }
+
+    /// Trapezoidal: 0→1 during rise, 1 during hold, 1→0 during fall.
+    #[test]
+    fn waveform_trapezoidal_shape() {
+        let rise = 1.0e-9_f64;
+        let hold = 4.0e-9_f64;
+        // Before rise: 0
+        assert_eq!(excitation_amplitude(0.0, "Trapezoidal", hold, rise), 0.0);
+        // Mid-rise: 0.5
+        let mid_rise = excitation_amplitude(rise * 0.5, "Trapezoidal", hold, rise);
+        assert!((mid_rise - 0.5).abs() < 1e-10, "mid-rise={mid_rise:.6}");
+        // During hold: 1
+        let in_hold = excitation_amplitude(rise + hold * 0.5, "Trapezoidal", hold, rise);
+        assert!((in_hold - 1.0).abs() < 1e-10, "in-hold={in_hold:.6}");
+        // After pulse: 0
+        let after = excitation_amplitude(rise + hold + rise + 1e-9, "Trapezoidal", hold, rise);
+        assert_eq!(after, 0.0, "after pulse={after:.4}");
+    }
+
+    /// sample_waveform returns correct number of points with monotone time.
+    #[test]
+    fn sample_waveform_length_and_time() {
+        let samples = sample_waveform("Gaussian", 1e9, 1e-9, 1e-11, 100);
+        assert_eq!(samples.len(), 100);
+        for i in 1..samples.len() {
+            assert!(samples[i].0 > samples[i-1].0);
+        }
     }
 }

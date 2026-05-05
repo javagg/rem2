@@ -4,5 +4,6 @@ version.workspace = true
 edition = "2021"
 
 [dependencies]
+nalgebra    = { workspace = true }
 num-complex = { workspace = true }
 thiserror   = { workspace = true }
