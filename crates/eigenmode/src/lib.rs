@@ -86,10 +86,11 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
     let mut max_amr_iter = if amr_cfg.max_iter > 0 { amr_cfg.max_iter } else { 0 };
     let amr_theta    = if amr_cfg.tol > 0.0 { amr_cfg.tol } else { 0.5 };
     if config.solver.uses_hcurl() && max_amr_iter > 0 {
-        log::warn!(
-            "AMR is temporarily disabled for HCurl eigenmode path; running a single solve on the input mesh."
+        log::info!(
+            "HCurl AMR enabled: using element-area indicator (frequency-convergence criterion). \
+             Refinement proceeds until Δf/f < {:.1e} or max {} iterations.",
+            AMR_FREQ_TOL, max_amr_iter
         );
-        max_amr_iter = 0;
     }
 
     let (final_mesh, result) = if max_amr_iter > 0 {
@@ -103,47 +104,57 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
         let mut prev_freqs = result.frequencies_hz.clone();
 
         for amr_iter in 1..=max_amr_iter {
-            // Use first eigenvector as error indicator field
-            if let Some(phi) = result.eigenvectors.first() {
-                let eta = amr::zz_estimator(&cur_mesh, phi);
-                let total_err: f64 = eta.iter().map(|&e| e * e).sum::<f64>().sqrt();
-                log::info!("AMR iteration {}: {} nodes, error = {:.3e}", amr_iter, cur_mesh.n_nodes(), total_err);
+            // Choose error indicator based on discretisation:
+            // · H1 path: ZZ gradient recovery on nodal solution.
+            // · HCurl path: element-area-based indicator (no nodal field available;
+            //   frequency-convergence criterion provides the stopping condition).
+            let (eta, total_err) = if result.is_hcurl {
+                let e = hcurl_element_area_indicator(&cur_mesh);
+                let total = e.iter().map(|&v| v * v).sum::<f64>().sqrt();
+                (e, total)
+            } else if let Some(phi) = result.eigenvectors.first() {
+                let e = amr::zz_estimator(&cur_mesh, phi);
+                let total = e.iter().map(|&v| v * v).sum::<f64>().sqrt();
+                (e, total)
+            } else {
+                break;
+            };
+            log::info!("AMR iteration {}: {} nodes, indicator = {:.3e}",
+                amr_iter, cur_mesh.n_nodes(), total_err);
 
-                let marked = amr::dorfler_mark(&eta, amr_theta);
-                if marked.is_empty() {
-                    log::info!("  → Converged: no elements marked for refinement");
-                    break;
-                }
-
+            let marked = amr::dorfler_mark(&eta, amr_theta);
+            if marked.is_empty() {
+                log::info!("  → No elements marked; stopping AMR.");
+                break;
+            }
+            {
                 let (fine_mesh, _midpoints) = refine_amr_mesh(&cur_mesh, &marked);
                 result = solve(config, &fine_mesh, &domain_map, comm)?;
                 cur_mesh = fine_mesh;
+            }
 
-                // Check eigenfrequency convergence between AMR iterations
-                let max_rel_change = prev_freqs.iter()
+            // Check eigenfrequency convergence between AMR iterations
+            let max_rel_change = prev_freqs.iter()
                     .zip(result.frequencies_hz.iter())
                     .map(|(&f_old, &f_new)| {
                         if f_old.abs() > 1e-30 { ((f_new - f_old) / f_old).abs() } else { 0.0 }
                     })
                     .fold(0.0f64, f64::max);
-                let max_abs_change_hz = prev_freqs.iter()
+            let max_abs_change_hz = prev_freqs.iter()
                     .zip(result.frequencies_hz.iter())
                     .map(|(&f_old, &f_new)| (f_new - f_old).abs())
                     .fold(0.0f64, f64::max);
-                log::info!(
+            log::info!(
                     "  → Frequency change: {:.3e} (rel), {:.3e} Hz (abs)",
                     max_rel_change, max_abs_change_hz
                 );
-                if max_rel_change < AMR_FREQ_TOL || max_abs_change_hz < AMR_FREQ_ABS_TOL {
-                    log::info!(
-                        "  → AMR converged (freq change < tolerance)"
-                    );
-                    break;
-                }
-                prev_freqs = result.frequencies_hz.clone();
-            } else {
+            if max_rel_change < AMR_FREQ_TOL || max_abs_change_hz < AMR_FREQ_ABS_TOL {
+                log::info!(
+                    "  → AMR converged (freq change < tolerance)"
+                );
                 break;
             }
+            prev_freqs = result.frequencies_hz.clone();
         }
         (cur_mesh, result)
     } else {
@@ -199,6 +210,48 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
     log::info!("  {} modes saved to output/", save_n);
     report_peak_memory("Eigenmode solver");
     Ok(())
+}
+
+/// Element-area error indicator for HCurl (Nedelec) eigenmode AMR.
+///
+/// Returns the area (2-D) or volume (3-D) of each element as a proxy for
+/// the local discretisation error.  Larger elements are marked first, driving
+/// the mesh toward a uniform element size.  The physical stopping criterion
+/// is the eigenfrequency convergence check in the outer AMR loop.
+///
+/// This replaces the ZZ gradient-recovery estimator which requires nodal H1
+/// fields and cannot be applied to edge-DOF Nedelec solutions directly.
+fn hcurl_element_area_indicator(mesh: &RemMesh) -> Vec<f64> {
+    use rem_mesh::ElementKind;
+    mesh.volume_elements.iter().map(|elem| {
+        match elem.kind {
+            ElementKind::Tri3 => {
+                // |Tri| = ½ |det[p1-p0, p2-p0]|
+                let nodes = &mesh.nodes;
+                if elem.node_ids.len() < 3 { return 1.0; }
+                let (i0, i1, i2) = (elem.node_ids[0], elem.node_ids[1], elem.node_ids[2]);
+                let (n0, n1, n2) = (&nodes[i0], &nodes[i1], &nodes[i2]);
+                let ax = n1.x - n0.x; let ay = n1.y - n0.y;
+                let bx = n2.x - n0.x; let by = n2.y - n0.y;
+                (ax * by - ay * bx).abs() * 0.5
+            }
+            ElementKind::Tet4 => {
+                // |Tet| = ⅙ |det[p1-p0, p2-p0, p3-p0]|
+                let nodes = &mesh.nodes;
+                if elem.node_ids.len() < 4 { return 1.0; }
+                let (i0, i1, i2, i3) = (elem.node_ids[0], elem.node_ids[1],
+                                         elem.node_ids[2], elem.node_ids[3]);
+                let (n0, n1, n2, n3) = (&nodes[i0], &nodes[i1], &nodes[i2], &nodes[i3]);
+                let ax = n1.x-n0.x; let ay = n1.y-n0.y; let az = n1.z-n0.z;
+                let bx = n2.x-n0.x; let by = n2.y-n0.y; let bz = n2.z-n0.z;
+                let cx = n3.x-n0.x; let cy = n3.y-n0.y; let cz = n3.z-n0.z;
+                let det = ax*(by*cz - bz*cy) - ay*(bx*cz - bz*cx) + az*(bx*cy - by*cx);
+                det.abs() / 6.0
+            }
+            // For higher-order or other elements, return a unit weight (uniform refine).
+            _ => 1.0,
+        }
+    }).collect()
 }
 
 fn refine_amr_mesh(

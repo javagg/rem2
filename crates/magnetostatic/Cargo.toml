@@ -13,3 +13,7 @@ rem-bc            = { workspace = true }
 rem-result        = { workspace = true }
 rem-electrostatic = { workspace = true }
 log               = { workspace = true }
+fem-assembly      = { workspace = true }
+fem-space         = { workspace = true }
+nalgebra          = { workspace = true }
+num-complex       = { workspace = true }

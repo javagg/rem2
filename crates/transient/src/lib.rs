@@ -106,6 +106,16 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
         RemError::Config("Transient problem requires a [Solver.Transient] section".into())
     })?;
 
+    // HCurl routing note: the vector E-field time-domain Maxwell solver
+    // ∇×(μ⁻¹∇×E) + ε ∂²E/∂t² = −∂J/∂t is not yet implemented.
+    // The scalar H1 path is used regardless of Solver.Discretization.
+    if config.solver.uses_hcurl() {
+        log::warn!(
+            "Solver.Discretization=\"HCurl\" for Transient: vector E-field \
+             time-domain Maxwell is not yet implemented; using scalar H1 path."
+        );
+    }
+
     if config.solver.order > 2 {
         log::warn!(
             "Solver.Order={} requested; P1 and P2 (Tet10/Tri6) are implemented. \

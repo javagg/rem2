@@ -27,6 +27,7 @@ pub enum ElementKind {
     Quad4,
     Tet4,
     Tet10,
+    Tet20,   // 20-node cubic tetrahedron (P3)
     Hex8,
 }
 
@@ -41,6 +42,7 @@ impl ElementKind {
             ElementKind::Quad4 => 4,
             ElementKind::Tet4  => 4,
             ElementKind::Tet10 => 10,
+            ElementKind::Tet20 => 20,
             ElementKind::Hex8  => 8,
         }
     }
@@ -49,7 +51,7 @@ impl ElementKind {
         match self {
             ElementKind::Line2 | ElementKind::Line3 => 1,
             ElementKind::Tri3 | ElementKind::Tri6 | ElementKind::Tri10 | ElementKind::Quad4 => 2,
-            ElementKind::Tet4 | ElementKind::Tet10 | ElementKind::Hex8 => 3,
+            ElementKind::Tet4 | ElementKind::Tet10 | ElementKind::Tet20 | ElementKind::Hex8 => 3,
         }
     }
 
@@ -67,6 +69,7 @@ impl ElementKind {
             11 => Some(ElementKind::Tet10),
             12 => Some(ElementKind::Hex8),   // Hex27 → Hex8 corner nodes (P1)
             17 => Some(ElementKind::Hex8),   // Hex20 → Hex8 corner nodes (P1)
+            29 => Some(ElementKind::Tet20),  // 20-node cubic tetrahedron (P3)
             _  => None,
         }
     }
@@ -181,9 +184,9 @@ impl RemMesh {
                     log::warn!(
                         "Skipping unsupported GMSH element type {} ({}). \
                          Current rem-mesh support: 1(Line2), 8(Line3), 2(Tri3), 3(Quad4), \
-                         4(Tet4), 5(Hex8), 9(Tri6), 11(Tet10). \
-                         If this is a high-order mesh (e.g. 29), export a P2 mesh \
-                         (Tet10/Tri6/Line3) or linear mesh (Tet4/Tri3) before running REM.",
+                         4(Tet4), 5(Hex8), 9(Tri6), 11(Tet10), 29(Tet20). \
+                         If this is a high-order mesh, export a P3 (Tet20/Tri10), P2 \
+                         (Tet10/Tri6/Line3), or linear (Tet4/Tri3) mesh.",
                         re.elem_type,
                         gmsh_type_hint(re.elem_type)
                     );
@@ -492,6 +495,10 @@ impl RemMesh {
             match k {
                 ElementKind::Tet4  => Some(FET::Tet4),
                 ElementKind::Tet10 => Some(FET::Tet10),
+                // Tet20 (P3) is not yet supported by fem-rs; fall back to Tet10
+                // (using only the first 10 corner+edge nodes).  When fem-rs gains
+                // a Tet20 type, replace FET::Tet10 with FET::Tet20 here.
+                ElementKind::Tet20 => Some(FET::Tet10),
                 ElementKind::Hex8  => Some(FET::Hex8),
                 ElementKind::Tri3  => Some(FET::Tri3),
                 ElementKind::Tri6  => Some(FET::Tri6),

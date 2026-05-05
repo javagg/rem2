@@ -20,3 +20,6 @@ rayon = "1"
 
 [dev-dependencies]
 approx = "0.5"
+env_logger  = { workspace = true }
+rem-config  = { workspace = true }
+serde_json  = { workspace = true }

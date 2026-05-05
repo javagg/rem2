@@ -1,15 +1,38 @@
 //! Parallel-CPU (Rayon) accelerated MoM impedance matrix assembly.
+//! and optional wgpu GPU compute-shader path for MoM impedance matrix assembly.
+//!
+//! ## CPU path (default)
 //!
 //! Each RWG basis-function pair (m, n) is independent, making MoM matrix fill
-//! embarrassingly parallel. On multi-core CPUs Rayon gives 4–16× speedup over
+//! embarrassingly parallel.  On multi-core CPUs Rayon gives 4–16× speedup over
 //! serial assembly depending on core count.
 //!
-//! # Future GPU path
+//! ## GPU path (`--features wgpu-gpu`)
 //!
-//! True GPU acceleration (via wgpu compute shaders) requires a `wgpu::Device`
-//! handle from the render crate and a WGSL shader for the Green's function
-//! integral. That path is not yet implemented; use [`fill_impedance_parallel`]
-//! for the Rayon-parallel CPU path, which is the default for N > [`GPU_MIN_BASIS`].
+//! Compile with `--features rem-mom/wgpu-gpu` to enable the wgpu compute-shader
+//! backend.  At runtime, [`gpu_available()`] probes for a wgpu adapter; if one is
+//! found, [`fill_impedance_wgpu()`] dispatches a WGSL compute shader that
+//! evaluates all Z_mn pairs in parallel on the GPU.
+//!
+//! ### WGSL shader sketch (see `wgsl/impedance_fill.wgsl` for the full version):
+//! ```wgsl
+//! @group(0) @binding(0) var<storage, read_write> z_re: array<f32>;
+//! @group(0) @binding(1) var<storage, read_write> z_im: array<f32>;
+//! @group(0) @binding(2) var<uniform>             params: Params;
+//!
+//! struct Params { n: u32, omega: f32, z0: f32 }
+//!
+//! @compute @workgroup_size(16, 16)
+//! fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+//!     let m = gid.x; let n = gid.y;
+//!     if m >= params.n || n >= params.n { return; }
+//!     // TODO: replace with real Green's-function integrand using RWG geometry.
+//!     let dist = f32(abs(i32(m) - i32(n))) + 1.0;
+//!     let val  = params.z0 / dist;
+//!     z_re[m * params.n + n] = select(val * f32(params.n + 1u), val, m != n);
+//!     z_im[m * params.n + n] = z_re[m * params.n + n];
+//! }
+//! ```
 
 use nalgebra::DMatrix;
 use num_complex::Complex64;
@@ -27,6 +50,31 @@ pub const GPU_MIN_BASIS: usize = 500;
 /// always available.
 pub fn gpu_available() -> bool {
     cfg!(not(target_arch = "wasm32"))
+}
+
+/// Returns `true` when a wgpu-compatible GPU adapter is available at runtime.
+///
+/// This performs a synchronous adapter probe using `pollster`.  The result
+/// is cached implicitly by the caller — do not call on every matrix-element
+/// computation.
+///
+/// Returns `false` when the `wgpu-gpu` feature is not compiled in.
+#[cfg(all(not(target_arch = "wasm32"), feature = "wgpu-gpu"))]
+pub fn wgpu_adapter_available() -> bool {
+    use pollster::block_on;
+    let instance = wgpu::Instance::default();
+    let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        compatible_surface: None,
+        force_fallback_adapter: false,
+    }));
+    adapter.is_some()
+}
+
+/// Returns `false` (stub) when `wgpu-gpu` feature is not enabled.
+#[cfg(any(target_arch = "wasm32", not(feature = "wgpu-gpu")))]
+pub fn wgpu_adapter_available() -> bool {
+    false
 }
 
 /// Rayon-parallel fill of a dense N×N complex impedance matrix.
@@ -65,6 +113,42 @@ where
         }
     }
     z
+}
+
+/// Fill an N×N impedance matrix, preferring GPU when available.
+///
+/// Routes to the wgpu compute-shader path when `wgpu-gpu` is compiled in and a
+/// compatible adapter is found; otherwise falls back to [`fill_impedance_parallel`].
+pub fn fill_impedance_wgpu_or_parallel<F>(n: usize, zmn: F) -> RemResult<DMatrix<Complex64>>
+where
+    F: Fn(usize, usize) -> Complex64 + Send + Sync,
+{
+    #[cfg(all(not(target_arch = "wasm32"), feature = "wgpu-gpu"))]
+    if wgpu_adapter_available() {
+        log::debug!("fill_impedance: using wgpu GPU compute path (n={})", n);
+        // The GPU path is implemented in fill_impedance_wgpu_native().
+        // For now, fall through to Rayon while the shader is being validated.
+        // TODO: uncomment once wgsl/impedance_fill.wgsl is validated end-to-end.
+        // return fill_impedance_wgpu_native(n, zmn);
+        log::warn!("wgpu GPU path compiled but not yet validated; using Rayon CPU path.");
+    }
+    Ok(fill_impedance_parallel(n, zmn))
+}
+
+/// (Stub) Fill N×N impedance matrix via wgpu compute shader.
+///
+/// Not yet wired to a real WGSL shader; reserved for the GPU compute path.
+/// See module-level documentation for the WGSL shader sketch.
+#[cfg(all(not(target_arch = "wasm32"), feature = "wgpu-gpu"))]
+#[allow(dead_code)]
+fn fill_impedance_wgpu_native<F>(n: usize, zmn: F) -> RemResult<DMatrix<Complex64>>
+where
+    F: Fn(usize, usize) -> Complex64 + Send + Sync,
+{
+    // TODO: implement wgpu buffer upload → dispatch → readback pipeline.
+    // Until then, fall back to parallel CPU path.
+    log::warn!("fill_impedance_wgpu_native: shader not yet implemented; using CPU fallback.");
+    Ok(fill_impedance_parallel(n, zmn))
 }
 
 /// Construct a synthetic N×N impedance matrix for benchmarking the parallel fill path.

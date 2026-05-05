@@ -33,6 +33,25 @@ use rem_electrostatic::bc;
 use rem_electrostatic::postprocess;
 use std::path::Path;
 
+pub mod magnetostatic_hcurl;
+
+/// Result returned by both the H1 and HCurl magnetostatic solver paths.
+#[derive(Debug, Clone)]
+pub struct MagnetostaticResult {
+    /// Magnetic vector potential solution.
+    ///
+    /// H1 path: nodal A_z values (length = n_nodes).
+    /// HCurl path: Nedelec edge-DOF values (length = n_edges).
+    pub a_vec: Vec<f64>,
+    /// Recovered B-field per element: [[B_x, B_y, B_z]; n_elems].
+    /// Empty for HCurl path (not yet implemented).
+    pub b_field: Vec<[f64; 3]>,
+    /// Total stored magnetic energy W_m = ½ ∫ ν |B|² dΩ [J].
+    pub energy: f64,
+    /// True when the result uses HCurl edge-DOF basis (not nodal H1).
+    pub is_hcurl: bool,
+}
+
 /// Entry point called from rem-cli.
 pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
     if config.solver.order > 2 {
@@ -49,6 +68,27 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
     let mut mesh = RemMesh::from_raw(raw, config)?;
     mesh.set_comm(comm.rank(), comm.size());
     mesh.partition(comm);
+
+    // HCurl path: only meaningful for 3-D magnetic vector potential
+    if config.solver.uses_hcurl() {
+        if mesh.dim == 3 {
+            log::info!("Magnetostatic solver: HCurl (Nedelec) 3-D path selected.");
+            let domain_map = DomainMap::from_config(config)?;
+            let result = magnetostatic_hcurl::run_hcurl_3d(config, &mesh, &domain_map, comm)?;
+            log::info!(
+                "HCurl magnetostatic done. W_m = {:.4e} J, edge DOFs = {}",
+                result.energy,
+                result.a_vec.len()
+            );
+            return Ok(());
+        } else {
+            log::warn!(
+                "Solver.Discretization=\"HCurl\" is only meaningful for 3-D problems; \
+                 2-D magnetostatics always uses the scalar A_z (H1) formulation."
+            );
+        }
+    }
+
     log::info!("Mesh loaded:");
     log::info!("  {} nodes", mesh.n_nodes());
     log::info!("  {} volume elements", mesh.n_volume_elements());
@@ -444,6 +484,7 @@ fn write_outputs(
             rem_mesh::ElementKind::Quad4 => 9,   // VTK_QUAD
             rem_mesh::ElementKind::Tet4  => 10,  // VTK_TETRA
             rem_mesh::ElementKind::Tet10 => 24,  // VTK_QUADRATIC_TETRA
+            rem_mesh::ElementKind::Tet20 => 24,  // VTK_QUADRATIC_TETRA (approx)
             rem_mesh::ElementKind::Hex8  => 12,  // VTK_HEXAHEDRON
             rem_mesh::ElementKind::Line2 => 3,   // VTK_LINE
             rem_mesh::ElementKind::Line3 => 21,  // VTK_QUADRATIC_EDGE

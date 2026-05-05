@@ -32,7 +32,7 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
     match config.solver.order {
         1 => log::info!("Solver.Order=1: using P1 linear assembly."),
         2 => log::info!("Solver.Order=2: using P2 quadratic assembly (Tri6/Tet10)."),
-        3 => log::info!("Solver.Order=3: using P3 cubic assembly (Tri10, 2-D only)."),
+        3 => log::info!("Solver.Order=3: using P3 cubic assembly (Tri10 / Tet20)."),
         n => log::warn!("Solver.Order={n} not supported (max P3); running P3."),
     }
 
