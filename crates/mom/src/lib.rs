@@ -27,11 +27,13 @@ pub mod mie;
 pub mod gpu;
 pub mod aca;
 pub mod pmchwt;
+pub mod loop_star;
 pub mod port;
 pub mod sparams;
 pub mod sibc;
 pub mod fft_accel;
 pub mod fmm;
+pub mod mlfma;
 pub mod amr;
 pub mod rom;
 
@@ -39,6 +41,9 @@ pub mod rom;
 pub use assemble::{gmres_solve, gmres_solve_generic, gmres_solve_op, aca_gmres_solve, gmres_generic_with_aca};
 
 use rem_config::{PalaceConfig, MomSolverConfig};
+
+/// Default multipole order for MLFMA (matches `mlfma::DEFAULT_P`).
+const DEFAULT_MLFMA_P: usize = 6;
 use rem_core::RemResult;
 use rem_mesh::RemMesh;
 use rem_parallel::NoComm;
@@ -201,10 +206,24 @@ pub fn run_with_mesh(
             j_coeffs
         } else {
             // Assemble impedance matrix Z  (PEC EFIE/MFIE/CFIE path)
-            // Early-exit for FMM: builds a matrix-free operator, skips full Z assembly.
-            let is_fmm = mom_cfg.fast_solver.eq_ignore_ascii_case("FMM")
-                && !mom_cfg.basis.eq_ignore_ascii_case("Pulse");
-            if is_fmm {
+            // Early-exit for FMM/MLFMA: builds a matrix-free operator, skips full Z assembly.
+            let fast = mom_cfg.fast_solver.to_uppercase();
+            let is_fmm   = fast == "FMM"   && !mom_cfg.basis.eq_ignore_ascii_case("Pulse");
+            let is_mlfma = fast == "MLFMA" && !mom_cfg.basis.eq_ignore_ascii_case("Pulse");
+            if is_mlfma {
+                let bases = basis::rwg::generate_rwg_bases(&surf);
+                log::info!(
+                    "MoM MLFMA: building multilevel FMM operator (N={}, P={})",
+                    bases.len(), DEFAULT_MLFMA_P
+                );
+                let green_ml = build_green(mom_cfg, freq);
+                let quad_ml  = quadrature::TriQuad::new(3);
+                let rhs_dv = nalgebra::DVector::from_vec(rhs.clone());
+                mlfma::mlfma_solve(
+                    &surf, &bases, green_ml.as_ref(),
+                    freq, mom_cfg.alpha, &quad_ml, &rhs_dv, DEFAULT_MLFMA_P,
+                )?.as_slice().to_vec()
+            } else if is_fmm {
                 let bases = basis::rwg::generate_rwg_bases(&surf);
                 log::info!("MoM FMM: building 3-D FFT monopole FMM (N={})", bases.len());
                 let green_fmm = build_green(mom_cfg, freq);
@@ -218,12 +237,15 @@ pub fn run_with_mesh(
             } else {
             let z_mat = match mom_cfg.basis.as_str() {
                 "Pulse" | "pulse" => {
+                    let mut z = assemble::assemble_efie_pulse(&surf, freq, &quad, mom_cfg.singular_tol)?;
                     if mom_cfg.wall_conductivity > 0.0 {
-                        log::warn!(
-                            "MoM SIBC: WallConductivity is currently supported only for RWG basis; ignoring for Pulse basis"
+                        sibc::apply_sibc_pulse(&mut z, &surf, freq, mom_cfg.wall_conductivity);
+                        log::info!(
+                            "MoM SIBC (Pulse): sigma_wall={:.3e} S/m",
+                            mom_cfg.wall_conductivity
                         );
                     }
-                    assemble::assemble_efie_pulse(&surf, freq, &quad, mom_cfg.singular_tol)
+                    Ok::<nalgebra::DMatrix<num_complex::Complex64>, rem_core::RemError>(z)
                 }
                 _ => {
                     let bases = basis::rwg::generate_rwg_bases(&surf);

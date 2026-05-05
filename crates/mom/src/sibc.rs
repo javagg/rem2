@@ -93,3 +93,189 @@ fn rwg_surface_overlap(
 
     sum
 }
+
+/// Apply the SIBC correction to a **pulse-basis** EFIE matrix.
+///
+/// For pulse basis functions `f_m = 1` on face `m` and 0 elsewhere, the
+/// surface Gram-matrix overlap integral simplifies to a diagonal:
+///
+///   ∫_Γ f_m · f_n dS = A_m · δ_{mn}
+///
+/// where `A_m` is the area of face `m`.  The SIBC correction therefore only
+/// adds to the diagonal:
+///
+///   Z[m,m] += Z_s · A_m
+pub fn apply_sibc_pulse(
+    z_mat: &mut DMatrix<Complex64>,
+    surf: &SurfaceMesh,
+    freq: f64,
+    sigma: f64,
+) {
+    let z_s = surface_impedance_from_conductivity(sigma, freq);
+    if z_s.norm() < 1e-30 {
+        return;
+    }
+    for (i, face) in surf.faces.iter().enumerate() {
+        z_mat[(i, i)] += z_s * face.area;
+    }
+}
+
+// ── Conductor surface roughness models ─────────────────────────────────────
+
+/// Hammerstad–Jensen roughness correction factor K_r.
+///
+/// Models the effective increase in surface resistance due to conductor
+/// surface roughness (rms roughness Δ) relative to the skin depth δ_s.
+///
+///   K_r = 1 + (1/2)·[1 + erf(−1.4·(Δ/δ_s − 1.9))]
+///
+/// * `rms_roughness_m` — RMS surface roughness Δ [m]
+/// * `freq`            — frequency [Hz]
+/// * `sigma`           — conductor conductivity [S/m]
+///
+/// Returns a multiplicative factor ≥ 1.
+pub fn roughness_factor_hammerstad(rms_roughness_m: f64, freq: f64, sigma: f64) -> f64 {
+    if freq <= 0.0 || sigma <= 0.0 || rms_roughness_m <= 0.0 {
+        return 1.0;
+    }
+    let omega = 2.0 * PI * freq;
+    let delta_s = (2.0 / (omega * MU0 * sigma)).sqrt();
+    let ratio = rms_roughness_m / delta_s;
+    // erf approximation via Horner / series — use std's f64::erf via libm if available,
+    // otherwise a fast rational approximation (max error < 1.5e-7).
+    let x = -1.4 * (ratio - 1.9);
+    let erf_x = erf_approx(x);
+    1.0 + 0.5 * (1.0 + erf_x)
+}
+
+/// Groisse roughness correction factor K_r.
+///
+///   K_r = 1 + (2/π)·arctan[1.4·(Δ/δ_s)²]
+///
+/// * `rms_roughness_m` — RMS surface roughness Δ [m]
+/// * `freq`            — frequency [Hz]
+/// * `sigma`           — conductor conductivity [S/m]
+pub fn roughness_factor_groisse(rms_roughness_m: f64, freq: f64, sigma: f64) -> f64 {
+    if freq <= 0.0 || sigma <= 0.0 || rms_roughness_m <= 0.0 {
+        return 1.0;
+    }
+    let omega = 2.0 * PI * freq;
+    let delta_s = (2.0 / (omega * MU0 * sigma)).sqrt();
+    let ratio = rms_roughness_m / delta_s;
+    1.0 + (2.0 / PI) * (1.4 * ratio * ratio).atan()
+}
+
+/// Compute skin-depth surface impedance with optional roughness correction.
+///
+/// * `model` — `"hammerstad"` or `"groisse"` (case-insensitive); any other
+///             value disables roughness correction (K_r = 1).
+pub fn surface_impedance_with_roughness(
+    sigma: f64,
+    freq: f64,
+    rms_roughness_m: f64,
+    model: &str,
+) -> Complex64 {
+    let z_smooth = surface_impedance_from_conductivity(sigma, freq);
+    if rms_roughness_m <= 0.0 {
+        return z_smooth;
+    }
+    let k_r = match model.to_lowercase().as_str() {
+        "hammerstad" | "hammerstad-jensen" => {
+            roughness_factor_hammerstad(rms_roughness_m, freq, sigma)
+        }
+        "groisse" => roughness_factor_groisse(rms_roughness_m, freq, sigma),
+        _ => 1.0,
+    };
+    z_smooth * k_r
+}
+
+/// Fast rational approximation of the error function (max error < 1.5e-7).
+///
+/// Based on Abramowitz & Stegun formula 7.1.26.
+fn erf_approx(x: f64) -> f64 {
+    const P: f64 = 0.3275911;
+    let t = 1.0 / (1.0 + P * x.abs());
+    let poly = t * (0.254829592
+        + t * (-0.284496736
+            + t * (1.421413741
+                + t * (-1.453152027 + t * 1.061405429))));
+    let result = 1.0 - poly * (-x * x).exp();
+    if x >= 0.0 { result } else { -result }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::surface_mesh::{SurfaceMesh, TriFace, SharedEdge, tri_geometry};
+    use nalgebra::DMatrix;
+    use num_complex::Complex64;
+
+    fn two_face_surf() -> SurfaceMesh {
+        let nodes = vec![
+            [0.0_f64, 0.0, 0.0],
+            [1.0,     0.0, 0.0],
+            [0.0,     1.0, 0.0],
+            [1.0,     1.0, 0.0],
+        ];
+        let (c0, n0, a0) = tri_geometry(&nodes[0], &nodes[1], &nodes[2]);
+        let (c1, n1, a1) = tri_geometry(&nodes[1], &nodes[3], &nodes[2]);
+        let faces = vec![
+            TriFace { nodes: [0,1,2], centroid: c0, normal: n0, area: a0 },
+            TriFace { nodes: [1,3,2], centroid: c1, normal: n1, area: a1 },
+        ];
+        let elen = {
+            let d = [nodes[1][0]-nodes[2][0], nodes[1][1]-nodes[2][1], nodes[1][2]-nodes[2][2]];
+            (d[0]*d[0]+d[1]*d[1]+d[2]*d[2]).sqrt()
+        };
+        let edges = vec![SharedEdge { nodes: [1, 2], plus_face: 0, minus_face: 1, length: elen }];
+        SurfaceMesh { nodes, faces, edges, boundary_edges: vec![], face_attrs: vec![0, 0], global_node_ids: vec![0, 1, 2, 3] }
+    }
+
+    #[test]
+    fn sibc_pulse_diagonal_only() {
+        let surf = two_face_surf();
+        let n = surf.faces.len();
+        let mut z = DMatrix::<Complex64>::zeros(n, n);
+        apply_sibc_pulse(&mut z, &surf, 1e9, 5.96e7);
+        // Off-diagonal must remain zero
+        for i in 0..n {
+            for j in 0..n {
+                if i != j {
+                    assert!(z[(i, j)].norm() < 1e-30, "off-diagonal non-zero");
+                }
+            }
+        }
+        // Diagonal must be non-zero (positive real part)
+        for i in 0..n {
+            assert!(z[(i, i)].re > 0.0, "diagonal real part must be positive");
+        }
+    }
+
+    #[test]
+    fn roughness_factor_hammerstad_limits() {
+        // K_r = 1 when roughness = 0
+        let kr = roughness_factor_hammerstad(0.0, 1e9, 5.96e7);
+        assert!((kr - 1.0).abs() < 1e-10);
+        // K_r >= 1 for nonzero roughness
+        let kr2 = roughness_factor_hammerstad(1e-6, 1e9, 5.96e7);
+        assert!(kr2 >= 1.0);
+        // K_r ≤ 2 (physical upper bound)
+        assert!(kr2 <= 2.0 + 1e-10);
+    }
+
+    #[test]
+    fn roughness_factor_groisse_limits() {
+        let kr0 = roughness_factor_groisse(0.0, 1e9, 5.96e7);
+        assert!((kr0 - 1.0).abs() < 1e-10);
+        let kr2 = roughness_factor_groisse(5e-6, 10e9, 5.96e7);
+        assert!(kr2 >= 1.0);
+        assert!(kr2 < 2.0 + 1e-10);
+    }
+
+    #[test]
+    fn erf_approx_basic() {
+        assert!(erf_approx(0.0).abs() < 1e-6);
+        assert!((erf_approx(1.0) - 0.8427).abs() < 2e-4);
+        assert!((erf_approx(-1.0) + 0.8427).abs() < 2e-4);
+    }
+}

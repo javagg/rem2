@@ -3,9 +3,11 @@ pub mod gmsh;
 pub mod mesh_data;
 pub mod amr;
 pub mod fem_bridge;
+pub mod p_refine;
 
 pub use mesh_data::{BoundaryTag, Node, Element, ElementKind, RemMesh};
 pub use fem_bridge::{FemSubMesh2d, extract_submesh_tri3, extract_submesh_by_element_ids_tri3, refine_marked_tri3};
+pub use p_refine::{p_refine_mesh, p3_refine_mesh};
 
 use rem_config::PalaceConfig;
 use rem_core::RemResult;

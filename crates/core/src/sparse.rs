@@ -931,25 +931,15 @@ impl crate::operator::LinearOperator<Complex64> for CsrMatrixComplex {
 }
 
 // ---------------------------------------------------------------------------
-// Complex PCG solver: MinRes for non-symmetric Helmholtz systems
+// Complex iterative solver for non-Hermitian Helmholtz systems
 // ---------------------------------------------------------------------------
 
-/// Solve complex linear system using preconditioned CG on normal equations.
+/// Solve complex linear system using right-preconditioned BiCGSTAB.
 ///
-/// For non-symmetric system A x = b, solves: A^H A x = A^H b
-/// This is a simple but robust approach suitable for Helmholtz frequency-domain FEM.
+/// Despite the historical name (`solve_pcg_complex`), this routine is intended
+/// for non-Hermitian systems arising from frequency-domain Helmholtz FEM.
 ///
-/// Algorithm: Conjugate Gradient with diagonal preconditioner on the normal equations.
-/// The normal equations are symmetric positive-definite.
-///
-/// # Parameters
-/// - `mat`: Sparse matrix in CSR format with Complex64 values
-/// - `b`: Right-hand side vector
-/// - `tol`: Relative residual tolerance (on original system Ax=b)
-/// - `max_iter`: Maximum number of iterations
-///
-/// # Returns
-/// - Solution vector x with residual ‖Ax - b‖/‖b‖ ≤ tol (if converged)
+/// Preconditioner: Jacobi (inverse diagonal, with safe fallback for near-zero diagonal).
 pub fn solve_pcg_complex(
     mat: &CsrMatrixComplex,
     b: &[Complex64],
@@ -987,127 +977,120 @@ pub fn solve_pcg_complex(
         };
     }
 
-    // Compute A^H * b using CsrMatrixComplex adjoint
-    let mut rhs = nalgebra::DVector::<Complex64>::zeros(n);
-    // Manual adjoint: rhs[j] = sum_i conj(A[i,j]) * b[i]
-    for i in 0..mat.nrows {
-        for k in mat.row_ptr[i]..mat.row_ptr[i + 1] {
-            let j = mat.col_idx[k];
-            rhs[j] += mat.values[k].conj() * b_vec[i];
-        }
-    }
-
-    // Initialize: x = 0, r = A^H * b
-    let mut x = nalgebra::DVector::<Complex64>::zeros(n);
-    let mut r = rhs.clone();
-    
-    // Diagonal preconditioner from A^H * A
-    // For simplicity, use diag(A^H * A) ≈ |diag(A)|^2
-    let diag_a = mat.diagonal();
-    let mut diag_prec = nalgebra::DVector::zeros(n);
+    // Jacobi preconditioner M^{-1} = diag(A)^{-1}
+    let diag = mat.diagonal();
+    let mut minv = nalgebra::DVector::<Complex64>::zeros(n);
     for i in 0..n {
-        let d_sq = diag_a[i].norm_sqr();
-        if d_sq > f64::EPSILON {
-            diag_prec[i] = Complex64::new(1.0, 0.0) / (diag_a[i] * diag_a[i].conj());
+        if diag[i].norm() > 1e-30 {
+            minv[i] = Complex64::new(1.0, 0.0) / diag[i];
         } else {
-            diag_prec[i] = Complex64::new(1.0, 0.0);
+            minv[i] = Complex64::new(1.0, 0.0);
         }
     }
 
-    // Precondition: y = M^{-1} r
-    let mut y = nalgebra::DVector::<Complex64>::zeros(n);
-    for i in 0..n {
-        y[i] = diag_prec[i] * r[i];
-    }
+    let mut x = nalgebra::DVector::<Complex64>::zeros(n);
+    let mut r = b_vec.clone(); // x = 0 => r = b
+    let r_hat = r.clone();
 
-    // CG main loop
-    let mut rho = (r.conjugate().dot(&y)).norm();
-    let rho_tol = tol * tol * rho;
-    let mut converged = false;
+    let mut p = nalgebra::DVector::<Complex64>::zeros(n);
+    let mut v = nalgebra::DVector::<Complex64>::zeros(n);
+    let mut s = nalgebra::DVector::<Complex64>::zeros(n);
+    let mut t = nalgebra::DVector::<Complex64>::zeros(n);
+    let mut p_hat = nalgebra::DVector::<Complex64>::zeros(n);
+    let mut s_hat = nalgebra::DVector::<Complex64>::zeros(n);
+
+    let mut rho_prev = Complex64::new(1.0, 0.0);
+    let mut alpha = Complex64::new(1.0, 0.0);
+    let mut omega = Complex64::new(1.0, 0.0);
+
     let mut iterations = 0;
-
-    // Storage for search direction
-    let mut p = y.clone();
-    let mut ap = nalgebra::DVector::<Complex64>::zeros(n);
-    let mut ap_conj_p: f64;
+    let mut converged = false;
+    let mut residual_norm = r.norm() / b_norm;
+    if residual_norm <= tol {
+        return ComplexSolveResult {
+            solution: x.iter().copied().collect(),
+            iterations,
+            residual_norm,
+            converged: true,
+        };
+    }
 
     for iter in 0..max_iter {
         iterations = iter + 1;
 
-        // Compute A * p
-        mat.matvec(&p, &mut ap).ok();
-        
-        // alpha = rho / (p^H * A * p) = (r^H * y) / (p^H * A * p)
-        ap_conj_p = (p.conjugate().dot(&ap)).norm();
-        
-        if ap_conj_p < 1e-30 {
+        let rho = r_hat.dotc(&r);
+        if rho.norm() < 1e-30 {
             break;
         }
 
-        let alpha_val = rho / ap_conj_p;
-        let alpha = Complex64::new(alpha_val, 0.0);
+        let beta = if iter == 0 {
+            Complex64::new(0.0, 0.0)
+        } else {
+            (rho / rho_prev) * (alpha / omega)
+        };
 
-        // x += alpha * p
         for i in 0..n {
-            x[i] += alpha * p[i];
+            p[i] = r[i] + beta * (p[i] - omega * v[i]);
+            p_hat[i] = minv[i] * p[i];
         }
 
-        // r -= alpha * A * p
+        if mat.matvec(&p_hat, &mut v).is_err() {
+            break;
+        }
+        let denom = r_hat.dotc(&v);
+        if denom.norm() < 1e-30 {
+            break;
+        }
+        alpha = rho / denom;
+
         for i in 0..n {
-            r[i] -= alpha * ap[i];
+            s[i] = r[i] - alpha * v[i];
         }
 
-        // Check convergence on original system: ||Ax - b||
-        let mut residual_orig = nalgebra::DVector::<Complex64>::zeros(n);
-        mat.matvec(&x, &mut residual_orig).ok();
-        for i in 0..n {
-            residual_orig[i] -= b_vec[i];
-        }
-        let orig_res_norm = residual_orig.norm() / b_norm;
-        
-        if orig_res_norm <= tol {
+        let s_rel = s.norm() / b_norm;
+        if s_rel <= tol {
+            for i in 0..n {
+                x[i] += alpha * p_hat[i];
+            }
+            residual_norm = s_rel;
             converged = true;
-            return ComplexSolveResult {
-                solution: x.iter().copied().collect(),
-                iterations,
-                residual_norm: orig_res_norm,
-                converged: true,
-            };
-        }
-
-        // Precondition: y = M^{-1} r
-        for i in 0..n {
-            y[i] = diag_prec[i] * r[i];
-        }
-
-        let rho_prev = rho;
-        rho = (r.conjugate().dot(&y)).norm();
-
-        if rho < rho_tol || rho_prev < 1e-30 {
             break;
         }
 
-        // beta = rho_new / rho_old
-        let beta = rho / rho_prev;
-
-        // p = y + beta * p
         for i in 0..n {
-            p[i] = y[i] + Complex64::new(beta, 0.0) * p[i];
+            s_hat[i] = minv[i] * s[i];
         }
-    }
+        if mat.matvec(&s_hat, &mut t).is_err() {
+            break;
+        }
 
-    // Final residual check
-    let mut residual_final = nalgebra::DVector::<Complex64>::zeros(n);
-    mat.matvec(&x, &mut residual_final).ok();
-    for i in 0..n {
-        residual_final[i] -= b_vec[i];
+        let tt = t.dotc(&t);
+        if tt.norm() < 1e-30 {
+            break;
+        }
+        omega = t.dotc(&s) / tt;
+        if omega.norm() < 1e-30 {
+            break;
+        }
+
+        for i in 0..n {
+            x[i] += alpha * p_hat[i] + omega * s_hat[i];
+            r[i] = s[i] - omega * t[i];
+        }
+
+        residual_norm = r.norm() / b_norm;
+        if residual_norm <= tol {
+            converged = true;
+            break;
+        }
+
+        rho_prev = rho;
     }
-    let final_res_norm = residual_final.norm() / b_norm;
 
     ComplexSolveResult {
         solution: x.iter().copied().collect(),
         iterations,
-        residual_norm: final_res_norm,
+        residual_norm,
         converged,
     }
 }

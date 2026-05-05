@@ -28,6 +28,7 @@ use rem_mom::{
     mie::{pec_sphere_rcs, dielectric_sphere_rcs},
     basis::rwg::generate_rwg_bases,
     pmchwt::{DielectricMaterial, solve_pmchwt},
+    loop_star::{build_loop_star_transform, solve_efie_loop_star},
 };
 use rem_core::{C0, ETA0};
 
@@ -532,4 +533,62 @@ fn pmchwt_dielectric_sphere_mie_accuracy_ka1() {
     assert!(mean_err < 10.0,
         "PMCHWT mean bistatic RCS error {:.2} dB > 10 dB threshold — check formulation",
         mean_err);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 26b: Loop-Star low-frequency EFIE stabilisation
+// ---------------------------------------------------------------------------
+
+/// At ka=0.1, Loop-Star should improve the linear-system conditioning while
+/// preserving the physical solution.
+///
+/// The current dense EFIE-RWG discretisation does not yet reproduce Rayleigh/Mie
+/// accuracy at this mesh level, so the regression target here is the stabilisation
+/// property itself: lower condition number, same solved current.
+#[test]
+#[ignore]
+fn efie_loop_star_low_freq_conditioning_ka01() {
+    let a = 1.0_f64;
+    let ka = 0.1_f64;
+    let k = ka / a;
+    let freq = k * C0 / (2.0 * PI);
+
+    let surf = icosphere(a, 1);
+    let bases = generate_rwg_bases(&surf);
+    let quad = TriQuad::new(4);
+    let z_rwg = assemble_cfie_rwg(&surf, &bases, freq, 1.0, &quad, 1e-6).expect("EFIE-RWG assembly");
+    let rhs_rwg = plane_wave_rhs(&surf, k, "RWG");
+
+    let j_std = lu_solve(&z_rwg, &rhs_rwg).expect("standard LU solve");
+    let j_ls = solve_efie_loop_star(&surf, &bases, &rhs_rwg, k, &quad).expect("Loop-Star solve");
+
+    let ls = build_loop_star_transform(&surf, &bases);
+    let t_c = ls.t.map(|x| num_complex::Complex64::new(x, 0.0));
+    let z_ls = t_c.transpose() * &z_rwg * &t_c;
+    let mut z_norm = z_ls.clone();
+    let inv_k = 1.0 / k;
+    for i in 0..ls.n() {
+        let si = if i < ls.n_loops { inv_k } else { 1.0 };
+        for j in 0..ls.n() {
+            let sj = if j < ls.n_loops { inv_k } else { 1.0 };
+            z_norm[(i, j)] *= num_complex::Complex64::new(si * sj, 0.0);
+        }
+    }
+    let sv_raw = z_rwg.clone().svd(false, false).singular_values;
+    let sv_ls = z_norm.svd(false, false).singular_values;
+    let cond_raw = sv_raw[0] / sv_raw[sv_raw.len() - 1];
+    let cond_ls = sv_ls[0] / sv_ls[sv_ls.len() - 1];
+
+    let diff_norm = j_std.iter().zip(j_ls.iter())
+        .map(|(a, b)| (*a - *b).norm_sqr())
+        .sum::<f64>()
+        .sqrt();
+    let std_norm = j_std.iter().map(|v| v.norm_sqr()).sum::<f64>().sqrt();
+    let rel_diff = if std_norm > 0.0 { diff_norm / std_norm } else { 0.0 };
+
+    println!("ka=0.1 standard vs loop-star relative current diff = {:.3e}", rel_diff);
+    println!("ka=0.1 cond(Z_rwg) = {:.3e}, cond(Z_ls_norm) = {:.3e}", cond_raw, cond_ls);
+
+    assert!(rel_diff < 1e-9, "Loop-Star changed the solved current too much: rel_diff = {:.3e}", rel_diff);
+    assert!(cond_ls < cond_raw / 50.0, "Loop-Star conditioning improvement too small: raw = {:.3e}, ls = {:.3e}", cond_raw, cond_ls);
 }

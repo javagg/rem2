@@ -548,6 +548,14 @@ pub struct SolverConfig {
     #[serde(rename = "Order", default = "default_order")]
     pub order: u8,
 
+    /// Discretization family for full-wave problems.
+    ///
+    /// Supported values (case-insensitive):
+    /// - `H1` (default): scalar nodal basis
+    /// - `HCurl` / `Nedelec`: edge-element H(curl) basis
+    #[serde(rename = "Discretization", default = "default_discretization")]
+    pub discretization: String,
+
     /// Palace `Device` — REM is CPU-only; value is accepted and ignored.
     #[serde(rename = "Device", default = "default_device")]
     pub device: String,
@@ -628,6 +636,7 @@ impl Default for SolverConfig {
     fn default() -> Self {
         SolverConfig {
             order: 1,
+            discretization: default_discretization(),
             device: "CPU".to_string(),
             eigenmode: None,
             driven: None,
@@ -647,6 +656,17 @@ impl Default for SolverConfig {
 }
 
 fn default_device() -> String { "CPU".to_string() }
+fn default_discretization() -> String { "H1".to_string() }
+
+impl SolverConfig {
+    /// Returns `true` when H(curl)/Nedelec discretization is requested.
+    pub fn uses_hcurl(&self) -> bool {
+        matches!(
+            self.discretization.to_lowercase().as_str(),
+            "hcurl" | "nedelec"
+        )
+    }
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct EigenmodeSolver {
@@ -828,6 +848,16 @@ impl LinearSolver {
     /// This hints that the caller should prefer the PCG path over GMRES.
     pub fn prefers_pcg(&self) -> bool {
         matches!(self.ksp_type.to_lowercase().as_str(), "cg" | "pcg")
+    }
+
+    /// Returns `true` when complex Helmholtz should use sparse iterative solve
+    /// before any dense GMRES fallback.
+    ///
+    /// Accepted values (case-insensitive):
+    /// - `CG`, `PCG` (legacy naming)
+    /// - `BiCGSTAB`
+    pub fn prefers_sparse_iterative_complex(&self) -> bool {
+        matches!(self.ksp_type.to_lowercase().as_str(), "cg" | "pcg" | "bicgstab")
     }
 }
 
@@ -1737,21 +1767,29 @@ pub fn validate_palace_compat(cfg: &PalaceConfig) {
             "REM runs CPU-only; value is ignored",
         );
     }
+    let disc = cfg.solver.discretization.to_lowercase();
+    if !disc.is_empty() && disc != "h1" && disc != "hcurl" && disc != "nedelec" {
+        warn_unsupported(
+            &format!("Solver.Discretization = \"{}\"", cfg.solver.discretization),
+            "Only H1 and HCurl/Nedelec are supported; defaulting behavior is solver-dependent",
+        );
+    }
 
     // --- Solver.Linear ---
     let l = &cfg.solver.linear;
-    // CG / PCG / GMRES are all accepted: SPD solvers use PCG by default;
-    // Driven uses GMRES (or PCG if Solver.Linear.KSPType is "CG"/"PCG").
+    // CG / PCG / BiCGSTAB / GMRES are all accepted: SPD solvers use PCG by default;
+    // Driven uses GMRES unless KSPType requests sparse iterative complex solve.
     let ksp_lower = l.ksp_type.to_lowercase();
     if !l.ksp_type.is_empty()
         && ksp_lower != "gmres"
         && ksp_lower != "cg"
         && ksp_lower != "pcg"
+        && ksp_lower != "bicgstab"
         && ksp_lower != "default"
     {
         warn_unsupported(
             &format!("Solver.Linear.KSPType = \"{}\"", l.ksp_type),
-            "Only GMRES and CG/PCG are supported; value is ignored",
+            "Only GMRES, BiCGSTAB, and CG/PCG are supported; value is ignored",
         );
     }
     if l.mg_levels != 10 && l.mg_levels != 0 {

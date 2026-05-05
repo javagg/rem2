@@ -23,6 +23,7 @@
 //!   - Replace real PCG with complex GMRES (nalgebra DMatrix<Complex64>).
 //!   - S11 now carries both real and imaginary parts; |S11| and phase are correct.
 
+pub mod driven_hcurl;
 pub mod far_field;
 pub mod near_field;
 pub mod output;
@@ -46,14 +47,14 @@ use std::path::Path;
 
 const C0: f64 = 2.997_924_58e8;
 
-/// Returns `true` when PCG should be used for complex Helmholtz solves.
+/// Returns `true` when sparse iterative solve should be used for complex Helmholtz solves.
 ///
-/// PCG is selected when either:
-/// - `Solver.Linear.KSPType` is "CG" or "PCG" in the JSON config, OR
+/// Sparse iterative solve is selected when either:
+/// - `Solver.Linear.KSPType` is "CG", "PCG", or "BiCGSTAB" in the JSON config, OR
 /// - the `REM_USE_PCG=1` environment variable is set (legacy override).
 #[inline]
 fn use_pcg(config: &PalaceConfig) -> bool {
-    config.solver.linear.prefers_pcg() || std::env::var("REM_USE_PCG").is_ok()
+    config.solver.linear.prefers_sparse_iterative_complex() || std::env::var("REM_USE_PCG").is_ok()
 }
 
 /// Per-frequency S-parameter result.
@@ -134,6 +135,15 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
 /// Returns the driven frequency sweep result including S-params and peak E-field.
 pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> RemResult<DrivenResult> {
     log::info!("\n=== Driven (frequency-domain) solver ===\n");
+    if config.solver.uses_hcurl() {
+        let domain_map = DomainMap::from_config(config)?;
+        return driven_hcurl::run_hcurl_driven(config, mesh, &domain_map, comm);
+    } else {
+        log::warn!(
+            "Driven solver currently uses scalar nodal H1 discretization (no Nedelec edge elements). \
+             For vector full-wave cases, spurious modes/currents may appear near conductor edges and material interfaces."
+        );
+    }
 
     let drv_cfg = config.solver.driven.as_ref().ok_or_else(|| {
         RemError::Config("Driven problem requires a [Solver.Driven] section".into())
@@ -217,7 +227,39 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
         mesh
     };
 
-    run_frequency_sweep(config, drv_cfg, work_mesh, &domain_map, comm)
+    // P-refinement: if Order=2, promote the (possibly AMR-refined) P1 mesh to P2
+    // (Tri3→Tri6, Tet4→Tet10) so the existing stiffness/mass assembly uses P2 kernels.
+    let p2_mesh_owned: RemMesh;
+    let sweep_mesh: &RemMesh = if config.solver.order >= 2 {
+        let is_already_p2 = work_mesh.volume_elements.iter().all(|e| {
+            matches!(
+                e.kind,
+                rem_mesh::ElementKind::Tri6
+                    | rem_mesh::ElementKind::Tet10
+                    | rem_mesh::ElementKind::Quad4
+                    | rem_mesh::ElementKind::Hex8
+            )
+        });
+        if is_already_p2 {
+            work_mesh
+        } else {
+            log::info!(
+                "Driven: Solver.Order=2 — promoting P1 mesh ({} nodes) to P2.",
+                work_mesh.n_nodes()
+            );
+            p2_mesh_owned = rem_mesh::p_refine_mesh(work_mesh);
+            log::info!(
+                "Driven: P2 mesh has {} nodes ({} added).",
+                p2_mesh_owned.n_nodes(),
+                p2_mesh_owned.n_nodes() - work_mesh.n_nodes()
+            );
+            &p2_mesh_owned
+        }
+    } else {
+        work_mesh
+    };
+
+    run_frequency_sweep(config, drv_cfg, sweep_mesh, &domain_map, comm)
 }
 
 // ---------------------------------------------------------------------------
@@ -1102,8 +1144,10 @@ fn apply_dirichlet_complex(
     }
 }
 
-/// Try to solve with PCG, fallback to GMRES if conversion or convergence fails.
-/// Enable PCG attempt via use_pcg=true parameter.
+/// Try sparse iterative solve first, then fallback to dense GMRES.
+///
+/// When `use_pcg=true`, this path uses `solve_pcg_complex` from rem-core
+/// (BiCGSTAB + Jacobi preconditioner; legacy function name kept for API stability).
 fn solve_complex_helmholtz_adaptive(
     a: &DMatrix<Complex64>,
     rhs: &[Complex64],
@@ -1118,17 +1162,17 @@ fn solve_complex_helmholtz_adaptive(
     // Convert dense DMatrix to CSR format
     let mat_csr = CsrMatrixComplex::from_dense(a);
     
-    // Attempt PCG solve
+    // Attempt sparse iterative solve (BiCGSTAB in rem-core)
     let result = solve_pcg_complex(&mat_csr, rhs, tol, max_iter);
     
     if result.converged {
-        log::info!("PCG: converged in {} iterations (residual {:.3e})", 
+        log::info!("Sparse iterative solver: converged in {} iterations (residual {:.3e})", 
                     result.iterations, result.residual_norm);
         return Ok(result.solution);
     }
 
-    // PCG diverged or hit max iterations; fallback to GMRES
-    log::info!("PCG: no convergence after {} iterations (residual {:.3e}); using GMRES",
+    // Iterative solve diverged or hit max iterations; fallback to dense GMRES
+    log::info!("Sparse iterative solver: no convergence after {} iterations (residual {:.3e}); using dense GMRES",
                 result.iterations, result.residual_norm);
     gmres_complex(a, rhs, tol, max_iter)
 }

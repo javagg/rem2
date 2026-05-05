@@ -23,6 +23,7 @@ pub enum ElementKind {
     Line3,   // 3-node quadratic line (P2 boundary edges)
     Tri3,
     Tri6,
+    Tri10,   // 10-node cubic triangle (P3)
     Quad4,
     Tet4,
     Tet10,
@@ -36,6 +37,7 @@ impl ElementKind {
             ElementKind::Line3 => 3,
             ElementKind::Tri3  => 3,
             ElementKind::Tri6  => 6,
+            ElementKind::Tri10 => 10,
             ElementKind::Quad4 => 4,
             ElementKind::Tet4  => 4,
             ElementKind::Tet10 => 10,
@@ -46,7 +48,7 @@ impl ElementKind {
     pub fn dim(self) -> u8 {
         match self {
             ElementKind::Line2 | ElementKind::Line3 => 1,
-            ElementKind::Tri3 | ElementKind::Tri6 | ElementKind::Quad4 => 2,
+            ElementKind::Tri3 | ElementKind::Tri6 | ElementKind::Tri10 | ElementKind::Quad4 => 2,
             ElementKind::Tet4 | ElementKind::Tet10 | ElementKind::Hex8 => 3,
         }
     }
@@ -492,6 +494,7 @@ impl RemMesh {
                 ElementKind::Hex8  => Some(FET::Hex8),
                 ElementKind::Tri3  => Some(FET::Tri3),
                 ElementKind::Tri6  => Some(FET::Tri6),
+                ElementKind::Tri10 => Some(FET::Tri6), // approximate as Tri6 for fem_mesh compat
                 ElementKind::Quad4 => Some(FET::Quad4),
                 ElementKind::Line2 | ElementKind::Line3 => Some(FET::Line2),
             }

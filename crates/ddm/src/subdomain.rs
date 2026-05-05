@@ -3,7 +3,7 @@
 use nalgebra::{DMatrix, DVector};
 use num_complex::Complex64;
 use rem_core::RemResult;
-use rem_mesh::{RemMesh, Element, ElementKind};
+use rem_mesh::RemMesh;
 use std::collections::HashMap;
 
 /// 单个子域的数据

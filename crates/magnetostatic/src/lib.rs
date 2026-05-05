@@ -440,6 +440,7 @@ fn write_outputs(
         let t = match elem.kind {
             rem_mesh::ElementKind::Tri3  => 5,   // VTK_TRIANGLE
             rem_mesh::ElementKind::Tri6  => 22,  // VTK_QUADRATIC_TRIANGLE
+            rem_mesh::ElementKind::Tri10 => 22,  // VTK_QUADRATIC_TRIANGLE (approx)
             rem_mesh::ElementKind::Quad4 => 9,   // VTK_QUAD
             rem_mesh::ElementKind::Tet4  => 10,  // VTK_TETRA
             rem_mesh::ElementKind::Tet10 => 24,  // VTK_QUADRATIC_TETRA

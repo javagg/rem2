@@ -10,6 +10,8 @@ use num_complex::Complex64;
 /// 一个子域与相邻子域的界面描述
 #[derive(Debug, Clone)]
 pub struct InterfacePatch {
+    /// 本界面补丁所属子域编号（本地子域 ID）
+    pub owner_rank: i32,
     /// 本子域中属于该界面的自由度（局部索引）
     pub local_dofs: Vec<usize>,
     /// 对应的全局节点 ID（用于与邻域匹配）
@@ -22,12 +24,13 @@ pub struct InterfacePatch {
 
 impl InterfacePatch {
     pub fn new(
+        owner_rank: i32,
         local_dofs: Vec<usize>,
         global_node_ids: Vec<usize>,
         neighbor_rank: i32,
         robin_alpha: Complex64,
     ) -> Self {
-        Self { local_dofs, global_node_ids, neighbor_rank, robin_alpha }
+        Self { owner_rank, local_dofs, global_node_ids, neighbor_rank, robin_alpha }
     }
 
     pub fn n_dofs(&self) -> usize { self.local_dofs.len() }

@@ -12,7 +12,26 @@ use rem_core::{RemResult, RemError};
 use rem_parallel::Comm;
 
 use crate::subdomain::SubDomain;
-use crate::interface::InterfacePatch;
+use crate::interface::{apply_robin_to_diagonal, InterfaceExchange, InterfacePatch};
+
+fn apply_robin_diagonal_terms(
+    mat: &mut nalgebra::DMatrix<Complex64>,
+    patches: &[&InterfacePatch],
+) {
+    let n = mat.nrows().min(mat.ncols());
+    if n == 0 || patches.is_empty() {
+        return;
+    }
+
+    let mut diag: Vec<Complex64> = (0..n).map(|i| mat[(i, i)]).collect();
+    for patch in patches {
+        let unit_areas = vec![1.0_f64; patch.n_dofs()];
+        apply_robin_to_diagonal(&mut diag, patch, &unit_areas);
+    }
+    for i in 0..n {
+        mat[(i, i)] = diag[i];
+    }
+}
 
 /// Schwarz 迭代配置
 #[derive(Debug, Clone)]
@@ -61,13 +80,11 @@ pub struct SchwarzResult {
 /// 3. 重组全局解
 pub fn schwarz_solve(
     subdomains: &[SubDomain],
-    _interfaces: &[InterfacePatch],
-    _comm: &impl Comm,
+    interfaces: &[InterfacePatch],
+    comm: &impl Comm,
     tol: f64,
     max_iter: usize,
 ) -> RemResult<SchwarzResult> {
-    use rem_core::LinearOperator;
-
     if subdomains.is_empty() {
         return Err(RemError::Config("DDM: no subdomains provided".to_string()));
     }
@@ -82,13 +99,52 @@ pub fn schwarz_solve(
 
     log::info!("Schwarz DDM: {} subdomains, tol={:.2e}, max_iter={}",
         subdomains.len(), tol, max_iter);
+    log::info!("Schwarz DDM: {} directed interface patches", interfaces.len());
 
     for iter in 0..max_iter {
         iterations = iter + 1;
+        let prev_solutions = solutions.clone();
 
         // --- 步骤1：各子域 GMRES/LU 求解 ---
         for (i, sd) in subdomains.iter().enumerate() {
-            let (mat, rhs) = sd.assemble_local_stiffness_skeleton()?;
+            let (mut mat, mut rhs) = sd.assemble_local_stiffness_skeleton()?;
+            let owner_patches: Vec<&InterfacePatch> = interfaces
+                .iter()
+                .filter(|p| p.owner_rank == i as i32)
+                .collect();
+
+            // Robin diagonal term on local operator (unit-area placeholder in skeleton mode).
+            apply_robin_diagonal_terms(&mut mat, &owner_patches);
+
+            // Robin interface update: use previous-iteration neighbor trace as incoming field.
+            for patch in owner_patches {
+                let neighbor = patch.neighbor_rank as usize;
+                if neighbor >= subdomains.len() {
+                    continue;
+                }
+
+                let incoming_e: Vec<Complex64> = patch.global_node_ids.iter()
+                    .map(|gid| {
+                        subdomains[neighbor]
+                            .global_to_local
+                            .get(gid)
+                            .and_then(|&lid| prev_solutions.get(neighbor).and_then(|v| v.get(lid)).copied())
+                            .unwrap_or(Complex64::ZERO)
+                    })
+                    .collect();
+
+                let exch = InterfaceExchange {
+                    incoming_e,
+                    incoming_h: vec![Complex64::ZERO; patch.n_dofs()],
+                };
+                let contrib = exch.robin_rhs_contribution(patch.robin_alpha);
+
+                for (&ldof, &val) in patch.local_dofs.iter().zip(contrib.iter()) {
+                    if ldof < rhs.len() {
+                        rhs[ldof] += val;
+                    }
+                }
+            }
             
             // Select solver based on problem size
             let sol = if sd.n_dof() > 100 {
@@ -115,14 +171,28 @@ pub fn schwarz_solve(
             solutions[i] = sol;
         }
 
-        // --- 步骤2：计算全局残差 ---
-        let res_norm: f64 = solutions.iter().map(|sol| sol.norm()).sum();
-        rel_residual = if res_norm > 0.0 { res_norm } else { 0.0 };
+        // --- 步骤2：计算界面更新残差 ---
+        let mut delta_sq = 0.0_f64;
+        let mut ref_sq = 0.0_f64;
+        for patch in interfaces {
+            let owner = patch.owner_rank as usize;
+            if owner >= subdomains.len() {
+                continue;
+            }
+            for &ldof in &patch.local_dofs {
+                if ldof < solutions[owner].len() {
+                    let cur = solutions[owner][ldof];
+                    let prev = prev_solutions[owner][ldof];
+                    delta_sq += (cur - prev).norm_sqr();
+                    ref_sq += cur.norm_sqr();
+                }
+            }
+        }
+        let delta_sq_glob = comm.allreduce_f64(delta_sq);
+        let ref_sq_glob = comm.allreduce_f64(ref_sq);
+        rel_residual = (delta_sq_glob.sqrt()) / (ref_sq_glob.sqrt().max(1e-30));
 
         log::debug!("  iter={}, res={:.4e}", iter + 1, rel_residual);
-
-        // --- 步骤3：交换界面数据（骨架：无 MPI 通信）---
-        // TODO: comm.send/recv 界面切向场
 
         if rel_residual < tol {
             log::info!("Schwarz converged at iter={}", iter + 1);
@@ -153,4 +223,57 @@ pub fn assemble_global_solution(
         }
     }
     global
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn mock_subdomain(id: usize, gid: usize) -> SubDomain {
+        let mut global_to_local = HashMap::new();
+        global_to_local.insert(gid, 0);
+        SubDomain {
+            id,
+            volume_elements: vec![],
+            boundary_elements: vec![],
+            global_to_local,
+            local_to_global: vec![gid],
+            interface_nodes: vec![],
+            interface_neighbor: vec![],
+        }
+    }
+
+    #[test]
+    fn robin_diagonal_terms_are_applied_on_owner_dofs() {
+        let mut mat = nalgebra::DMatrix::<Complex64>::identity(3, 3);
+        let patch = InterfacePatch::new(
+            0,
+            vec![0, 2],
+            vec![10, 20],
+            1,
+            Complex64::new(0.0, 2.0),
+        );
+        apply_robin_diagonal_terms(&mut mat, &[&patch]);
+
+        assert_eq!(mat[(0, 0)], Complex64::new(1.0, 2.0));
+        assert_eq!(mat[(1, 1)], Complex64::new(1.0, 0.0));
+        assert_eq!(mat[(2, 2)], Complex64::new(1.0, 2.0));
+    }
+
+    #[test]
+    fn schwarz_runs_with_bidirectional_interface_patches() {
+        let subdomains = vec![mock_subdomain(0, 0), mock_subdomain(1, 0)];
+        let interfaces = vec![
+            InterfacePatch::new(0, vec![0], vec![0], 1, Complex64::new(0.0, 1.0)),
+            InterfacePatch::new(1, vec![0], vec![0], 0, Complex64::new(0.0, 1.0)),
+        ];
+
+        let out = schwarz_solve(&subdomains, &interfaces, &rem_parallel::NoComm, 1e-9, 5)
+            .expect("schwarz solve should complete");
+
+        assert_eq!(out.solutions.len(), 2);
+        assert!(out.iterations >= 1);
+        assert!(out.residual.is_finite());
+    }
 }

@@ -60,6 +60,7 @@ pub fn write_mode_vtk(
             rem_mesh::ElementKind::Hex8  => 12,
             rem_mesh::ElementKind::Quad4 => 9,
             rem_mesh::ElementKind::Tri6  => 22,
+            rem_mesh::ElementKind::Tri10 => 22,  // VTK_QUADRATIC_TRIANGLE (approx)
             rem_mesh::ElementKind::Tet10 => 24,
             rem_mesh::ElementKind::Line2 => 3,
             rem_mesh::ElementKind::Line3 => 21,  // VTK_QUADRATIC_EDGE

@@ -15,3 +15,5 @@ num-complex = { workspace = true }
 nalgebra    = { workspace = true }
 log         = { workspace = true }
 rem-touchstone = { workspace = true }
+fem-assembly = { workspace = true }
+fem-space    = { workspace = true }

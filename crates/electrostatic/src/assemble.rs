@@ -40,6 +40,9 @@ pub fn assemble_stiffness(
             ElementKind::Tri6 => {
                 assemble_tri6(mesh, elem, eps, &mut triplet)?;
             }
+            ElementKind::Tri10 => {
+                assemble_tri10(mesh, elem, eps, &mut triplet)?;
+            }
             ElementKind::Tet10 => {
                 assemble_tet10(mesh, elem, eps, &mut triplet)?;
             }
@@ -384,6 +387,198 @@ fn assemble_tri6(
 
     for i in 0..6 {
         for j in 0..6 {
+            triplet.add(nids[i], nids[j], ke[i][j]);
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// P3 cubic triangle (Tri10) stiffness assembly
+// ---------------------------------------------------------------------------
+
+/// Local stiffness for a cubic triangle (Tri10) using P3 basis functions.
+///
+/// Reference element: ξ∈[0,1], η∈[0,1-ξ].  Barycentric: λ1=1-ξ-η, λ2=ξ, λ3=η.
+///
+/// GMSH node ordering (10 nodes):
+///   0:(1,0,0)  1:(0,1,0)  2:(0,0,1)              ← vertices
+///   3:(2/3,1/3,0)  4:(1/3,2/3,0)                 ← edge v0-v1
+///   5:(0,2/3,1/3)  6:(0,1/3,2/3)                 ← edge v1-v2
+///   7:(1/3,0,2/3)  8:(2/3,0,1/3)                 ← edge v0-v2 (reversed)
+///   9:(1/3,1/3,1/3)                               ← interior bubble
+///
+/// P3 basis functions (φ_i as functions of λ1,λ2,λ3):
+///   Vertex: φ_i = ½·λ_i·(3λ_i-1)·(3λ_i-2)
+///   Edge (near v_i): φ = 9/2·λ_i·λ_j·(3λ_i-1)
+///   Interior: φ_9 = 27·λ1·λ2·λ3
+///
+/// 6-point Gauss quadrature (exact for degree ≤ 4) is used.
+fn assemble_tri10(
+    mesh: &rem_mesh::RemMesh,
+    elem: &rem_mesh::Element,
+    eps: f64,
+    triplet: &mut TripletMatrix,
+) -> RemResult<()> {
+    debug_assert_eq!(elem.node_ids.len(), 10);
+    let nids: [usize; 10] = {
+        let n = &elem.node_ids;
+        [n[0],n[1],n[2],n[3],n[4],n[5],n[6],n[7],n[8],n[9]]
+    };
+
+    // Nodal coordinates
+    let xy: [[f64; 2]; 10] = {
+        let mut c = [[0.0f64; 2]; 10];
+        for (i, &n) in nids.iter().enumerate() {
+            c[i] = [mesh.nodes[n].x, mesh.nodes[n].y];
+        }
+        c
+    };
+
+    // 6-point symmetric Gauss rule on reference triangle (degree 4 exact)
+    // Strang & Fix: w1=0.054975, pts at (0.816847,0.091576) permutations × 3
+    //               w2=0.111690, pts at (0.108103,0.445948) permutations × 3
+    let a1 = 0.816847572980459;
+    let b1 = 0.091576213509771;
+    let w1 = 0.054975871827661;
+    let a2 = 0.108103018168070;
+    let b2 = 0.445948490915965;
+    let w2 = 0.111690794839005;
+    let gauss_pts: [[f64; 2]; 6] = [
+        [a1, b1], [b1, a1], [b1, b1],
+        [a2, b2], [b2, a2], [b2, b2],
+    ];
+    let gauss_w: [f64; 6] = [w1,w1,w1, w2,w2,w2];
+
+    let mut ke = [[0.0f64; 10]; 10];
+
+    for (gp_idx, &[xi, eta]) in gauss_pts.iter().enumerate() {
+        let w = gauss_w[gp_idx];
+        let l1 = 1.0 - xi - eta;
+        let l2 = xi;
+        let l3 = eta;
+
+        // P3 basis gradients in reference coords (∂φ/∂ξ, ∂φ/∂η)
+        // λ1 = 1-ξ-η  → ∂l1/∂ξ=-1, ∂l1/∂η=-1
+        // λ2 = ξ      → ∂l2/∂ξ= 1, ∂l2/∂η= 0
+        // λ3 = η      → ∂l3/∂ξ= 0, ∂l3/∂η= 1
+        //
+        // Vertex φ_i = ½·l_i·(3l_i-1)·(3l_i-2)
+        //   dφ_0/dξ = ½·(∂l1/∂ξ)·[(3l1-1)(3l1-2) + l1·3·(3l1-2) + l1·(3l1-1)·3]
+        //            = ½·(-1)·[(3l1-1)(3l1-2) + 3l1(3l1-2) + 3l1(3l1-1)]
+        //            = ½·(-1)·(27l1²-18l1+2)   [vertex, ∂/∂ξ or ∂/∂η with -1 for l1]
+        // For vertex nodes (i=0,1,2) associated with l1,l2,l3:
+        let dv0_common = 0.5 * (27.0*l1*l1 - 18.0*l1 + 2.0);
+        let dv1_common = 0.5 * (27.0*l2*l2 - 18.0*l2 + 2.0);
+        let dv2_common = 0.5 * (27.0*l3*l3 - 18.0*l3 + 2.0);
+
+        // Edge nodes near v0,v1 on edge (l3=0): φ_3 = 4.5·l1·l2·(3l1-1), φ_4 = 4.5·l1·l2·(3l2-1)
+        // φ_3 = 4.5·l1·l2·(3l1-1)
+        //   ∂/∂ξ: 4.5[(-l2)(3l1-1) + l1·l2·(-3) + l1·(3l1-1)]
+        //        = 4.5[(-l2)(3l1-1) + l1·(3l1-1-3l2)]
+        //        = 4.5[(3l1-1)(l1-l2) - 3l1l2]
+        let de3xi  =  4.5 * ((3.0*l1-1.0)*(l1-l2) - 3.0*l1*l2);
+        //   ∂/∂η: 4.5[(-l2)(3l1-1) + l1·(-l2)·(-3) + l1·(-1)(3l1-1)]   — wait
+        //       = 4.5[-l2(3l1-1) + 3l1l2 - l1(3l1-1)] = 4.5[-( l1+l2)(3l1-1) + 3l1l2]
+        //     simpler: ∂l1/∂η=-1, ∂l2/∂η=0
+        //       = 4.5[(-1)·l2·(3l1-1) + l1·l2·3·(-1) + l1·(3l1-1)·0]
+        //       = 4.5·l2·[-(3l1-1) - 3l1] = 4.5·l2·(-6l1+1)
+        let de3eta = -4.5 * l2 * (6.0*l1 - 1.0);
+
+        // φ_4 = 4.5·l1·l2·(3l2-1)
+        //   ∂/∂ξ: 4.5[(-l2)(3l2-1) + l1·(3l2-1) + l1·l2·3]
+        //        = 4.5[(3l2-1)(l1-l2) + 3l1l2]
+        let de4xi  =  4.5 * ((3.0*l2-1.0)*(l1-l2) + 3.0*l1*l2);
+        //   ∂/∂η: 4.5[∂l1/∂η·l2·(3l2-1) + l1·∂l2/∂η·(3l2-1) + l1·l2·3·∂l2/∂η]
+        //       = 4.5[(-1)·l2·(3l2-1) + l1·0 + 0] = -4.5·l2·(3l2-1)
+        let de4eta = -4.5 * l2 * (3.0*l2 - 1.0);
+
+        // Edge nodes near v1,v2 on edge (l1=0): φ_5=4.5l2l3(3l2-1), φ_6=4.5l2l3(3l3-1)
+        // φ_5 = 4.5·l2·l3·(3l2-1)
+        //   ∂/∂ξ: 4.5[l3(3l2-1) + l2·l3·3] = 4.5·l3·(6l2-1)
+        let de5xi  =  4.5 * l3 * (6.0*l2 - 1.0);
+        //   ∂/∂η: 4.5[l2·(3l2-1) + l2·l3·0] = 4.5·l2·(3l2-1)  -- wrong, l3=η
+        //   ∂l3/∂η=1  → ∂φ5/∂η: 4.5[l2·(3l2-1) + 0] = ... wait
+        //   ∂/∂η = 4.5[∂l2/∂η·l3·(3l2-1) + l2·∂l3/∂η·(3l2-1) + l2·l3·3·∂l2/∂η]
+        //         = 4.5[0·l3·(3l2-1) + l2·1·(3l2-1) + 0] = 4.5·l2·(3l2-1)
+        let de5eta =  4.5 * l2 * (3.0*l2 - 1.0);
+
+        // φ_6 = 4.5·l2·l3·(3l3-1)
+        //   ∂/∂ξ: 4.5[l3·(3l3-1) + 0] = 4.5·l3·(3l3-1)  [∂l2/∂ξ=1]
+        let de6xi  =  4.5 * l3 * (3.0*l3 - 1.0);
+        //   ∂/∂η: 4.5[0 + l2·(3l3-1) + l2·l3·3] = 4.5·l2·(6l3-1)
+        let de6eta =  4.5 * l2 * (6.0*l3 - 1.0);
+
+        // Edge nodes near v2,v0 on edge (l2=0): φ_7=4.5l1l3(3l3-1), φ_8=4.5l1l3(3l1-1)
+        // Note in our node ordering: node7 is near v2 (l3-side), node8 is near v0 (l1-side)
+        // φ_7 = 4.5·l1·l3·(3l3-1)
+        //   ∂/∂ξ: 4.5[(-1)·l3·(3l3-1)] = -4.5·l3·(3l3-1)
+        let de7xi  = -4.5 * l3 * (3.0*l3 - 1.0);
+        //   ∂/∂η: 4.5[(-1)·l3·(3l3-1) + l1·(3l3-1) + l1·l3·3]
+        //        = 4.5[(3l3-1)(l1-l3) + 3l1l3]
+        let de7eta =  4.5 * ((3.0*l3-1.0)*(l1-l3) + 3.0*l1*l3);
+
+        // φ_8 = 4.5·l1·l3·(3l1-1)
+        //   ∂/∂ξ: 4.5[(-1)·l3·(3l1-1) + l1·l3·3·(-1)] = -4.5·l3·(6l1-1)
+        let de8xi  = -4.5 * l3 * (6.0*l1 - 1.0);
+        //   ∂/∂η: 4.5[(-1)l3(3l1-1) + l1·(3l1-1) - l1·l3·3]
+        //        = 4.5[(3l1-1)(l1-l3) - 3l1l3]
+        let de8eta =  4.5 * ((3.0*l1-1.0)*(l1-l3) - 3.0*l1*l3);
+
+        // Interior: φ_9 = 27·l1·l2·l3
+        //   ∂/∂ξ: 27[(-1)l2l3 + l1·l3 + 0] = 27·l3·(l1-l2)
+        let de9xi  = 27.0 * l3 * (l1 - l2);
+        //   ∂/∂η: 27[(-1)l2l3 + 0 + l1·l2] = 27·l2·(l1-l3)
+        let de9eta = 27.0 * l2 * (l1 - l3);
+
+        let dndxi: [f64; 10] = [
+            -dv0_common, dv1_common, 0.0,        // vertices
+            de3xi, de4xi,                         // edge 0-1
+            de5xi, de6xi,                         // edge 1-2
+            de7xi, de8xi,                         // edge 0-2
+            de9xi,                                // interior
+        ];
+        let dndeta: [f64; 10] = [
+            -dv0_common, 0.0, dv2_common,        // vertices
+            de3eta, de4eta,                       // edge 0-1
+            de5eta, de6eta,                       // edge 1-2
+            de7eta, de8eta,                       // edge 0-2
+            de9eta,                               // interior
+        ];
+
+        // Jacobian
+        let mut jac = [[0.0f64; 2]; 2];
+        for i in 0..10 {
+            jac[0][0] += dndxi[i]  * xy[i][0];
+            jac[0][1] += dndeta[i] * xy[i][0];
+            jac[1][0] += dndxi[i]  * xy[i][1];
+            jac[1][1] += dndeta[i] * xy[i][1];
+        }
+        let det_j = jac[0][0] * jac[1][1] - jac[0][1] * jac[1][0];
+        if det_j.abs() < 1e-300 { continue; }
+
+        let inv_det = 1.0 / det_j;
+        let ji = [
+            [ jac[1][1] * inv_det, -jac[0][1] * inv_det],
+            [-jac[1][0] * inv_det,  jac[0][0] * inv_det],
+        ];
+
+        let mut grad = [[0.0f64; 2]; 10];
+        for i in 0..10 {
+            grad[i][0] = ji[0][0] * dndxi[i] + ji[1][0] * dndeta[i];
+            grad[i][1] = ji[0][1] * dndxi[i] + ji[1][1] * dndeta[i];
+        }
+
+        let wdet = eps * w * det_j.abs();
+        for i in 0..10 {
+            for j in 0..10 {
+                ke[i][j] += wdet * (grad[i][0]*grad[j][0] + grad[i][1]*grad[j][1]);
+            }
+        }
+    }
+
+    for i in 0..10 {
+        for j in 0..10 {
             triplet.add(nids[i], nids[j], ke[i][j]);
         }
     }
@@ -1122,6 +1317,92 @@ pub mod tests {
                 .find(|&k| csr.col_idx[k] == i)
                 .map(|k| csr.values[k]).unwrap_or(0.0);
             assert!(kii > 0.0, "Tri6 diagonal K[{},{}] = {:.4e} not positive", i, i, kii);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Tri10 (P3) tests
+    // -------------------------------------------------------------------------
+
+    /// Reference Tri10 element: unit right triangle in x-y plane.
+    ///
+    /// GMSH node ordering for Tri10:
+    ///   0:(0,0)  1:(1,0)  2:(0,1)                  ← vertices
+    ///   3:(1/3,0) 4:(2/3,0)                         ← edge v0-v1, near v0 then near v1
+    ///   5:(2/3,1/3) 6:(1/3,2/3)                     ← edge v1-v2, near v1 then near v2
+    ///   7:(0,2/3) 8:(0,1/3)                          ← edge v0-v2 (reversed), near v2 then near v0
+    ///   9:(1/3,1/3)                                  ← interior centroid
+    fn unit_tri10_mesh() -> RemMesh {
+        use rem_mesh::{Node, Element};
+        RemMesh {
+            nodes: vec![
+                Node { id: 0, x: 0.0,       y: 0.0,       z: 0.0 }, // v0
+                Node { id: 1, x: 1.0,       y: 0.0,       z: 0.0 }, // v1
+                Node { id: 2, x: 0.0,       y: 1.0,       z: 0.0 }, // v2
+                Node { id: 3, x: 1.0/3.0,  y: 0.0,       z: 0.0 }, // edge v0-v1, near v0
+                Node { id: 4, x: 2.0/3.0,  y: 0.0,       z: 0.0 }, // edge v0-v1, near v1
+                Node { id: 5, x: 2.0/3.0,  y: 1.0/3.0,  z: 0.0 }, // edge v1-v2, near v1
+                Node { id: 6, x: 1.0/3.0,  y: 2.0/3.0,  z: 0.0 }, // edge v1-v2, near v2
+                Node { id: 7, x: 0.0,       y: 2.0/3.0,  z: 0.0 }, // edge v0-v2, near v2
+                Node { id: 8, x: 0.0,       y: 1.0/3.0,  z: 0.0 }, // edge v0-v2, near v0
+                Node { id: 9, x: 1.0/3.0,  y: 1.0/3.0,  z: 0.0 }, // interior
+            ],
+            volume_elements: vec![
+                Element { id: 1, kind: ElementKind::Tri10, tag: 1,
+                    node_ids: vec![0,1,2,3,4,5,6,7,8,9], rank: 0 },
+            ],
+            boundary_elements: vec![],
+            domain_tags: Default::default(),
+            boundary_tags: Default::default(),
+            dim: 2, rank: 0, size: 1,
+        }
+    }
+
+    /// K·1 = 0: stiffness row sums must vanish (Neumann consistency).
+    #[test]
+    fn tri10_stiffness_row_sum_zero() {
+        let mesh = unit_tri10_mesh();
+        let triplet = assemble_stiffness(&mesh, |_| 1.0).unwrap();
+        let csr = triplet.to_csr();
+        let n = mesh.n_nodes();
+        let x = vec![1.0; n];
+        let mut y = vec![0.0; n];
+        csr.matvec(&x, &mut y, &rem_parallel::NoComm);
+        for (i, &yi) in y.iter().enumerate() {
+            assert!(yi.abs() < 1e-10, "Tri10 row {} sum = {:.3e}", i, yi);
+        }
+    }
+
+    /// K must be symmetric: K[i,j] == K[j,i].
+    #[test]
+    fn tri10_stiffness_symmetry() {
+        let mesh = unit_tri10_mesh();
+        let csr = assemble_stiffness(&mesh, |_| 1.0).unwrap().to_csr();
+        let n = csr.nrows;
+        for i in 0..n {
+            for k in csr.row_ptr[i]..csr.row_ptr[i+1] {
+                let j = csr.col_idx[k];
+                let kij = csr.values[k];
+                let kji = (csr.row_ptr[j]..csr.row_ptr[j+1])
+                    .find(|&kk| csr.col_idx[kk] == i)
+                    .map(|kk| csr.values[kk]).unwrap_or(0.0);
+                assert!((kij - kji).abs() < 1e-12,
+                    "Tri10 K[{},{}]={:.4e} != K[{},{}]={:.4e}", i, j, kij, j, i, kji);
+            }
+        }
+    }
+
+    /// All diagonal entries must be strictly positive.
+    #[test]
+    fn tri10_stiffness_positive_diagonal() {
+        let mesh = unit_tri10_mesh();
+        let csr = assemble_stiffness(&mesh, |_| 1.0).unwrap().to_csr();
+        let n = csr.nrows;
+        for i in 0..n {
+            let kii = (csr.row_ptr[i]..csr.row_ptr[i+1])
+                .find(|&k| csr.col_idx[k] == i)
+                .map(|k| csr.values[k]).unwrap_or(0.0);
+            assert!(kii > 0.0, "Tri10 diagonal K[{},{}] = {:.4e} not positive", i, i, kii);
         }
     }
 }

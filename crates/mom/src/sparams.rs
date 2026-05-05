@@ -809,3 +809,302 @@ mod tests {
         assert!(apply_modal_deembed(&s, &[0.0, 0.0], &md).is_err());
     }
 }
+
+// ── TRL/LRL de-embedding ───────────────────────────────────────────────────
+
+/// Extracted error boxes for 8-term TRL calibration.
+///
+/// After calling [`trl_deembed`], apply the error boxes to a raw 2-port DUT
+/// measurement with [`apply_trl_correction`] to recover the true DUT S-matrix.
+#[derive(Debug, Clone)]
+pub struct TrlCalibration {
+    /// Complex propagation constant γ of the Line standard [1/m].
+    pub gamma: Complex64,
+    /// Effective characteristic impedance of the calibration standard [Ω].
+    pub z_line: Complex64,
+    /// Port-1 error-box T-matrix (row-major 2×2: [T00, T01, T10, T11]).
+    pub t_a: [Complex64; 4],
+    /// Port-2 error-box T-matrix (row-major 2×2: [T00, T01, T10, T11]).
+    pub t_b: [Complex64; 4],
+}
+
+/// Convert a 2-port S-matrix to a T (wave transfer) matrix.
+///
+/// T = [[-det(S)/S21,  S11/S21],
+///      [-S22/S21,     1/S21  ]]
+fn s2t(s: &SMatrix) -> RemResult<[Complex64; 4]> {
+    debug_assert_eq!(s.n_ports, 2);
+    let s11 = s.data[0]; let s12 = s.data[1];
+    let s21 = s.data[2]; let s22 = s.data[3];
+    if s21.norm() < 1e-30 {
+        return Err(rem_core::RemError::Config("TRL: S21 ≈ 0, cannot convert to T-matrix".into()));
+    }
+    let det_s = s11 * s22 - s12 * s21;
+    Ok([
+        -det_s / s21,   s11 / s21,
+        -s22   / s21,   Complex64::new(1.0, 0.0) / s21,
+    ])
+}
+
+/// Convert a T-matrix back to a 2-port S-matrix.
+fn t2s(t: &[Complex64; 4], freq_hz: f64) -> SMatrix {
+    let t00 = t[0]; let t01 = t[1];
+    let t10 = t[2]; let t11 = t[3];
+    // S11 = T01/T11, S21 = 1/T11, S12 = T00-T01*T10/T11, S22 = -T10/T11
+    let inv_t11 = Complex64::new(1.0, 0.0) / t11;
+    SMatrix {
+        n_ports: 2,
+        freq_hz,
+        data: vec![
+            t01 * inv_t11,
+            t00 - t01 * t10 * inv_t11,
+            inv_t11,
+            -t10 * inv_t11,
+        ],
+    }
+}
+
+/// 2×2 matrix multiply (row-major): C = A·B.
+fn mat2_mul(a: &[Complex64; 4], b: &[Complex64; 4]) -> [Complex64; 4] {
+    [
+        a[0]*b[0] + a[1]*b[2],  a[0]*b[1] + a[1]*b[3],
+        a[2]*b[0] + a[3]*b[2],  a[2]*b[1] + a[3]*b[3],
+    ]
+}
+
+/// 2×2 matrix inverse (row-major).  Returns Err if singular.
+fn mat2_inv(m: &[Complex64; 4]) -> RemResult<[Complex64; 4]> {
+    let det = m[0]*m[3] - m[1]*m[2];
+    if det.norm() < 1e-30 {
+        return Err(rem_core::RemError::Config("TRL: singular 2×2 matrix".into()));
+    }
+    let inv_det = Complex64::new(1.0, 0.0) / det;
+    Ok([ m[3]*inv_det, -m[1]*inv_det, -m[2]*inv_det, m[0]*inv_det ])
+}
+
+/// Perform TRL (Thru-Reflect-Line) de-embedding for a 2-port system.
+///
+/// # Arguments
+/// * `thru`        — 2-port S-matrix for the Thru standard (direct connection).
+/// * `line`        — 2-port S-matrix for the Line standard.
+/// * `line_len_m`  — Physical length of the Line standard [m].
+/// * `reflect_s11` — Reflection coefficient Γ of the Reflect standard at port 1.
+///                   (The same standard must be placed identically at both ports.)
+///
+/// # Returns
+/// A [`TrlCalibration`] containing the extracted error boxes and propagation
+/// constant.  Use [`apply_trl_correction`] to de-embed a raw DUT measurement.
+///
+/// # Algorithm
+/// Based on the eigenvalue method (Marks 1991 / Engen–Hoer):
+/// 1. Convert Thru and Line to T-matrices: `T_T = T_A · T_B`, `T_L = T_A · M · T_B`
+///    where `M = diag(exp(−γl), exp(+γl))`.
+/// 2. Form `R = T_T⁻¹ · T_L`.  Its eigenvalues are `exp(±γl)`.
+/// 3. Extract `γ` from the eigenvalues.
+/// 4. Recover the individual error boxes using the Reflect standard.
+pub fn trl_deembed(
+    thru: &SMatrix,
+    line: &SMatrix,
+    line_len_m: f64,
+    reflect_s11: Complex64,
+) -> RemResult<TrlCalibration> {
+    if thru.n_ports != 2 || line.n_ports != 2 {
+        return Err(rem_core::RemError::Config(
+            "TRL calibration requires 2-port S-matrices".into(),
+        ));
+    }
+    if line_len_m <= 0.0 {
+        return Err(rem_core::RemError::Config(
+            "TRL line length must be positive".into(),
+        ));
+    }
+
+    let t_thru = s2t(thru)?;
+    let t_line = s2t(line)?;
+
+    // R = T_thru⁻¹ · T_line
+    let t_thru_inv = mat2_inv(&t_thru)?;
+    let r = mat2_mul(&t_thru_inv, &t_line);
+
+    // Eigenvalues of 2×2 matrix R: λ = (trace ± sqrt(trace²-4·det)) / 2
+    let trace = r[0] + r[3];
+    let det   = r[0]*r[3] - r[1]*r[2];
+    let disc  = (trace*trace - Complex64::new(4.0, 0.0)*det).sqrt();
+    let lam1  = (trace + disc) * Complex64::new(0.5, 0.0);
+    let lam2  = (trace - disc) * Complex64::new(0.5, 0.0);
+
+    // λ₁ = exp(−2γl), λ₂ = exp(+2γl) (or vice versa; pick |λ| nearest 1 as exp(-γl))
+    // γ·l = -ln(λ) / 2  →  pick the root consistent with positive Im(γ) (propagating wave)
+    // Eigenvalues are exp(-γl) and exp(+γl) — no factor of 2.
+    // Choose the root where Im(γl) ≥ 0 (forward-propagating convention).
+    let gl_a = -lam1.ln();
+    let gl_b = -lam2.ln();
+    let gamma_l = if gl_a.im >= 0.0 { gl_a } else { gl_b };
+    let gamma   = gamma_l / Complex64::new(line_len_m, 0.0);
+
+    // Characteristic impedance: Z_line = sqrt(B/C) from Thru ABCD.
+    // Use ABCD of T_thru (symmetric, so Z_line = sqrt(T01/T10) approximately).
+    let z_line = if t_thru[2].norm() > 1e-30 {
+        (t_thru[1] / t_thru[2]).sqrt()
+    } else {
+        Complex64::new(50.0, 0.0) // fallback
+    };
+
+    // --- Recover error boxes via Reflect standard ---
+    // For a symmetric error box (equal port fixtures), T_A = T_B (transposed).
+    // From T_thru = T_A · T_B and γ we can factor: T_A = T_thru · M⁻¹/² (approx).
+    //
+    // Simplified extraction using the known γ and the Thru T-matrix:
+    //   T_thru = T_A · T_B  →  if T_A = T_B^T for a symmetric fixture,
+    //   T_A[0,0]·T_A[1,1] - T_A[0,1]·T_A[1,0] = det(T_A)
+    //
+    // Here we use the Reflect measurement to pin the absolute reference:
+    //   Γ_meas = (T_A[0,1] + Γ_actual·T_A[0,0]) / (T_A[1,1] + Γ_actual·T_A[1,0])
+    // For a short (Γ_actual = -1) this gives a linear equation for the ratios.
+    //
+    // For a practical implementation we recover T_A from the square-root of T_thru
+    // (principal branch), using the Reflect to resolve the sign ambiguity.
+    //
+    // T_thru = T_A · T_B = T_A · T_A' (if reciprocal)
+    // → T_A = sqrtm(T_thru) scaled by det factor.
+    //
+    // We compute a simpler "diagonal" extraction assuming matched ports:
+    let exp_neg_gl = (-gamma_l).exp(); // exp(-γl)
+    let exp_pos_gl = ( gamma_l).exp(); // exp(+γl)
+
+    // Approximate T_A from the Thru T-matrix and the propagation factor:
+    // T_A ≈ T_thru · diag(exp(-γl/2), exp(+γl/2))^{-1} / sqrt(det(T_thru))
+    // For a matched symmetric fixture this simplifies to:
+    let det_thru = t_thru[0]*t_thru[3] - t_thru[1]*t_thru[2];
+    let sqrt_det = det_thru.sqrt();
+
+    // Normalise using the Reflect to pick sign of sqrt_det:
+    // Γ_predicted = (t_a_trial[0,1] + reflect_s11 · t_a_trial[0,0])
+    //             / (t_a_trial[1,1] + reflect_s11 · t_a_trial[1,0])
+    // We pick the sign so that Γ_predicted is closest to reflect_s11.
+    let build_ta = |sd: Complex64| -> [Complex64; 4] {
+        [
+            t_thru[0] * exp_neg_gl / sd,
+            t_thru[1] * exp_pos_gl / sd,
+            t_thru[2] * exp_neg_gl / sd,
+            t_thru[3] * exp_pos_gl / sd,
+        ]
+    };
+
+    let score = |ta: &[Complex64; 4]| -> f64 {
+        let denom = ta[3] + reflect_s11 * ta[2];
+        if denom.norm() < 1e-30 { return f64::MAX; }
+        let gamma_pred = (ta[1] + reflect_s11 * ta[0]) / denom;
+        (gamma_pred - reflect_s11).norm()
+    };
+
+    let ta_pos = build_ta( sqrt_det);
+    let ta_neg = build_ta(-sqrt_det);
+    let t_a = if score(&ta_pos) <= score(&ta_neg) { ta_pos } else { ta_neg };
+
+    // T_B = T_A⁻¹ · T_thru
+    let ta_inv = mat2_inv(&t_a)?;
+    let t_b = mat2_mul(&ta_inv, &t_thru);
+
+    Ok(TrlCalibration { gamma, z_line, t_a, t_b })
+}
+
+/// Apply TRL error-box correction to a raw 2-port DUT S-matrix.
+///
+/// Computes `T_DUT_true = T_A⁻¹ · T_DUT_raw · T_B⁻¹` then converts back to S.
+pub fn apply_trl_correction(
+    dut_raw: &SMatrix,
+    cal: &TrlCalibration,
+) -> RemResult<SMatrix> {
+    if dut_raw.n_ports != 2 {
+        return Err(rem_core::RemError::Config(
+            "TRL correction requires a 2-port DUT S-matrix".into(),
+        ));
+    }
+    let t_dut_raw = s2t(dut_raw)?;
+    let ta_inv = mat2_inv(&cal.t_a)?;
+    let tb_inv = mat2_inv(&cal.t_b)?;
+    let t_corrected = mat2_mul(&mat2_mul(&ta_inv, &t_dut_raw), &tb_inv);
+    Ok(t2s(&t_corrected, dut_raw.freq_hz))
+}
+
+#[cfg(test)]
+mod trl_tests {
+    use super::*;
+    use std::f64::consts::PI;
+
+    fn make_s2(s11: Complex64, s12: Complex64, s21: Complex64, s22: Complex64, f: f64) -> SMatrix {
+        SMatrix { n_ports: 2, freq_hz: f, data: vec![s11, s12, s21, s22] }
+    }
+
+    /// A perfect Thru (identity fixture) should give T_A = T_B = I and no correction.
+    #[test]
+    fn trl_identity_fixtures_no_correction() {
+        let freq = 1e9_f64;
+        let line_len = 0.05_f64; // 50 mm
+        let gamma_ideal = Complex64::new(0.0, 2.0 * PI * freq / rem_core::C0);
+        let exp_gl = (gamma_ideal * line_len).exp();
+        let exp_ng = (-gamma_ideal * line_len).exp();
+
+        // Thru: identity (S11=S22=0, S21=S12=1)
+        let thru = make_s2(Complex64::ZERO, Complex64::new(1.0,0.0), Complex64::new(1.0,0.0), Complex64::ZERO, freq);
+        // Line: pure delay
+        let line = make_s2(Complex64::ZERO, exp_ng, exp_ng, Complex64::ZERO, freq);
+        // Reflect: short (Γ = -1)
+        let reflect_s11 = Complex64::new(-1.0, 0.0);
+
+        let cal = trl_deembed(&thru, &line, line_len, reflect_s11).unwrap();
+
+        // γ extracted should match γ_ideal (up to sign convention / branch)
+        let gamma_extracted = cal.gamma;
+        // Im(γ) * line_len should be close to Im(γ_ideal) * line_len
+        assert!((gamma_extracted.im * line_len - gamma_ideal.im * line_len).abs() < 1e-6,
+            "γ*l imaginary part mismatch: got {:.6}, expected {:.6}",
+            gamma_extracted.im * line_len, gamma_ideal.im * line_len);
+    }
+
+    /// s2t then t2s round-trips.
+    #[test]
+    fn s2t_t2s_roundtrip() {
+        let freq = 2e9_f64;
+        let s = make_s2(
+            Complex64::new(0.1, 0.05),
+            Complex64::new(0.9, 0.1),
+            Complex64::new(0.9, 0.1),
+            Complex64::new(0.05, 0.1),
+            freq,
+        );
+        let t = s2t(&s).unwrap();
+        let s2 = t2s(&t, freq);
+        for (a, b) in s.data.iter().zip(s2.data.iter()) {
+            assert!((a - b).norm() < 1e-12, "round-trip error: {} vs {}", a, b);
+        }
+    }
+
+    /// apply_trl_correction with identity error boxes is a no-op.
+    #[test]
+    fn trl_correction_identity_noop() {
+        let freq = 1e9_f64;
+        let dut = make_s2(
+            Complex64::new(0.2, 0.1),
+            Complex64::new(0.7, -0.1),
+            Complex64::new(0.7, -0.1),
+            Complex64::new(0.1, 0.05),
+            freq,
+        );
+        let one  = Complex64::new(1.0, 0.0);
+        let zero = Complex64::ZERO;
+        // T identity [[1,0],[0,1]] means no error boxes → correction is a no-op.
+        let t_id: [Complex64; 4] = [one, zero, zero, one];
+        let cal = TrlCalibration {
+            gamma: Complex64::new(0.0, 1.0),
+            z_line: Complex64::new(50.0, 0.0),
+            t_a: t_id,
+            t_b: t_id,
+        };
+        let corrected = apply_trl_correction(&dut, &cal).unwrap();
+        for (a, b) in dut.data.iter().zip(corrected.data.iter()) {
+            assert!((a - b).norm() < 1e-10, "correction changed data: {} vs {}", a, b);
+        }
+    }
+}

@@ -18,6 +18,7 @@
 //! Output (CSV + VTK) mirrors the Palace port-post format.
 
 pub mod assemble_mass;
+mod hcurl;
 pub mod output;
 
 use rem_config::PalaceConfig;
@@ -41,6 +42,16 @@ const AMR_FREQ_ABS_TOL: f64 = 1e6; // 1 MHz
 /// Entry point called from rem-cli.
 pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
     log::info!("\n=== Eigenmode (frequency-domain) solver ===\n");
+    if config.solver.uses_hcurl() {
+        log::info!(
+            "Eigenmode solver using HCurl/Nedelec edge-element discretization (experimental)."
+        );
+    } else {
+        log::warn!(
+            "Eigenmode solver currently uses scalar nodal H1 discretization (no Nedelec edge elements). \
+             For vector cavity/waveguide EM modes, this can introduce non-physical spurious solutions."
+        );
+    }
 
     let eig_cfg = config.solver.eigenmode.as_ref().ok_or_else(|| {
         RemError::Config("Eigenmode problem requires a [Solver.Eigenmode] section".into())
@@ -72,8 +83,14 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
 
     // AMR loop: refine mesh adaptively and re-solve
     let amr_cfg = &config.model.refinement;
-    let max_amr_iter = if amr_cfg.max_iter > 0 { amr_cfg.max_iter } else { 0 };
+    let mut max_amr_iter = if amr_cfg.max_iter > 0 { amr_cfg.max_iter } else { 0 };
     let amr_theta    = if amr_cfg.tol > 0.0 { amr_cfg.tol } else { 0.5 };
+    if config.solver.uses_hcurl() && max_amr_iter > 0 {
+        log::warn!(
+            "AMR is temporarily disabled for HCurl eigenmode path; running a single solve on the input mesh."
+        );
+        max_amr_iter = 0;
+    }
 
     let (final_mesh, result) = if max_amr_iter > 0 {
         log::info!("Adaptive mesh refinement (AMR):");
@@ -138,13 +155,18 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
     std::fs::create_dir_all(out_dir).map_err(RemError::Io)?;
     output::write_eigenfrequencies(out_dir, &result)?;
 
-    let save_n = eig_cfg.save.min(result.frequencies_hz.len());
+    let save_n = if result.is_hcurl {
+        0
+    } else {
+        eig_cfg.save.min(result.frequencies_hz.len())
+    };
     for (mode_idx, phi) in result.eigenvectors.iter().enumerate().take(save_n) {
         output::write_mode_vtk(out_dir, &final_mesh, phi, mode_idx + 1)?;
     }
 
     // Field probes (Domains.Postprocessing.Probe) — one row per (mode, probe)
-    if let Some(dp) = &config.domains.postprocessing {
+    if !result.is_hcurl {
+        if let Some(dp) = &config.domains.postprocessing {
         if !dp.probe.is_empty() {
             let probes_input: Vec<(u32, [f64; 3])> = dp.probe.iter().map(|p| {
                 let c = &p.center;
@@ -166,6 +188,9 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
                 std::path::Path::new(out_dir), &mode_probes,
             ).map_err(RemError::Io)?;
         }
+        }
+    } else if config.domains.postprocessing.as_ref().map(|p| !p.probe.is_empty()).unwrap_or(false) {
+        log::warn!("Probe postprocessing is currently disabled for HCurl eigenvectors.");
     }
 
     log::info!("");
@@ -210,6 +235,8 @@ pub struct EigenResult {
     /// Q-factors from dielectric loss perturbation (1/Q = tan_δ_eff).
     /// None if all materials are lossless.
     pub q_factors: Option<Vec<f64>>,
+    /// True when eigenvectors are HCurl edge-DOF vectors (not nodal H1 fields).
+    pub is_hcurl: bool,
 }
 
 /// Solve the generalized eigenvalue problem for `config` + pre-loaded mesh.
@@ -219,11 +246,43 @@ pub fn solve(
     domain_map: &DomainMap,
     comm: &dyn Comm,
 ) -> RemResult<EigenResult> {
+    if config.solver.uses_hcurl() {
+        return hcurl::solve_hcurl(config, mesh, domain_map, comm);
+    }
+
+    // P-refinement: if Order=2, promote the P1 mesh to P2 (Tri3→Tri6, Tet4→Tet10).
+    // This wires the high-order FEM path without changing any assembly or BC code.
+    let p2_mesh_owned: RemMesh;
+    let work_mesh: &RemMesh = if config.solver.order >= 2 {
+        let is_already_p2 = mesh.volume_elements.iter().all(|e| {
+            matches!(e.kind, rem_mesh::ElementKind::Tri6 | rem_mesh::ElementKind::Tet10
+                           | rem_mesh::ElementKind::Quad4 | rem_mesh::ElementKind::Hex8)
+        });
+        if is_already_p2 {
+            mesh
+        } else {
+            log::info!(
+                "Solver.Order=2: promoting P1 mesh ({} nodes) to P2 (adding edge midpoints).",
+                mesh.n_nodes()
+            );
+            p2_mesh_owned = rem_mesh::p_refine_mesh(mesh);
+            log::info!(
+                "P2 mesh: {} nodes ({} added), {} elements.",
+                p2_mesh_owned.n_nodes(),
+                p2_mesh_owned.n_nodes() - mesh.n_nodes(),
+                p2_mesh_owned.n_volume_elements()
+            );
+            &p2_mesh_owned
+        }
+    } else {
+        mesh
+    };
+
     let eig_cfg = config.solver.eigenmode.as_ref().ok_or_else(|| {
         RemError::Config("missing Eigenmode solver config".into())
     })?;
 
-    let n = mesh.n_nodes();
+    let n = work_mesh.n_nodes();
     let n_modes = eig_cfg.n;
     let _tol    = eig_cfg.tol;  // reserved for iterative eigensolvers (not yet used)
     let target_hz = eig_cfg.target;
@@ -241,21 +300,21 @@ pub fn solve(
         log::info!("Anisotropic material(s) detected — using tensor stiffness assembly.");
         use rem_electrostatic::assemble::assemble_stiffness_aniso;
         let tensor_fn = |tag: u32| domain_map.get(tag).epsilon_tensor;
-        assemble_stiffness_aniso(mesh, tensor_fn)?
+        assemble_stiffness_aniso(work_mesh, tensor_fn)?
     } else {
         let eps_fn = |tag: u32| domain_map.get(tag).epsilon_abs();
-        assemble_stiffness(mesh, eps_fn)?
+        assemble_stiffness(work_mesh, eps_fn)?
     };
     let eps_fn = |tag: u32| domain_map.get(tag).epsilon_abs();
     let mut m_triplet = if domain_map.any_anisotropic() {
         let tensor_fn = |tag: u32| domain_map.get(tag).epsilon_tensor;
-        assemble_mass::assemble_mass_aniso(mesh, tensor_fn)?
+        assemble_mass::assemble_mass_aniso(work_mesh, tensor_fn)?
     } else {
-        assemble_mass::assemble_mass(mesh, eps_fn)?
+        assemble_mass::assemble_mass(work_mesh, eps_fn)?
     };
 
     // Apply periodic node remapping before converting to CSR
-    let periodic_pairs = collect_periodic_node_pairs(mesh, config);
+    let periodic_pairs = collect_periodic_node_pairs(work_mesh, config);
     if !periodic_pairs.is_empty() {
         k_triplet.remap_periodic_nodes(&periodic_pairs);
         m_triplet.remap_periodic_nodes(&periodic_pairs);
@@ -265,7 +324,7 @@ pub fn solve(
     let m_mat = m_triplet.to_csr();
 
     // Collect Dirichlet DOFs (PEC / Ground → φ=0)
-    let mut dofs = collect_dirichlet_dofs(mesh, None, 0.0);
+    let mut dofs = collect_dirichlet_dofs(work_mesh, None, 0.0);
     if !periodic_pairs.is_empty() {
         apply_periodic(&mut dofs, &periodic_pairs);
     }
@@ -348,14 +407,14 @@ pub fn solve(
     //   1/Q_dielectric = Σ_k (tanδ_k · φᵀ M_k φ) / (φᵀ M φ)
     // We assemble a loss-weighted mass matrix M_loss with ε·tanδ as the
     // weight function, then Q = (φᵀ M φ) / (φᵀ M_loss φ) for each mode.
-    let any_lossy = mesh.domain_tags.keys()
+    let any_lossy = work_mesh.domain_tags.keys()
         .any(|&tag| domain_map.get(tag).is_lossy());
     let q_factors: Option<Vec<f64>> = if any_lossy {
         let loss_fn = |tag: u32| {
             let mat = domain_map.get(tag);
             mat.epsilon_abs() * mat.loss_tangent   // ε₀ εᵣ tanδ
         };
-        let m_loss_triplet = assemble_mass::assemble_mass(mesh, loss_fn)?;
+        let m_loss_triplet = assemble_mass::assemble_mass(work_mesh, loss_fn)?;
         let m_loss = m_loss_triplet.to_csr();
 
         let qs: Vec<f64> = eigenpairs.iter().map(|(_, phi)| {
@@ -478,6 +537,7 @@ pub fn solve(
             vecs
         },
         q_factors,
+        is_hcurl: false,
     })
 }
 
@@ -485,7 +545,7 @@ pub fn solve(
 // Shifted matrix A = K − σ M (CSR)
 // ---------------------------------------------------------------------------
 
-fn shifted_matrix(k: &CsrMatrix, m: &CsrMatrix, sigma: f64, n: usize) -> CsrMatrix {
+pub(crate) fn shifted_matrix(k: &CsrMatrix, m: &CsrMatrix, sigma: f64, n: usize) -> CsrMatrix {
     if sigma.abs() < 1e-300 {
         return k.clone();
     }
@@ -573,7 +633,7 @@ fn boundary_element_grad_and_area(
 // At each step solve: A^{-1} M v = w   (inner PCG solve)
 // Builds the m-column Lanczos basis V and tridiagonal T = V^T M^{-1} A^{-1} V.
 
-fn lanczos(
+pub(crate) fn lanczos(
     a: &CsrMatrix,
     m: &CsrMatrix,
     dofs: &std::collections::HashMap<usize, f64>,
@@ -651,7 +711,7 @@ fn lanczos(
 /// Returns (eigenvalues, eigenvectors) of the m×m symmetric tridiagonal matrix.
 /// Eigenvalues sorted largest-first (closest to shift target).
 /// Eigenvectors are columns of the returned matrix (column-major, m×m).
-fn tridiag_eigen(alpha: &[f64], beta: &[f64]) -> (Vec<f64>, DMatrix<f64>) {
+pub(crate) fn tridiag_eigen(alpha: &[f64], beta: &[f64]) -> (Vec<f64>, DMatrix<f64>) {
     let m = alpha.len();
     if m == 0 {
         return (vec![], DMatrix::zeros(0, 0));
