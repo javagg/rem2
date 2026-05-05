@@ -377,14 +377,19 @@ fn build_substrate_json(meta: &Value) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     fn unique_temp_dir() -> PathBuf {
         let ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock should be monotonic")
             .as_nanos();
-        let p = std::env::temp_dir().join(format!("rem_ansys_convert_test_{}", ts));
+        let count = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let tid = std::thread::current().id();
+        let p = std::env::temp_dir().join(format!("rem_ansys_convert_test_{}_{}_{:?}", ts, count, tid));
         std::fs::create_dir_all(&p).expect("temp dir should be created");
         p
     }

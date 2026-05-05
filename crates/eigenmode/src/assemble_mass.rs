@@ -99,6 +99,7 @@ fn mass_tet4(
 }
 
 /// Use first 4 (corner) nodes of a Tet10 element for P1 approximation.
+#[allow(dead_code)]
 fn mass_tet4_corners(
     mesh: &RemMesh,
     elem: &rem_mesh::Element,

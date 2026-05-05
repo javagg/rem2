@@ -12,8 +12,8 @@
 //!                         refine_surface(surf, marked)  →  SurfaceMesh
 //! ```
 
-use crate::basis::rwg::{RwgBasis, generate_rwg_bases};
-use crate::surface_mesh::{SurfaceMesh, TriFace, SharedEdge, tri_geometry, patch_edge_lengths, build_edge_topology};
+use crate::basis::rwg::{RwgBasis};
+use crate::surface_mesh::{SurfaceMesh, TriFace, tri_geometry};
 use num_complex::Complex64;
 use std::collections::HashMap;
 
@@ -102,7 +102,7 @@ pub fn refine_surface(surf: &SurfaceMesh, marked: &[bool]) -> SurfaceMesh {
     // Midpoint cache: edge (min, max) → new node index
     let mut midpoint_cache: HashMap<(usize, usize), usize> = HashMap::new();
 
-    let mut get_or_create_midpoint =
+    let get_or_create_midpoint =
         |n0: usize, n1: usize,
          nodes: &mut Vec<[f64; 3]>,
          gids: &mut Vec<usize>,

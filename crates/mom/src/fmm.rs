@@ -71,6 +71,7 @@ struct NearMonopole {
 ///
 /// Implements `LinearOperator<Complex64>` for use with GMRES.
 /// Build via [`FmmMomSolver::build`].
+#[allow(dead_code)]
 pub struct FmmMomSolver {
     // ── Grid ─────────────────────────────────────────────────────────────
     nx: usize,

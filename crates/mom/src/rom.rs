@@ -120,7 +120,7 @@ impl MomRom {
     /// Z_r = V^H Z V
     pub fn project_system(&self, z_full: &DMatrix<Complex64>) -> DMatrix<Complex64> {
         // Z_r = V^H * Z * V  where V is N×r
-        let vt = self.basis.conjugate_transpose();
+        let vt = self.basis.adjoint();
         &vt * z_full * &self.basis
     }
 

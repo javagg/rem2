@@ -40,7 +40,7 @@ pub fn run_optimize(config: &PalaceConfig, par_cfg: &ParametricConfig) -> RemRes
     let output_dir = std::path::Path::new(config.problem.output_dir());
     std::fs::create_dir_all(output_dir)?;
 
-    let n = par_cfg.parameters.len();
+    let _n = par_cfg.parameters.len();
     let bounds: Vec<Option<[f64; 2]>> = par_cfg.parameters.iter().map(|p| p.bounds).collect();
 
     // Build initial simplex from `initial` values (falling back to midpoint of bounds or 1.0).

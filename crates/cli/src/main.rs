@@ -5,6 +5,7 @@ use rem_convert::{convert_project_to_rem, ProjectFormat, Sonnet19Overrides};
 use rem_parallel::{NoComm, WorldComm, Comm};
 use std::path::PathBuf;
 
+#[allow(dead_code)]
 mod output;
 
 #[derive(Debug, Clone, Copy, ValueEnum)]

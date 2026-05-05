@@ -1151,7 +1151,6 @@ mod tests_csr_complex {
 
     #[test]
     fn csr_complex_implements_linear_operator() {
-        use crate::operator::LinearOperator;
 
         let mut mat = CsrMatrixComplex::new(3, 3);
         mat.row_ptr = vec![0, 1, 2, 3];
@@ -1178,7 +1177,6 @@ mod tests_csr_complex {
     }
 
     #[test]
-    #[ignore] // TODO: Fix convergence for normal equations
     fn solve_pcg_complex_diagonal() {
         // Test on a simple diagonal system: diag(1, 2, 3) * x = (1, 2, 3)
         // Solution: x = (1, 1, 1)
@@ -1207,7 +1205,6 @@ mod tests_csr_complex {
     }
 
     #[test]
-    #[ignore] // TODO: Fix convergence for normal equations
     fn solve_pcg_complex_helmholtz_2x2() {
         // Minimal Helmholtz-like system: -Δu - k²u = f on unit interval
         // Discretized 2x2 system with complex wavenumber

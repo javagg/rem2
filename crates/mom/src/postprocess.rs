@@ -59,7 +59,6 @@ pub fn rcs_pattern_rwg(
     theta_deg: &[f64],
     phi_deg: &[f64],
 ) -> Vec<Vec<f64>> {
-    use crate::basis::rwg::RwgBasis;
     let eta_k2 = ETA0 * ETA0 * k * k / (4.0 * PI);
 
     theta_deg.iter().map(|&theta_d| {
@@ -605,7 +604,6 @@ pub fn compute_radiation_pattern_rwg(
     theta_deg_list: &[f64],
     phi_deg_list:   &[f64],
 ) -> Vec<FarFieldPoint> {
-    use std::f64::consts::PI;
 
     let n_theta = theta_deg_list.len();
     let n_phi   = phi_deg_list.len();
@@ -682,7 +680,6 @@ pub fn compute_radiation_pattern_rwg(
     // Numerical integration over sphere to get P_rad for directivity
     // Trapezoidal rule in theta, trapezoidal in phi
     let p_rad = if n_theta > 1 && n_phi > 1 {
-        use std::f64::consts::PI;
         let dtheta = (theta_deg_list.last().unwrap() - theta_deg_list.first().unwrap()).to_radians()
             / (n_theta - 1) as f64;
         let dphi = (phi_deg_list.last().unwrap() - phi_deg_list.first().unwrap()).to_radians()

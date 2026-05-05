@@ -164,7 +164,7 @@ pub fn solve_efie_loop_star_aca(
     tol_aca: f64,
     max_rank: usize,
 ) -> RemResult<Vec<Complex64>> {
-    use crate::aca::{aca_partition, AcaMatrix};
+    use crate::aca::{aca_partition};
     use crate::assemble::lu_solve;
 
     let ls = build_loop_star_transform(surf, bases);

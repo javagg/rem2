@@ -399,6 +399,7 @@ impl RemMesh {
 
     /// Assign each boundary element to the same rank as the volume element whose
     /// centroid is closest to the boundary element's centroid.
+    #[cfg(feature = "metis")]
     fn assign_boundary_ranks_from_volume(&mut self) {
         if self.volume_elements.is_empty() { return; }
 
@@ -849,6 +850,7 @@ fn build_boundary_tags(b: &Boundaries) -> RemResult<HashMap<u32, BoundaryTag>> {
 /// Used to generate the "faces" of an element for dual-graph construction.
 /// For a tetrahedron (4 nodes, k=3) this yields 4 triangular faces.
 /// For a triangle (3 nodes, k=2) this yields 3 edges.
+#[cfg(feature = "metis")]
 fn for_each_face<F>(nodes: &[usize], n: usize, k: usize, mut f: F)
 where
     F: FnMut(Vec<usize>),

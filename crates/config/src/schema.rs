@@ -1283,7 +1283,7 @@ impl SubstrateLayerConfig {
     ///
     /// For isotropic and non-tensor layers, equals `eps_r_complex`.
     /// For anisotropic tensor layers, returns ε_zz component.
-    pub fn eps_r_z_complex(&self, freq_hz: f64) -> Option<num_complex::Complex64> {
+    pub fn eps_r_z_complex(&self, _freq_hz: f64) -> Option<num_complex::Complex64> {
         use num_complex::Complex64;
         if let Some([_, _, eps_zz]) = self.permittivity_tensor {
             Some(Complex64::new(eps_zz, -eps_zz * self.loss_tangent))

@@ -4,7 +4,6 @@
 //! 支持 TE/TM 极化，返回谱域电流-电位格林函数 G^A 和 G^q。
 
 use num_complex::Complex64;
-use std::f64::consts::PI;
 
 /// 单层媒质参数
 #[derive(Debug, Clone)]
@@ -165,6 +164,7 @@ fn te_layer_matrix(kz_i: Complex64, mu_i: Complex64, d: f64, omega: f64) -> TMat
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// 谱域格林函数结果（在单个 k_rho 点）
+#[allow(non_snake_case)]
 #[derive(Debug, Clone, Copy)]
 pub struct SpectralGreen {
     /// 磁矢位格林函数 G^A_xx (TM，水平电流 x 分量)
@@ -212,7 +212,7 @@ impl LayeredMedium {
         // 顶层（0）和底层（n-1）的 TM 阻抗
         let eta0 = kzs[0] / (omega * EPS0 * self.layers[0].eps_r);
         let eta_n = kzs[n - 1] / (omega * EPS0 * self.layers[n - 1].eps_r);
-        let zeta0 = omega * MU0 * self.layers[0].mu_r / kzs[0];
+        let _zeta0 = omega * MU0 * self.layers[0].mu_r / kzs[0];
         let zeta_n = omega * MU0 * self.layers[n - 1].mu_r / kzs[n - 1];
 
         // 输入导纳（TM）：Y_in = (m11 * Y_n - j*m12) / (-j*m21 * Y_n + m22) ... 转为 Z_in
@@ -225,10 +225,11 @@ impl LayeredMedium {
 
         // TE
         let [t11, t12, t21, t22] = [m_te.m[0][0], m_te.m[0][1], m_te.m[1][0], m_te.m[1][1]];
-        let z_in_te = (t11 * zeta_n + t12) / (t21 * zeta_n + t22);
+        let _z_in_te = (t11 * zeta_n + t12) / (t21 * zeta_n + t22);
 
         // G^A_xx 近似（TM + TE 混合，简化为标量）
         let mu_eff = MU0 * self.layers[0].mu_r.re;
+        #[allow(non_snake_case)]
         let gA = Complex64::new(mu_eff, 0.0) / (Complex64::new(2.0, 0.0) * kzs[0])
             * (Complex64::new(1.0, 0.0) + z_tm / (z_in_tm + eta0));
 

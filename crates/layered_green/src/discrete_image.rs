@@ -7,6 +7,7 @@
 use num_complex::Complex64;
 
 /// DCIM poles and residues for fast Green's function evaluation
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct DcimApproximation {
     /// Poles: p_i in exponential exp(p_i * ρ)
@@ -15,6 +16,7 @@ pub struct DcimApproximation {
     pub residues: Vec<Complex64>,
 }
 
+#[allow(dead_code)]
 impl DcimApproximation {
     /// Evaluate Green's function using DCIM series
     /// G(ρ) ≈ Σᵢ aᵢ exp(pᵢ ρ)
@@ -38,6 +40,7 @@ impl DcimApproximation {
 }
 
 /// GPOF (Generalized Pencil of Function) data structure for fitting
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct GpofFitter {
     /// Sampling data points (ρ, G(ρ))
@@ -46,6 +49,7 @@ pub struct GpofFitter {
     pub n_poles: usize,
 }
 
+#[allow(dead_code)]
 impl GpofFitter {
     /// Create a new GPOF fitter
     pub fn new(n_poles: usize) -> Self {

@@ -55,7 +55,7 @@ use crate::quadrature::TriQuad;
 use crate::surface_mesh::SurfaceMesh;
 use nalgebra::{DMatrix, DVector};
 use num_complex::Complex64;
-use rem_core::{LinearOperator, RemError, RemResult, C0, EPS0, MU0};
+use rem_core::{LinearOperator, RemError, RemResult, C0, MU0};
 use rem_layered_green::GreenFunction;
 use std::f64::consts::PI;
 
@@ -68,6 +68,7 @@ const MAX_LEVELS: usize = 6;
 /// Minimum bases per leaf to stop subdividing (trade-off accuracy vs near-field cost).
 const MIN_BASES_PER_LEAF: usize = 8;
 /// Default multipole order P. (P+1)^2 coefficients per expansion.
+#[allow(dead_code)]
 const DEFAULT_P: usize = 6;
 /// Imaginary unit.
 const I: Complex64 = Complex64::new(0.0, 1.0);
@@ -438,6 +439,7 @@ fn legendre_pn(n: usize, x: f64) -> (f64, f64) {
 // ---------------------------------------------------------------------------
 
 /// One box in the octree.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct OctBox {
     /// Centre of this box [x, y, z].
@@ -807,7 +809,7 @@ impl MlfmaMomSolver {
         // ── Step 5: L2P — evaluate local expansion at observers ──
         let mut y = vec![Complex64::ZERO; n];
 
-        for (li, &leaf_i) in self.leaf_ids.iter().enumerate() {
+        for (_li, &leaf_i) in self.leaf_ids.iter().enumerate() {
             let b = &self.boxes[leaf_i];
             let local = &box_locals[leaf_i];
             for &bi in &b.basis_ids {

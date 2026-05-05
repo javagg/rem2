@@ -43,6 +43,7 @@ const MIN_GRID: usize = 4;
 /// Builds a zero-padded 2-D convolution kernel from the free-space scalar Green
 /// function sampled on a regular Cartesian grid, then applies it via the
 /// overlap-and-add method.
+#[allow(dead_code)]
 pub struct FftMomSolver {
     /// Number of grid cells in x direction (zero-padded to 2·nx).
     nx: usize,

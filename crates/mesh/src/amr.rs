@@ -151,7 +151,7 @@ pub fn refine_marked(mesh: &RemMesh, marked: &[usize]) -> (RemMesh, HashMap<(usi
 
 fn refine_marked_tri3(mesh: &RemMesh, marked: &[usize]) -> (RemMesh, HashMap<(usize, usize), usize>) {
     let marked_set: std::collections::HashSet<usize> = marked.iter().copied().collect();
-    let n_elems = mesh.volume_elements.len();
+    let _n_elems = mesh.volume_elements.len();
 
     // --- Build edge → element adjacency ---
     let mut edge_to_elems: HashMap<(usize, usize), Vec<usize>> = HashMap::new();

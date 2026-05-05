@@ -23,7 +23,7 @@
 //! for both element types.
 
 use rem_config::PalaceConfig;
-use rem_core::{RemError, RemResult, solve_spd};
+use rem_core::{RemResult, solve_spd};
 use rem_parallel::Comm;
 use rem_materials::DomainMap;
 use rem_mesh::{RemMesh, BoundaryTag, ElementKind, FemSubMesh2d, amr, extract_submesh_tri3};

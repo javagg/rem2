@@ -225,7 +225,7 @@ pub fn p3_refine_mesh(mesh: &RemMesh) -> RemMesh {
     let mut next_id = new_nodes.len();
 
     // Helper: insert a point at (t · node_a + (1-t) · node_b), referencing original mesh.
-    let mut insert_node = |a: usize, b: usize, t: f64, nodes: &mut Vec<Node>, nid: &mut usize| -> usize {
+    let insert_node = |a: usize, b: usize, t: f64, nodes: &mut Vec<Node>, nid: &mut usize| -> usize {
         let na = &mesh.nodes[a];
         let nb = &mesh.nodes[b];
         let nd = Node {

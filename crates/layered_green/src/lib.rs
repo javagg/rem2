@@ -13,12 +13,14 @@
 //! ```
 
 mod discrete_image;
+#[allow(dead_code)]
 mod sommerfeld;
+#[allow(dead_code)]
 mod transfer_matrix;
 
 use discrete_image::{DcimApproximation, GpofFitter};
 use num_complex::Complex64;
-use sommerfeld::{compute_green_sommerfeld, compute_green_sommerfeld_multilayer, SommerfeldOptions};
+use sommerfeld::{compute_green_sommerfeld_multilayer, SommerfeldOptions};
 use std::f64::consts::PI;
 use transfer_matrix::MaterialProps;
 
@@ -104,6 +106,7 @@ impl GreenFunction for FreeSpaceGreen {
 /// - Support for single or multi-layer substrates
 /// - Pre-computed DCIM coefficients (poles + residues) for fast evaluation
 /// - Automatic GPOF fitting from Sommerfeld integral samples
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct LayeredGreen {
     /// Layer definition (from bottom to top)
@@ -138,6 +141,7 @@ pub struct DielectricLayer {
     pub eps_r_z: Option<num_complex::Complex64>,
 }
 
+#[allow(dead_code)]
 impl LayeredGreen {
     /// Create a layered Green's function from layer stack.
     /// `k0`: wavenumber in background medium (air).
