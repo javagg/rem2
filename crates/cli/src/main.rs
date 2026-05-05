@@ -243,23 +243,18 @@ fn run_solver(config: &rem_config::PalaceConfig, comm: &dyn Comm) -> anyhow::Res
         ProblemType::Transient => {
             rem_transient::run(config, comm)?;
         }
-        ProblemType::MoM => {
-            rem_mom::run(config)?;
-        }
         ProblemType::BEM => {
             rem_bem::run(config)?;
         }
-        ProblemType::Planar => {
-            rem_planar::run(config)?;
-        }
-        ProblemType::SBR => {
-            rem_sbr::run(config)?;
-        }
-        ProblemType::FEBI => {
-            rem_febi::run(config)?;
-        }
-        ProblemType::Parametric => {
-            rem_optim::run(&config)?;
+        ProblemType::MoM
+        | ProblemType::Planar
+        | ProblemType::SBR
+        | ProblemType::FEBI
+        | ProblemType::Parametric => {
+            anyhow::bail!(
+                "{:?} is available only in the private rem-pro workspace; use the pro CLI for this problem type",
+                config.problem.problem_type
+            );
         }
     }
 

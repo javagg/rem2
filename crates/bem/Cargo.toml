@@ -8,7 +8,7 @@ rem-core     = { workspace = true }
 rem-config   = { workspace = true }
 rem-mesh     = { workspace = true }
 rem-parallel = { workspace = true }
-rem-mom      = { path = "../mom" }
+rem-surface  = { workspace = true }
 num-complex  = { workspace = true }
 nalgebra     = { workspace = true }
 thiserror    = { workspace = true }

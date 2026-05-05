@@ -217,50 +217,6 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
-        ProblemType::MoM => {
-            let mom_result = rem_mom::run_with_mesh(&cfg,
-                cfg.solver.mom.as_ref()
-                    .ok_or_else(|| JsError::new("MoM requires Solver.MoM section"))?,
-                &mesh,
-            ).map_err(|e| JsError::new(&format!("MoM error: {}", e)))?;
-            let rcs_data: Vec<(f64, Vec<RcsPoint>)> = mom_result.rcs.into_iter().map(|(f, pts)| {
-                let pts2 = pts.into_iter().map(|p| RcsPoint {
-                    theta_deg: p.theta_deg, phi_deg: p.phi_deg,
-                    rcs_m2: p.rcs_m2, rcs_dbsm: p.rcs_dbsm,
-                }).collect();
-                (f, pts2)
-            }).collect();
-            let res = SimulationResult {
-                phi: vec![], energy: 0.0, e_field: None, b_field: None,
-                frequencies_hz: None, s_params: None,
-                time_points: None, port_voltages: None, excitation_signal: None, q_factors: None,
-                rcs_data: Some(rcs_data), eigenvectors: None, capacitance: None,
-                far_field: None, touchstone_s1p: None, circuit_model_csv: None, spice_netlist: None, solver_info: Some(base_info.clone()),
-            };
-            Ok(serde_wasm_bindgen::to_value(&res)?)
-        }
-        ProblemType::SBR => {
-            let sbr_result = rem_sbr::run_with_mesh(&cfg,
-                cfg.solver.sbr.as_ref()
-                    .ok_or_else(|| JsError::new("SBR requires Solver.SBR section"))?,
-                &mesh,
-            ).map_err(|e| JsError::new(&format!("SBR error: {}", e)))?;
-            let rcs_data: Vec<(f64, Vec<RcsPoint>)> = sbr_result.rcs.into_iter().map(|(f, pts)| {
-                let pts2 = pts.into_iter().map(|p| RcsPoint {
-                    theta_deg: p.theta_deg, phi_deg: p.phi_deg,
-                    rcs_m2: p.rcs_m2, rcs_dbsm: p.rcs_dbsm,
-                }).collect();
-                (f, pts2)
-            }).collect();
-            let res = SimulationResult {
-                phi: vec![], energy: 0.0, e_field: None, b_field: None,
-                frequencies_hz: None, s_params: None,
-                time_points: None, port_voltages: None, excitation_signal: None, q_factors: None,
-                rcs_data: Some(rcs_data), eigenvectors: None, capacitance: None,
-                far_field: None, touchstone_s1p: None, circuit_model_csv: None, spice_netlist: None, solver_info: Some(base_info.clone()),
-            };
-            Ok(serde_wasm_bindgen::to_value(&res)?)
-        }
         ProblemType::Eigenmode => {
             let eigen = solve_eigen(&cfg, &mesh, &dm, &comm)
                 .map_err(|e| JsError::new(&format!("Eigenmode error: {}", e)))?;
@@ -311,7 +267,14 @@ pub fn run_simulation(config_json: &str, mesh_bytes: &[u8]) -> Result<JsValue, J
             };
             Ok(serde_wasm_bindgen::to_value(&res)?)
         }
-            _ => Err(JsError::new("Unsupported problem type")),
+        ProblemType::MoM
+        | ProblemType::Planar
+        | ProblemType::SBR
+        | ProblemType::FEBI
+        | ProblemType::Parametric => Err(JsError::new(
+            "This problem type is available only in the private rem-pro workspace",
+        )),
+        _ => Err(JsError::new("Unsupported problem type")),
         }
     })).map_err(|panic| {
         JsError::new(&format!(
@@ -343,35 +306,35 @@ pub fn get_rings_mesh() -> Vec<u8> {
 
 #[wasm_bindgen]
 pub fn get_adapter_mesh() -> Vec<u8> {
-    include_bytes!("../../../examples/palace/adapter/mesh/adapter.msh").to_vec()
+    include_bytes!("../../../../examples/palace/adapter/mesh/adapter.msh").to_vec()
 }
 
 #[wasm_bindgen]
 pub fn get_antenna_mesh() -> Vec<u8> {
-    include_bytes!("../../../examples/palace/antenna/mesh/antenna.msh").to_vec()
+    include_bytes!("../../../../examples/palace/antenna/mesh/antenna.msh").to_vec()
 }
 
 #[wasm_bindgen]
 pub fn get_coaxial_mesh() -> Vec<u8> {
-    include_bytes!("../../../examples/palace/coaxial/mesh/coaxial.msh").to_vec()
+    include_bytes!("../../../../examples/palace/coaxial/mesh/coaxial.msh").to_vec()
 }
 
 #[wasm_bindgen]
 pub fn get_cpw_mesh() -> Vec<u8> {
-    include_bytes!("../../../examples/palace/cpw/mesh/cpw_coax.msh").to_vec()
+    include_bytes!("../../../../examples/palace/cpw/mesh/cpw_coax.msh").to_vec()
 }
 
 #[wasm_bindgen]
 pub fn get_cylinder_mesh() -> Vec<u8> {
-    include_bytes!("../../../examples/palace/cylinder/mesh/cylinder_hex.msh").to_vec()
+    include_bytes!("../../../../examples/palace/cylinder/mesh/cylinder_hex.msh").to_vec()
 }
 
 #[wasm_bindgen]
 pub fn get_transmon_mesh() -> Vec<u8> {
-    include_bytes!("../../../examples/palace/transmon/mesh/transmon.msh2").to_vec()
+    include_bytes!("../../../../examples/palace/transmon/mesh/transmon.msh2").to_vec()
 }
 
 #[wasm_bindgen]
 pub fn get_spheres_mesh_v2() -> Vec<u8> {
-    include_bytes!("../../../examples/palace/spheres/mesh/spheres.msh").to_vec()
+    include_bytes!("../../../../examples/palace/spheres/mesh/spheres.msh").to_vec()
 }

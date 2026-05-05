@@ -4,6 +4,7 @@ members = [
     "crates/core",
     "crates/config",
     "crates/mesh",
+    "crates/surface",
     "crates/materials",
     "crates/bc",
     "crates/electrostatic",
@@ -17,14 +18,7 @@ members = [
     "crates/parallel",
     "crates/wasm",
     "crates/touchstone",
-    "crates/mom",
     "crates/bem",
-    "crates/sbr",
-    "crates/febi",
-    "crates/ddm",
-    "crates/planar",
-    "crates/optim",
-    "crates/layered_green",
     "vendor/rmetis",
     "vendor/rmsh-model",
     "vendor/rmsh-io",
@@ -45,6 +39,7 @@ edition = "2021"
 rem-core      = { path = "crates/core" }
 rem-config    = { path = "crates/config" }
 rem-mesh      = { path = "crates/mesh" }
+rem-surface   = { path = "crates/surface" }
 rem-materials = { path = "crates/materials" }
 rem-bc            = { path = "crates/bc" }
 rem-result        = { path = "crates/result" }
@@ -55,15 +50,8 @@ rem-eigenmode     = { path = "crates/eigenmode" }
 rem-driven        = { path = "crates/driven" }
 rem-parallel      = { path = "crates/parallel" }
 rem-transient     = { path = "crates/transient" }
-rem-mom           = { path = "crates/mom" }
 rem-bem           = { path = "crates/bem" }
-rem-optim         = { path = "crates/optim" }
-rem-febi          = { path = "crates/febi" }
-rem-ddm           = { path = "crates/ddm" }
-rem-planar        = { path = "crates/planar" }
-rem-layered-green = { path = "crates/layered_green" }
 rem-touchstone    = { path = "crates/touchstone" }
-rem-sbr           = { path = "crates/sbr" }
 rem-wasm          = { path = "crates/wasm" }
 rmetis            = { path = "vendor/rmetis", default-features = false }
 

@@ -30,8 +30,6 @@ pub mod near_field;
 pub mod output;
 pub mod port_modal;
 pub mod rlgc_sweep;
-pub mod rom;
-pub mod sparams_analysis;
 pub mod vf;
 
 use nalgebra::{DMatrix, DVector};
@@ -449,86 +447,8 @@ fn run_frequency_sweep(
     // `rom_order` expansion frequencies, build an orthonormal basis, and use the
     // reduced system for all non-expansion frequency points.
     let rom_order = drv_cfg.rom_order;
-    let use_rom = rom_order >= 2 && n_ports <= 1 && !any_freq_dep;
-    let rom_basis: Option<rom::RomBasis> = if use_rom {
-        let f_min = freqs.first().copied().unwrap_or(0.0);
-        let f_max = freqs.last().copied().unwrap_or(f_min);
-        let exp_freqs = rom::choose_expansion_freqs(f_min, f_max, rom_order);
-        log::info!("ROM: building basis from {} full solves at expansion frequencies", rom_order);
-
-        let dofs_snap = collect_dirichlet_dofs(mesh, excited_port, 1.0);
-        let mut snapshots: Vec<Vec<Complex64>> = Vec::with_capacity(rom_order);
-
-        for &f_exp in &exp_freqs {
-            let omega_e = 2.0 * std::f64::consts::PI * f_exp;
-            let k_e = omega_e / C0;
-            let k2_e = k_e * k_e;
-            let mut a_e = k_dense.clone();
-            for i in 0..n {
-                for j in 0..n {
-                    a_e[(i, j)] -= Complex64::new(k2_e, 0.0) * m_dense[(i, j)];
-                }
-            }
-            if let (Some(kl), Some(ml), Some(kc), Some(mc)) =
-                (&k_loss_dense, &m_loss_dense, &k_cond_dense, &m_cond_dense)
-            {
-                for i in 0..n {
-                    for j in 0..n {
-                        let tan = Complex64::new(0.0, 1.0)
-                            * (kl[(i,j)] - Complex64::new(k2_e, 0.0) * ml[(i,j)]);
-                        let cond = Complex64::new(0.0, -1.0 / omega_e)
-                            * (kc[(i,j)] - Complex64::new(k2_e, 0.0) * mc[(i,j)]);
-                        a_e[(i, j)] += tan + cond;
-                    }
-                }
-            }
-            let mut rhs_e = vec![Complex64::ZERO; n];
-            apply_dirichlet_complex(&mut a_e, &mut rhs_e, &dofs_snap);
-            let use_pcg_snap = use_pcg(config);
-            match if use_pcg_snap {
-                solve_complex_helmholtz_adaptive(&a_e, &rhs_e, lin.tol, lin.max_iter, true)
-            } else {
-                gmres_complex(&a_e, &rhs_e, lin.tol, lin.max_iter)
-            } {
-                Ok(phi_c) => snapshots.push(phi_c),
-                Err(e) => {
-                    log::warn!("ROM: expansion solve at f={f_exp:.3e} Hz failed ({e}); disabling ROM");
-                    return Err(e);
-                }
-            }
-        }
-
-        let basis = rom::RomBasis::from_snapshots(snapshots, 1e-12);
-        log::info!("ROM basis: {} vectors (r={}) from {} snapshots", basis.r(), basis.r(), rom_order);
-        Some(basis)
-    } else {
-        if rom_order > 0 {
-            if n_ports > 1 {
-                log::warn!("ROM: disabled for multi-port problems (not yet supported)");
-            } else if any_freq_dep {
-                log::warn!("ROM: disabled when Drude-Lorentz materials are present");
-            } else {
-                log::warn!("ROM: rom_order must be >= 2; disabling");
-            }
-        }
-        None
-    };
-
-    // Set of expansion frequencies for quick lookup when ROM is active
-    let rom_expansion_set: std::collections::HashSet<u64> = if let Some(_) = &rom_basis {
-        let f_min = freqs.first().copied().unwrap_or(0.0);
-        let f_max = freqs.last().copied().unwrap_or(f_min);
-        rom::choose_expansion_freqs(f_min, f_max, rom_order)
-            .iter()
-            .map(|&f| f.to_bits())
-            .collect()
-    } else {
-        std::collections::HashSet::new()
-    };
-    let rom_full_solves = if use_rom { rom_order } else { 0 };
-    let rom_fast_solves = freqs.len().saturating_sub(rom_full_solves);
-    if use_rom {
-        log::info!("ROM: {rom_full_solves} full solves + {rom_fast_solves} reduced solves ({} total)", freqs.len());
+    if rom_order > 0 {
+        log::warn!("ROM is available only in the private rem-pro workspace; running full driven solves");
     }
 
     for (step, &freq) in freqs.iter().enumerate() {
@@ -722,42 +642,12 @@ fn run_frequency_sweep(
             // ── ROM fast path ─────────────────────────────────────────────────
             // If ROM basis is available and this is not an expansion frequency,
             // solve the cheap reduced system instead of the full GMRES.
-            let phi_c = if let Some(basis) = &rom_basis {
-                let is_expansion = rom_expansion_set.contains(&freq.to_bits());
-                if is_expansion {
-                    // Full solve — result is already in the snapshots used for basis
-                    // construction, but we re-solve here for correct a_base(ω) with BCs.
-                    let use_pcg_r = use_pcg(config);
-                    if use_pcg_r {
-                        solve_complex_helmholtz_adaptive(&a, &rhs_c, lin.tol, lin.max_iter, true)?
-                    } else {
-                        gmres_complex(&a, &rhs_c, lin.tol, lin.max_iter)?
-                    }
-                } else {
-                    // ROM solve: project A(ω) and b down to r×r, solve, expand back.
-                    let b_r = basis.project_rhs(&rhs_c);
-                    let a_r = basis.project_matrix_mv(|v| rom::dense_matvec(&a, v));
-                    match rom::solve_reduced(a_r, b_r) {
-                        Some(x_r) => basis.expand(&x_r),
-                        None => {
-                            log::warn!("ROM: reduced system singular at f={freq:.3e} Hz; falling back to full solve");
-                            let use_pcg_rs = use_pcg(config);
-                            if use_pcg_rs {
-                                solve_complex_helmholtz_adaptive(&a, &rhs_c, lin.tol, lin.max_iter, true)?
-                            } else {
-                                gmres_complex(&a, &rhs_c, lin.tol, lin.max_iter)?
-                            }
-                        }
-                    }
-                }
+            let use_pcg = use_pcg(config);
+            let phi_c = if use_pcg {
+                log::info!("Phase2: single-port main-loop PCG solve at f={freq:.3e} Hz");
+                solve_complex_helmholtz_adaptive(&a, &rhs_c, lin.tol, lin.max_iter, true)?
             } else {
-                let use_pcg = use_pcg(config);
-                if use_pcg {
-                    log::info!("Phase2: single-port main-loop PCG solve at f={freq:.3e} Hz");
-                    solve_complex_helmholtz_adaptive(&a, &rhs_c, lin.tol, lin.max_iter, true)?
-                } else {
-                    gmres_complex(&a, &rhs_c, lin.tol, lin.max_iter)?
-                }
+                gmres_complex(&a, &rhs_c, lin.tol, lin.max_iter)?
             };
 
             let phi_re: Vec<f64> = phi_c.iter().map(|x| x.re).collect();

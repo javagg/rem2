@@ -14,7 +14,7 @@
 //!
 //! # Architecture
 //! ```text
-//! SurfaceMesh (from rem-mom)
+//! SurfaceMesh (from rem-surface)
 //!     ↓
 //! assemble_laplace_bem (V + K matrices)
 //!     ↓
@@ -30,7 +30,7 @@ pub mod postprocess;
 
 use rem_config::PalaceConfig;
 use rem_core::RemResult;
-use rem_mom::quadrature::TriQuad;
+use rem_surface::quadrature::TriQuad;
 use rem_parallel::NoComm;
 
 /// Run the BEM solver from a Palace config.
@@ -63,7 +63,7 @@ pub fn run(config: &PalaceConfig) -> RemResult<()> {
     }
 
     // Extract surface mesh
-    let surf = rem_mom::surface_mesh::SurfaceMesh::extract(&mesh, &pec_attrs)?;
+    let surf = rem_surface::surface_mesh::SurfaceMesh::extract(&mesh, &pec_attrs)?;
     log::info!("Surface mesh: {} triangular faces", surf.faces.len());
 
     // Quadrature rules

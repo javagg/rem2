@@ -20,9 +20,9 @@
 //! Diagonal K[m,m] = ½ (identity from jump condition).
 //! Off-diagonal: standard Gaussian quadrature.
 
-use rem_mom::surface_mesh::SurfaceMesh;
-use rem_mom::quadrature::TriQuad;
-use rem_mom::singular::{classify_pair, TriPairType};
+use rem_surface::surface_mesh::SurfaceMesh;
+use rem_surface::quadrature::TriQuad;
+use rem_surface::singular::{classify_pair, TriPairType};
 use crate::kernel::{laplace_G, laplace_dG_dn};
 use nalgebra::{DMatrix, DVector};
 use rem_core::{RemError, RemResult};
@@ -134,8 +134,8 @@ pub fn solve_neumann(
 
 /// V[m,n] = ∫_Tn G(r_m, r') dS'  (collocation at centroid of Tm)
 fn vmn_regular(
-    face_m: &rem_mom::surface_mesh::TriFace,
-    face_n: &rem_mom::surface_mesh::TriFace,
+    face_m: &rem_surface::surface_mesh::TriFace,
+    face_n: &rem_surface::surface_mesh::TriFace,
     nodes: &[[f64; 3]],
     quad: &TriQuad,
 ) -> f64 {
@@ -151,8 +151,8 @@ fn vmn_regular(
 
 /// K[m,n] = ∫_Tn ∂G/∂n'(r_m, r') dS'  (collocation at centroid of Tm)
 fn kmn_regular(
-    face_m: &rem_mom::surface_mesh::TriFace,
-    face_n: &rem_mom::surface_mesh::TriFace,
+    face_m: &rem_surface::surface_mesh::TriFace,
+    face_n: &rem_surface::surface_mesh::TriFace,
     nodes: &[[f64; 3]],
     quad: &TriQuad,
 ) -> f64 {
@@ -172,11 +172,11 @@ fn kmn_regular(
 /// Uses Duffy polar transform to remove 1/R singularity at r' → r_m.
 #[allow(non_snake_case)]
 fn duffy_self_laplace_G(
-    face: &rem_mom::surface_mesh::TriFace,
+    face: &rem_surface::surface_mesh::TriFace,
     nodes: &[[f64; 3]],
     n_gauss: usize,
 ) -> f64 {
-    use rem_mom::singular::gauss_legendre_1d;
+    use rem_surface::singular::gauss_legendre_1d;
 
     let (gl, gw) = gauss_legendre_1d(n_gauss);
     let [i0, i1, i2] = face.nodes;
@@ -228,7 +228,7 @@ fn sub_tri_area(va: &[f64;3], vb: &[f64;3], vc: &[f64;3]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rem_mom::surface_mesh::{SurfaceMesh, TriFace, SharedEdge, tri_geometry, patch_edge_lengths};
+    use rem_surface::surface_mesh::{SurfaceMesh, TriFace, SharedEdge, tri_geometry, patch_edge_lengths};
 
     fn two_tri_mesh() -> SurfaceMesh {
         // Two triangles sharing edge (1,2): T0=(0,1,2), T1=(1,3,2)

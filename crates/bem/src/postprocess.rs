@@ -1,6 +1,6 @@
 //! BEM post-processing: capacitance, surface potential, far field.
 
-use rem_mom::surface_mesh::SurfaceMesh;
+use rem_surface::surface_mesh::SurfaceMesh;
 use rem_core::EPS0;
 
 /// Compute the total charge Q = ∫_S σ(r) dS from P0 coefficients.
@@ -35,7 +35,7 @@ pub fn eval_potential(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rem_mom::surface_mesh::{SurfaceMesh, TriFace, SharedEdge, tri_geometry, patch_edge_lengths};
+    use rem_surface::surface_mesh::{SurfaceMesh, TriFace, SharedEdge, tri_geometry, patch_edge_lengths};
 
     fn single_tri_mesh() -> SurfaceMesh {
         let nodes = vec![[0.0,0.0,0.0],[1.0,0.0,0.0],[0.0,1.0,0.0]];

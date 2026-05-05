@@ -11,7 +11,7 @@ use rem_bem::{
     assemble::solve_neumann,
     postprocess::capacitance,
 };
-use rem_mom::{
+use rem_surface::{
     surface_mesh::{SurfaceMesh, TriFace, SharedEdge, tri_geometry, patch_edge_lengths},
     quadrature::TriQuad,
 };

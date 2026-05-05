@@ -1,0 +1,13 @@
+[package]
+name = "rem-surface"
+version.workspace = true
+edition = "2021"
+
+[dependencies]
+rem-core = { workspace = true }
+rem-mesh = { workspace = true }
+num-complex = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]
+approx = "0.5"
