@@ -15,6 +15,13 @@ pub fn partition_mesh(mesh: &RemMesh, n_parts: usize) -> RemResult<Vec<i32>> {
     if n_parts <= 1 {
         return Ok(vec![0i32; n_elems]);
     }
+    if n_elems <= n_parts {
+        let mut part = vec![0i32; n_elems];
+        for (elem_idx, slot) in part.iter_mut().enumerate() {
+            *slot = elem_idx as i32;
+        }
+        return Ok(part);
+    }
 
     // Try METIS dual-graph partitioning
     match partition_with_rmetis(mesh, n_elems, n_parts) {
