@@ -44,12 +44,12 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
     log::info!("\n=== Eigenmode (frequency-domain) solver ===\n");
     if config.solver.uses_hcurl() {
         log::info!(
-            "Eigenmode solver using HCurl/Nedelec edge-element discretization (experimental)."
+            "Eigenmode solver using HCurl/Nedelec edge-element discretization."
         );
     } else {
         log::warn!(
-            "Eigenmode solver currently uses scalar nodal H1 discretization (no Nedelec edge elements). \
-             For vector cavity/waveguide EM modes, this can introduce non-physical spurious solutions."
+            "Eigenmode solver: scalar H1 nodal discretization selected (Solver.Discretization=\"H1\"). \
+             Non-physical spurious modes may appear in cavity/waveguide solutions. Use \"HCurl\" (the default)."
         );
     }
 

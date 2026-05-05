@@ -29,14 +29,11 @@ use std::path::Path;
 pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
     log::info!("\n=== Electrostatic solver ===\n");
 
-    if config.solver.order > 2 {
-        log::warn!(
-            "Solver.Order={} requested; P1 and P2 (Tet10/Tri6) are implemented. \
-             Order≥3 is not yet supported — running P2.",
-            config.solver.order
-        );
-    } else if config.solver.order == 2 {
-        log::info!("Solver.Order=2: using P2 quadratic assembly for Tet10/Tri6 elements.");
+    match config.solver.order {
+        1 => log::info!("Solver.Order=1: using P1 linear assembly."),
+        2 => log::info!("Solver.Order=2: using P2 quadratic assembly (Tri6/Tet10)."),
+        3 => log::info!("Solver.Order=3: using P3 cubic assembly (Tri10, 2-D only)."),
+        n => log::warn!("Solver.Order={n} not supported (max P3); running P3."),
     }
 
     // 1. Load mesh
@@ -155,7 +152,7 @@ pub fn solve_one(
     // Collect periodic node pairs (empty if no Periodic BCs configured)
     let periodic_pairs = bc::collect_periodic_node_pairs(mesh, config);
 
-    let order     = if config.solver.order >= 2 { 2u8 } else { 1u8 };
+    let order     = config.solver.order.clamp(1, 3);
     let quad_order = order * 2;
 
     log::info!(

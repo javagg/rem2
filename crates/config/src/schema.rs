@@ -551,8 +551,8 @@ pub struct SolverConfig {
     /// Discretization family for full-wave problems.
     ///
     /// Supported values (case-insensitive):
-    /// - `H1` (default): scalar nodal basis
-    /// - `HCurl` / `Nedelec`: edge-element H(curl) basis
+    /// - `HCurl` / `Nedelec` (default): edge-element H(curl) basis (curl-conforming; avoids spurious modes)
+    /// - `H1`: scalar nodal basis (legacy; may produce spurious modes in driven/eigenmode)
     #[serde(rename = "Discretization", default = "default_discretization")]
     pub discretization: String,
 
@@ -656,7 +656,7 @@ impl Default for SolverConfig {
 }
 
 fn default_device() -> String { "CPU".to_string() }
-fn default_discretization() -> String { "H1".to_string() }
+fn default_discretization() -> String { "HCurl".to_string() }
 
 impl SolverConfig {
     /// Returns `true` when H(curl)/Nedelec discretization is requested.

@@ -421,18 +421,24 @@ mod tests {
                 loss_tan: 0.0,
                 mu_r: 1.0,
                 thickness_m: 1e10, // bottom: air half-space
+                eps_r_complex_override: None,
+                eps_r_z: None,
             },
             DielectricLayer {
                 eps_r: 4.5,
                 loss_tan: 0.02,
                 mu_r: 1.0,
                 thickness_m: 1.6e-3, // FR4 substrate
+                eps_r_complex_override: None,
+                eps_r_z: None,
             },
             DielectricLayer {
                 eps_r: 1.0,
                 loss_tan: 0.0,
                 mu_r: 1.0,
                 thickness_m: 1e10, // top: air half-space
+                eps_r_complex_override: None,
+                eps_r_z: None,
             },
         ];
         let green = LayeredGreen::new(layers, 10.0);
@@ -454,18 +460,24 @@ mod tests {
                 loss_tan: 0.0,
                 mu_r: 1.0,
                 thickness_m: 1e10, // bottom: air half-space
+                eps_r_complex_override: None,
+                eps_r_z: None,
             },
             DielectricLayer {
                 eps_r: 4.5,
                 loss_tan: 0.02,
                 mu_r: 1.0,
                 thickness_m: 1.6e-3, // FR4
+                eps_r_complex_override: None,
+                eps_r_z: None,
             },
             DielectricLayer {
                 eps_r: 1.0,
                 loss_tan: 0.0,
                 mu_r: 1.0,
                 thickness_m: 1e10, // top: air half-space
+                eps_r_complex_override: None,
+                eps_r_z: None,
             },
         ];
         // 1 GHz, λ ≈ 0.3 m
@@ -491,12 +503,16 @@ mod tests {
                 loss_tan: 0.0,
                 mu_r: 1.0,
                 thickness_m: 1.0,
+                eps_r_complex_override: None,
+                eps_r_z: None,
             },
             DielectricLayer {
                 eps_r: 1.0,
                 loss_tan: 0.0,
                 mu_r: 1.0,
                 thickness_m: 1e10,
+                eps_r_complex_override: None,
+                eps_r_z: None,
             },
         ];
         let green = LayeredGreen::new(layers, 5.0);

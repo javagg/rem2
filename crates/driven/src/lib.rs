@@ -140,8 +140,8 @@ pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> 
         return driven_hcurl::run_hcurl_driven(config, mesh, &domain_map, comm);
     } else {
         log::warn!(
-            "Driven solver currently uses scalar nodal H1 discretization (no Nedelec edge elements). \
-             For vector full-wave cases, spurious modes/currents may appear near conductor edges and material interfaces."
+            "Driven solver: scalar H1 nodal discretization selected (Solver.Discretization=\"H1\"). \
+             Spurious modes may appear at conductor edges. Use \"HCurl\" for curl-conforming edge elements."
         );
     }
 
