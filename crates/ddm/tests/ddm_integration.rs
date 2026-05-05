@@ -94,6 +94,7 @@ fn make_ddm_cfg(n_sub: usize) -> DdmSolverConfig {
         tolerance: 1e-4,
         max_iter: 50,
         partition_type: "Dual".to_string(),
+        ..Default::default()
     }
 }
 

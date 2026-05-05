@@ -28,6 +28,7 @@ pub mod subdomain;
 pub mod interface;
 pub mod schwarz;
 pub mod postprocess;
+pub mod anderson;
 
 use num_complex::Complex64;
 use rem_config::{PalaceConfig, DdmSolverConfig};
@@ -168,17 +169,30 @@ pub fn run_with_mesh(
         mesh.volume_elements.len() / n_sub.max(1));
 
     // 3. 识别子域界面 DOF（基于共享体节点）
-    let robin_alpha = Complex64::new(0.0, ddm_cfg.robin_order.max(1) as f64);
+    let omega = 2.0 * std::f64::consts::PI * ddm_cfg.freq_hz;
+    let k0 = omega / rem_core::C0;
+    let robin_alpha = num_complex::Complex64::new(0.0, k0 * ddm_cfg.robin_order.max(1) as f64);
     let interfaces = build_interfaces(&mut subdomains, mesh, &part, robin_alpha);
-    log::info!("Interfaces: {} interface pairs", interfaces.len());
+    log::info!("Interfaces: {} interface pairs, α = {:.3e}j (k₀={:.3e}, f={:.3e} Hz)",
+        interfaces.len(), robin_alpha.im, k0, ddm_cfg.freq_hz);
 
-    // 4. Schwarz 迭代求解
-    let schwarz_result = schwarz::schwarz_solve(
+    // 4. Schwarz 迭代求解（使用完整配置）
+    let schwarz_cfg = schwarz::SchwarzConfig {
+        tol: ddm_cfg.tolerance,
+        max_iter: ddm_cfg.max_iter,
+        robin_alpha,
+        multiplicative: ddm_cfg.multiplicative,
+        anderson_depth: ddm_cfg.anderson_depth,
+        freq_hz: ddm_cfg.freq_hz,
+        eps_r: ddm_cfg.eps_r,
+        mu_r: ddm_cfg.mu_r,
+    };
+    let schwarz_result = schwarz::schwarz_solve_full(
         &subdomains,
         &interfaces,
         comm,
-        ddm_cfg.tolerance,
-        ddm_cfg.max_iter,
+        &schwarz_cfg,
+        Some(mesh),
     )?;
 
     log::info!("DDM converged in {} iterations, residual = {:.3e}",
@@ -208,6 +222,7 @@ mod tests {
             tolerance: 1e-6,
             max_iter: 100,
             partition_type: "Dual".to_string(),
+            ..Default::default()
         };
         assert_eq!(cfg.num_subdomains, 4);
         assert_eq!(cfg.method, "Schwarz");

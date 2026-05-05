@@ -1438,7 +1438,7 @@ fn default_exterior_mu()        -> f64    { 1.0 }
 /// Domain Decomposition Method solver parameters, placed under `Solver.DDM`.
 ///
 /// Implements Robin-condition Schwarz iteration for parallel FEM solves.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct DdmSolverConfig {
     /// Number of subdomains (should equal MPI process count)
     #[serde(rename = "NumSubdomains", default = "default_ddm_num_subdomains")]
@@ -1463,6 +1463,32 @@ pub struct DdmSolverConfig {
     /// METIS partitioning: "Dual" | "Nodal"
     #[serde(rename = "PartitionType", default = "default_ddm_partition_type")]
     pub partition_type: String,
+
+    /// Use Multiplicative Schwarz (sequential, uses latest neighbor solution each sub-step).
+    /// Additive Schwarz (default false) is embarrassingly parallel; Multiplicative
+    /// converges in ~half the iterations at the cost of sequential subdomain solves.
+    #[serde(rename = "Multiplicative", default)]
+    pub multiplicative: bool,
+
+    /// Anderson acceleration history depth m (0 = disabled).
+    /// Stores the last m residual/iterate pairs and solves a small LS problem each
+    /// iteration to accelerate convergence. Typical values: 3–10.
+    #[serde(rename = "AndersonDepth", default = "default_ddm_anderson_depth")]
+    pub anderson_depth: usize,
+
+    /// Operating frequency [Hz] for the Helmholtz FEM subdomain solves.
+    /// Used to compute k = ω√(μ₀ε₀) for the wave operator and Robin α = jk.
+    /// Default 1 GHz.  Set to match your Driven solver FreqMin/FreqMax centre.
+    #[serde(rename = "FreqHz", default = "default_ddm_freq_hz")]
+    pub freq_hz: f64,
+
+    /// Relative permittivity ε_r for subdomain Helmholtz assembly (default 1.0).
+    #[serde(rename = "EpsR", default = "default_one_f64")]
+    pub eps_r: f64,
+
+    /// Relative permeability μ_r for subdomain Helmholtz assembly (default 1.0).
+    #[serde(rename = "MuR", default = "default_one_f64")]
+    pub mu_r: f64,
 }
 
 fn default_ddm_num_subdomains() -> usize  { 4 }
@@ -1471,6 +1497,9 @@ fn default_ddm_robin_order()    -> u8     { 1 }
 fn default_ddm_tolerance()      -> f64    { 1.0e-6 }
 fn default_ddm_max_iter()       -> usize  { 100 }
 fn default_ddm_partition_type() -> String { "Dual".to_string() }
+fn default_ddm_anderson_depth() -> usize  { 5 }
+fn default_ddm_freq_hz()        -> f64    { 1.0e9 }
+fn default_one_f64()            -> f64    { 1.0 }
 
 // ── Planar MoM solver config ───────────────────────────────────────────────────────
 
