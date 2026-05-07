@@ -1,8 +1,9 @@
 use std::collections::HashMap;
+use std::f64::consts::PI;
 
 use fem_assembly::coefficient::CtxFnCoeff;
 use fem_assembly::standard::{CurlCurlIntegrator, VectorMassIntegrator};
-use fem_assembly::VectorAssembler;
+use fem_assembly::{VectorAssembler, VectorBoundaryAssembler, TangentialMassIntegrator};
 use fem_space::{boundary_dofs_hcurl, FESpace, HCurlSpace};
 use rem_config::PalaceConfig;
 use rem_core::{CsrMatrix, RemError, RemResult};
@@ -144,10 +145,12 @@ pub(crate) fn solve_hcurl(
 
     eigenpairs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
+    let q_factors = compute_q_factors_hcurl(&m_mat, &eigenpairs, config, mesh, domain_map, n, comm)?;
+
     Ok(EigenResult {
         frequencies_hz: eigenpairs.iter().map(|(f, _)| *f).collect(),
         eigenvectors: eigenpairs.into_iter().map(|(_, v)| v).collect(),
-        q_factors: None,
+        q_factors,
         is_hcurl: true,
     })
 }
@@ -167,4 +170,177 @@ fn assemble_hcurl_system<S: FESpace>(space: &S, domain_map: &DomainMap) -> (CsrM
     let m_fem = VectorAssembler::assemble_bilinear(space, &[&mass], 4);
 
     (CsrMatrix::from_fem_csr(k_fem), CsrMatrix::from_fem_csr(m_fem))
+}
+
+/// Build an HCurl bilinear form matrix with a scalar coefficient and return as CSR.
+fn assemble_hcurl_form<C>(
+    mesh: &RemMesh,
+    order: u8,
+    coeff: C,
+) -> RemResult<CsrMatrix>
+where
+    C: Fn(&fem_assembly::coefficient::CoeffCtx<'_>) -> f64 + Send + Sync + 'static,
+{
+    let cf = CtxFnCoeff(coeff);
+    let mass = VectorMassIntegrator { alpha: cf };
+    let m_fem = if mesh.dim == 2 {
+        let simplex = mesh.to_simplex_mesh_2d();
+        let space = HCurlSpace::new(simplex, order);
+        VectorAssembler::assemble_bilinear(&space, &[&mass], 4)
+    } else if mesh.dim == 3 {
+        let simplex = mesh.to_simplex_mesh();
+        let space = HCurlSpace::new(simplex, order);
+        VectorAssembler::assemble_bilinear(&space, &[&mass], 4)
+    } else {
+        return Err(RemError::Config(format!(
+            "HCurl assemble_hcurl_form only supports 2-D/3-D, got dim={}", mesh.dim
+        )));
+    };
+    Ok(CsrMatrix::from_fem_csr(m_fem))
+}
+
+/// Assemble the tangential mass matrix on boundary tags (for conductor loss).
+fn assemble_hcurl_surface_matrix(
+    mesh: &RemMesh,
+    order: u8,
+    boundary_tags: &[i32],
+) -> RemResult<CsrMatrix> {
+    let integ = TangentialMassIntegrator { gamma: 1.0 };
+    let k_surf = if mesh.dim == 2 {
+        let simplex = mesh.to_simplex_mesh_2d();
+        let space = HCurlSpace::new(simplex, order);
+        VectorBoundaryAssembler::assemble_boundary_bilinear(
+            &space, &[&integ], boundary_tags, 4,
+        )
+    } else if mesh.dim == 3 {
+        let simplex = mesh.to_simplex_mesh();
+        let space = HCurlSpace::new(simplex, order);
+        VectorBoundaryAssembler::assemble_boundary_bilinear(
+            &space, &[&integ], boundary_tags, 4,
+        )
+    } else {
+        return Err(RemError::Config(format!(
+            "HCurl surface matrix only supports 2-D/3-D, got dim={}", mesh.dim
+        )));
+    };
+    Ok(CsrMatrix::from_fem_csr(k_surf))
+}
+
+/// Compute Q-factors for HCurl eigenmodes using perturbation.
+///
+/// Dielectric: Q_d = (xᵀ M x) / (xᵀ M_loss x)  where M_loss uses ε·tanδ.
+/// Conductor:  1/Q_c = R_s/(ωμ₀)·(xᵀ K_surf x)/(xᵀ M x),  R_s = √(ωμ₀/(2σ_wall)).
+/// Combined:   1/Q_total = 1/Q_d + 1/Q_c
+fn compute_q_factors_hcurl(
+    m_mat: &CsrMatrix,
+    eigenpairs: &[(f64, Vec<f64>)],
+    config: &PalaceConfig,
+    mesh: &RemMesh,
+    domain_map: &DomainMap,
+    n: usize,
+    comm: &dyn Comm,
+) -> RemResult<Option<Vec<f64>>> {
+    let order = config.solver.eigenmode_hcurl_order().clamp(1, 2) as u8;
+
+    // ── Dielectric loss: M_loss with ε·tanδ coefficient ──────────────────
+    let has_lossy = mesh.domain_tags.keys().any(|&tag| domain_map.get(tag).is_lossy());
+    let m_loss: Option<CsrMatrix> = if has_lossy {
+        // Pre-collect (ε·tanδ) per element tag into an owned Vec (avoids capturing &DomainMap).
+        let max_tag = mesh.domain_tags.keys().copied().max().unwrap_or(0) as usize;
+        let mut loss_coeffs = vec![0.0f64; max_tag + 1];
+        for (&tag, _) in &mesh.domain_tags {
+            let mat = domain_map.get(tag);
+            loss_coeffs[tag as usize] = mat.epsilon_abs() * mat.loss_tangent;
+        }
+        Some(assemble_hcurl_form(mesh, order, move |ctx| {
+            let tid = ctx.elem_tag as usize;
+            *loss_coeffs.get(tid).unwrap_or(&0.0)
+        })?)
+    } else {
+        None
+    };
+
+    // ── Conductor loss: tangential mass on PEC/Ground boundaries ─────────
+    let sigma_wall = config.solver.eigenmode.as_ref()
+        .map(|e| e.wall_conductivity)
+        .unwrap_or(0.0);
+
+    let has_conductor = sigma_wall > 0.0
+        && mesh.boundary_tags.values().any(|bc| {
+            matches!(bc, BoundaryTag::Pec | BoundaryTag::Ground)
+        });
+
+    let k_surf: Option<CsrMatrix> = if has_conductor {
+        let pec_tags: Vec<i32> = mesh.boundary_tags.iter()
+            .filter_map(|(tag, bc)| {
+                if matches!(bc, BoundaryTag::Pec | BoundaryTag::Ground) {
+                    Some(*tag as i32)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let ks = assemble_hcurl_surface_matrix(mesh, order, &pec_tags)?;
+        log::info!(
+            "HCurl conductor Q: assembled {}×{} tangential mass matrix on {} PEC tags",
+            ks.nrows, ks.ncols, pec_tags.len()
+        );
+        Some(ks)
+    } else {
+        None
+    };
+
+    if m_loss.is_none() && k_surf.is_none() {
+        return Ok(None);
+    }
+
+    let mu0: f64 = 1.25663706212e-6;
+    let freqs: Vec<f64> = eigenpairs.iter().map(|(f, _)| *f).collect();
+
+    let qs: Vec<f64> = eigenpairs.iter().zip(freqs.iter()).map(|((freq_hz, phi), _)| {
+        let omega = 2.0 * PI * freq_hz;
+
+        let mut m_phi = vec![0.0f64; n];
+        m_mat.matvec(phi, &mut m_phi, comm);
+        let denom: f64 = phi.iter().zip(m_phi.iter()).map(|(a, b)| a * b).sum();
+        let denom_safe = if denom.abs() > 1e-300 { denom } else { 1.0 };
+
+        // Dielectric contribution: 1/Q_d = (xᵀ M_loss x) / (xᵀ M x)
+        let inv_q_diel = m_loss.as_ref().map(|ml| {
+            let mut ml_phi = vec![0.0f64; n];
+            ml.matvec(phi, &mut ml_phi, comm);
+            let num: f64 = phi.iter().zip(ml_phi.iter()).map(|(a, b)| a * b).sum();
+            if num.abs() > 1e-300 { num / denom_safe } else { 0.0 }
+        }).unwrap_or(0.0);
+
+        // Conductor contribution: 1/Q_c = R_s/(ωμ₀)·(xᵀ K_surf x)/(xᵀ M x)
+        let inv_q_cond = k_surf.as_ref().map(|ks| {
+            let mut ks_phi = vec![0.0f64; n];
+            ks.matvec(phi, &mut ks_phi, comm);
+            let surf: f64 = phi.iter().zip(ks_phi.iter()).map(|(a, b)| a * b).sum();
+            if omega > 0.0 && denom.abs() > 1e-300 && surf > 1e-300 {
+                let r_s = (omega * mu0 / (2.0 * sigma_wall)).sqrt();
+                (r_s * surf) / (omega * mu0 * denom_safe)
+            } else {
+                0.0
+            }
+        }).unwrap_or(0.0);
+
+        let inv_total = inv_q_diel + inv_q_cond;
+        if inv_total > 1e-300 { 1.0 / inv_total } else { f64::INFINITY }
+    }).collect();
+
+    if has_conductor {
+        let f0 = eigenpairs.first().map(|(f, _)| *f).unwrap_or(1e9);
+        let omega0 = 2.0 * PI * f0;
+        let r_s0 = (omega0 * mu0 / (2.0 * sigma_wall)).sqrt();
+        log::info!(
+            "HCurl Q-factors: dielectric + conductor (σ_wall={:.3e} S/m, R_s={:.4} mΩ/□ @ {:.3} GHz)",
+            sigma_wall, r_s0 * 1e3, f0 / 1e9,
+        );
+    } else if m_loss.is_some() {
+        log::info!("HCurl Q-factors: dielectric loss only");
+    }
+
+    Ok(Some(qs))
 }

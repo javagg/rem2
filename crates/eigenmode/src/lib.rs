@@ -166,13 +166,14 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
     std::fs::create_dir_all(out_dir).map_err(RemError::Io)?;
     output::write_eigenfrequencies(out_dir, &result)?;
 
-    let save_n = if result.is_hcurl {
-        0
-    } else {
-        eig_cfg.save.min(result.frequencies_hz.len())
-    };
+    let save_n = eig_cfg.save.min(result.frequencies_hz.len());
     for (mode_idx, phi) in result.eigenvectors.iter().enumerate().take(save_n) {
-        output::write_mode_vtk(out_dir, &final_mesh, phi, mode_idx + 1)?;
+        if result.is_hcurl {
+            let order = config.solver.eigenmode_hcurl_order().clamp(1, 2) as u8;
+            output::write_mode_vector_vtk(out_dir, &final_mesh, phi, mode_idx + 1, order)?;
+        } else {
+            output::write_mode_vtk(out_dir, &final_mesh, phi, mode_idx + 1)?;
+        }
     }
 
     // Field probes (Domains.Postprocessing.Probe) — one row per (mode, probe)

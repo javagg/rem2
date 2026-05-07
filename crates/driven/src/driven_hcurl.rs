@@ -118,14 +118,14 @@ pub(crate) fn run_hcurl_driven(
         apply_pec_constraints(&mut a_base, &pec_dofs, n);
 
         // ── Multi-port S-matrix ──────────────────────────────────────────
-        let (s11, s_matrix, edge_re, port_vi_opt) = if n_ports > 1 {
+        let (s11, s_matrix, edge_complex, port_vi_opt) = if n_ports > 1 {
             let z0_vec: Vec<Complex64> = all_ports
                 .iter()
                 .map(|&pidx| lumped_port_z0_hcurl(mesh, pidx, omega))
                 .collect();
 
             let mut z_cols: Vec<Vec<Complex64>> = Vec::with_capacity(n_ports);
-            let mut first_e_re: Vec<f64> = Vec::new();
+            let mut first_edge: Vec<Complex64> = Vec::new();
 
             for (j, &exc_idx) in all_ports.iter().enumerate() {
                 // Build port admittance loading for all ports ≠ exc_idx
@@ -139,7 +139,7 @@ pub(crate) fn run_hcurl_driven(
                 let e_vec = solve_hcurl_system(&a_port, &rhs, lin.tol, lin.max_iter, use_bicgstab)?;
 
                 if j == 0 {
-                    first_e_re = e_vec.iter().map(|x| x.re).collect();
+                    first_edge = e_vec.clone();
                 }
 
                 // Extract port voltages for all ports
@@ -153,14 +153,12 @@ pub(crate) fn run_hcurl_driven(
             let s_mat = z_to_s_matrix_hcurl(&z_cols, &z0_vec);
             let s11_c = s_mat[0][0];
             log::info!("HCurl f={:.3e} Hz  |S11|={:.4}  ({} ports)", freq, s11_c.norm(), n_ports);
-            (s11_c, s_mat, first_e_re, None::<PortVi>)
+            (s11_c, s_mat, first_edge, None::<PortVi>)
         } else {
             // Single-port path
             let exc_idx = all_ports[0];
             let rhs = build_port_rhs(mesh, exc_idx, &pec_dofs, n);
             let e_vec = solve_hcurl_system(&a_base, &rhs, lin.tol, lin.max_iter, use_bicgstab)?;
-            let edge_re: Vec<f64> = e_vec.iter().map(|x| x.re).collect();
-
             let v_port = integrate_port_voltage(mesh, exc_idx, &e_vec);
             let z0 = lumped_port_z0_hcurl(mesh, exc_idx, omega);
             // Current from RHS normalization: I = 1 A (unit excitation)
@@ -175,8 +173,10 @@ pub(crate) fn run_hcurl_driven(
             );
             let p = v_port * i_port.conj() * Complex64::new(0.5, 0.0);
             let vi = PortVi { port_index: exc_idx, v: v_port, i: i_port, p };
-            (s11, vec![], edge_re, Some(vi))
+            (s11, vec![], e_vec, Some(vi))
         };
+
+        let edge_re: Vec<f64> = edge_complex.iter().map(|x| x.re).collect();
 
         let port_list: Vec<u32> = all_ports.clone();
         freq_results.push(FreqResult {
@@ -197,8 +197,8 @@ pub(crate) fn run_hcurl_driven(
 
         #[cfg(not(target_arch = "wasm32"))]
         if step % save_step == 0 {
-            // Write edge-DOF magnitudes as a proxy field (no vector VTK yet)
-            crate::output::write_field_vtk(out_dir, mesh, &edge_re, step + 1)?;
+            let vtk_order = config.solver.eigenmode_hcurl_order().clamp(1, 2) as u8;
+            crate::output::write_field_vector_vtk(out_dir, mesh, &edge_complex, step + 1, vtk_order)?;
         }
 
         let _ = comm;
@@ -734,5 +734,72 @@ mod tests {
         let s11_mag = (fr.s11_re * fr.s11_re + fr.s11_im * fr.s11_im).sqrt();
         assert!(s11_mag.is_finite(), "|S11| should be finite, got {}", s11_mag);
         assert!(s11_mag <= 1.0 + 1e-6, "|S11| should be ≤ 1, got {:.4}", s11_mag);
+    }
+
+    #[test]
+    fn hcurl_driven_two_port_s21_finite() {
+        // 2-D parallel-plate transmission line: 4×2 mm, 8×4 grid.
+        // Port 1 on left (tag 1), Port 2 on right (tag 2),
+        // PEC top (tag 3) and bottom (tag 4).
+        let msh = rect_msh(4.0, 2.0, 8, 4, 1, 2, 3, 4, 10);
+        let raw = read_msh_str(&msh).expect("rect_msh should parse");
+
+        let json = format!(
+            r#"{{
+                "Problem": {{"Type": "Driven"}},
+                "Model":   {{"Mesh": "tl.msh", "L0": 1e-3}},
+                "Domains": {{
+                    "Materials": [{{"Attributes": [10], "Permittivity": 1.0, "Permeability": 1.0}}]
+                }},
+                "Boundaries": {{
+                    "PEC":         {{"Attributes": [3, 4]}},
+                    "LumpedPort": [
+                        {{"Index": 1, "Attributes": [1], "R": 50.0}},
+                        {{"Index": 2, "Attributes": [2], "R": 50.0}}
+                    ]
+                }},
+                "Solver": {{
+                    "Order": 1,
+                    "Driven": {{
+                        "MinFreq": 1e9,
+                        "MaxFreq": 1e9,
+                        "FreqStep": 1e9,
+                        "SaveStep": 999
+                    }},
+                    "Linear": {{"Tol": 1e-8, "MaxIter": 500, "KSPType": "bicgstab"}}
+                }}
+            }}"#
+        );
+        let config = load_config_from_str(&json, ConfigFormat::Json)
+            .expect("config should parse");
+        let mesh = RemMesh::from_raw(raw, &config).expect("RemMesh::from_raw failed");
+        let domain_map = rem_materials::DomainMap::from_config(&config)
+            .expect("DomainMap::from_config failed");
+
+        let result = run_hcurl_driven(&config, &mesh, &domain_map, &NoComm);
+        assert!(
+            result.is_ok(),
+            "HCurl driven 2-port returned error: {:?}",
+            result.err()
+        );
+
+        let dr = result.unwrap();
+        assert_eq!(dr.freq_results.len(), 1, "expected exactly one frequency result");
+
+        let fr = &dr.freq_results[0];
+        // S₂₁ should be finite and non-trivial (physical normalisation may
+        // differ from 50 Ω on this coarse 2-D mesh, so only check sanity).
+        let s21 = fr
+            .s_matrix
+            .get(1)
+            .and_then(|row| row.get(0))
+            .copied()
+            .unwrap_or_default();
+        let s21_mag = (s21.re * s21.re + s21.im * s21.im).sqrt();
+        assert!(s21_mag.is_finite(), "|S₂₁| should be finite, got {}", s21_mag);
+        assert!(
+            s21_mag > 1e-12,
+            "|S₂₁| should be non-zero for a transmission line"
+        );
     }
 }
