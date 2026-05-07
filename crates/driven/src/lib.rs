@@ -136,12 +136,12 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
 /// Returns the driven frequency sweep result including S-params and peak E-field.
 pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> RemResult<DrivenResult> {
     log::info!("\n=== Driven (frequency-domain) solver ===\n");
-    if config.solver.uses_hcurl() {
+    if config.solver.uses_hcurl_for_driven() {
         let domain_map = DomainMap::from_config(config)?;
         return driven_hcurl::run_hcurl_driven(config, mesh, &domain_map, comm);
     } else {
         log::warn!(
-            "Driven solver: scalar H1 nodal discretization selected (Solver.Discretization=\"H1\"). \
+            "Driven solver: scalar H1 nodal discretization selected (effective formulation=H1). \
              Spurious modes may appear at conductor edges. Use \"HCurl\" for curl-conforming edge elements."
         );
     }

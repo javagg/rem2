@@ -42,13 +42,13 @@ const AMR_FREQ_ABS_TOL: f64 = 1e6; // 1 MHz
 /// Entry point called from rem-cli.
 pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
     log::info!("\n=== Eigenmode (frequency-domain) solver ===\n");
-    if config.solver.uses_hcurl() {
+    if config.solver.uses_hcurl_for_eigenmode() {
         log::info!(
             "Eigenmode solver using HCurl/Nedelec edge-element discretization."
         );
     } else {
         log::warn!(
-            "Eigenmode solver: scalar H1 nodal discretization selected (Solver.Discretization=\"H1\"). \
+            "Eigenmode solver: scalar H1 nodal discretization selected (effective formulation=H1). \
              Non-physical spurious modes may appear in cavity/waveguide solutions. Use \"HCurl\" (the default)."
         );
     }
@@ -83,9 +83,9 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
 
     // AMR loop: refine mesh adaptively and re-solve
     let amr_cfg = &config.model.refinement;
-    let mut max_amr_iter = if amr_cfg.max_iter > 0 { amr_cfg.max_iter } else { 0 };
+    let max_amr_iter = if amr_cfg.max_iter > 0 { amr_cfg.max_iter } else { 0 };
     let amr_theta    = if amr_cfg.tol > 0.0 { amr_cfg.tol } else { 0.5 };
-    if config.solver.uses_hcurl() && max_amr_iter > 0 {
+    if config.solver.uses_hcurl_for_eigenmode() && max_amr_iter > 0 {
         log::info!(
             "HCurl AMR enabled: using element-area indicator (frequency-convergence criterion). \
              Refinement proceeds until Δf/f < {:.1e} or max {} iterations.",
@@ -299,7 +299,7 @@ pub fn solve(
     domain_map: &DomainMap,
     comm: &dyn Comm,
 ) -> RemResult<EigenResult> {
-    if config.solver.uses_hcurl() {
+    if config.solver.uses_hcurl_for_eigenmode() {
         return hcurl::solve_hcurl(config, mesh, domain_map, comm);
     }
 

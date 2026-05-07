@@ -7,6 +7,10 @@
 
 use rem_core::{RemError, RemResult};
 
+fn is_supported_formulation(v: &str) -> bool {
+    matches!(v.to_lowercase().as_str(), "" | "auto" | "h1" | "hcurl" | "nedelec")
+}
+
 // ---------------------------------------------------------------------------
 // Known problem types
 // ---------------------------------------------------------------------------
@@ -140,6 +144,20 @@ pub(crate) fn validate_config_semantics(cfg: &super::PalaceConfig) -> RemResult<
                     "Solver.Driven.MinFreq and MaxFreq must be non-negative.".to_string()
                 ));
             }
+            if !is_supported_formulation(&drv.formulation) {
+                return Err(RemError::Config(format!(
+                    "Solver.Driven.Formulation = \"{}\" is not supported. Use Auto, HCurl/Nedelec, or H1.",
+                    drv.formulation
+                )));
+            }
+            if let Some(order) = drv.hcurl_order {
+                if !(1..=2).contains(&order) {
+                    return Err(RemError::Config(format!(
+                        "Solver.Driven.HCurlOrder = {} is invalid. Supported values: 1 or 2.",
+                        order
+                    )));
+                }
+            }
         } else {
             log::warn!(
                 "[REM] Config: Problem.Type = \"Driven\" but no Solver.Driven section found. \
@@ -155,6 +173,20 @@ pub(crate) fn validate_config_semantics(cfg: &super::PalaceConfig) -> RemResult<
                 return Err(RemError::Config(
                     "Solver.Eigenmode.N must be ≥ 1.".to_string()
                 ));
+            }
+            if !is_supported_formulation(&eig.formulation) {
+                return Err(RemError::Config(format!(
+                    "Solver.Eigenmode.Formulation = \"{}\" is not supported. Use Auto, HCurl/Nedelec, or H1.",
+                    eig.formulation
+                )));
+            }
+            if let Some(order) = eig.hcurl_order {
+                if !(1..=2).contains(&order) {
+                    return Err(RemError::Config(format!(
+                        "Solver.Eigenmode.HCurlOrder = {} is invalid. Supported values: 1 or 2.",
+                        order
+                    )));
+                }
             }
         } else {
             log::warn!(
@@ -230,5 +262,106 @@ mod tests {
             "Solver":{"Driven":{"MinFreq":10e9,"MaxFreq":1e9,"FreqStep":1e8}}}"#;
         let err = load_config_from_str(json, ConfigFormat::Json).unwrap_err();
         assert!(err.to_string().contains("MinFreq"), "got: {}", err);
+    }
+
+    #[test]
+    fn driven_formulation_override_h1() {
+        use crate::{load_config_from_str, ConfigFormat};
+        let json = r#"{
+            "Problem": {"Type": "Driven"},
+            "Model": {"Mesh": "x.msh"},
+            "Solver": {
+                "Discretization": "HCurl",
+                "Driven": {"MinFreq": 1e9, "MaxFreq": 1e9, "FreqStep": 1e8, "Formulation": "H1"}
+            }
+        }"#;
+        let cfg = load_config_from_str(json, ConfigFormat::Json).expect("config should parse");
+        assert!(cfg.solver.uses_hcurl());
+        assert!(!cfg.solver.uses_hcurl_for_driven());
+    }
+
+    #[test]
+    fn eigen_formulation_override_hcurl() {
+        use crate::{load_config_from_str, ConfigFormat};
+        let json = r#"{
+            "Problem": {"Type": "Eigenmode"},
+            "Model": {"Mesh": "x.msh"},
+            "Solver": {
+                "Discretization": "H1",
+                "Eigenmode": {"N": 1, "Formulation": "HCurl"}
+            }
+        }"#;
+        let cfg = load_config_from_str(json, ConfigFormat::Json).expect("config should parse");
+        assert!(!cfg.solver.uses_hcurl());
+        assert!(cfg.solver.uses_hcurl_for_eigenmode());
+    }
+
+    #[test]
+    fn invalid_driven_formulation_rejected() {
+        use crate::{load_config_from_str, ConfigFormat};
+        let json = r#"{
+            "Problem": {"Type": "Driven"},
+            "Model": {"Mesh": "x.msh"},
+            "Solver": {
+                "Driven": {"MinFreq": 1e9, "MaxFreq": 1e9, "FreqStep": 1e8, "Formulation": "Foo"}
+            }
+        }"#;
+        let err = load_config_from_str(json, ConfigFormat::Json).unwrap_err();
+        assert!(err.to_string().contains("Formulation"), "got: {}", err);
+    }
+
+    #[test]
+    fn driven_hcurl_order_override_and_fallback() {
+        use crate::{load_config_from_str, ConfigFormat};
+        let json = r#"{
+            "Problem": {"Type": "Driven"},
+            "Model": {"Mesh": "x.msh"},
+            "Solver": {
+                "Order": 1,
+                "Driven": {
+                    "MinFreq": 1e9,
+                    "MaxFreq": 1e9,
+                    "FreqStep": 1e8,
+                    "HCurlOrder": 2
+                }
+            }
+        }"#;
+        let cfg = load_config_from_str(json, ConfigFormat::Json).expect("config should parse");
+        assert_eq!(cfg.solver.order, 1);
+        assert_eq!(cfg.solver.driven_hcurl_order(), 2);
+    }
+
+    #[test]
+    fn eigen_hcurl_order_falls_back_to_solver_order() {
+        use crate::{load_config_from_str, ConfigFormat};
+        let json = r#"{
+            "Problem": {"Type": "Eigenmode"},
+            "Model": {"Mesh": "x.msh"},
+            "Solver": {
+                "Order": 2,
+                "Eigenmode": {"N": 1}
+            }
+        }"#;
+        let cfg = load_config_from_str(json, ConfigFormat::Json).expect("config should parse");
+        assert_eq!(cfg.solver.eigenmode_hcurl_order(), 2);
+    }
+
+    #[test]
+    fn invalid_hcurl_order_rejected() {
+        use crate::{load_config_from_str, ConfigFormat};
+        let json = r#"{
+            "Problem": {"Type": "Driven"},
+            "Model": {"Mesh": "x.msh"},
+            "Solver": {
+                "Driven": {
+                    "MinFreq": 1e9,
+                    "MaxFreq": 1e9,
+                    "FreqStep": 1e8,
+                    "HCurlOrder": 3
+                }
+            }
+        }"#;
+        let err = load_config_from_str(json, ConfigFormat::Json).unwrap_err();
+        assert!(err.to_string().contains("HCurlOrder"), "got: {}", err);
     }
 }

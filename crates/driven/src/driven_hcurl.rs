@@ -36,7 +36,7 @@ use crate::{DrivenResult, FreqResult, PortVi};
 // Public entry point
 // ---------------------------------------------------------------------------
 
-/// Entry point called when `Solver.Discretization = HCurl`.
+/// Entry point called when driven effective formulation resolves to HCurl.
 ///
 /// Performs a frequency sweep using Nedelec edge elements (ND1 or ND2 per
 /// `Solver.Order`).  Returns the same `DrivenResult` structure as the scalar
@@ -58,11 +58,12 @@ pub(crate) fn run_hcurl_driven(
     log::info!("HCurl driven: {} frequency points", freqs.len());
 
     // Choose element order (ND1 = order 1, ND2 = order 2)
-    let order: u8 = config.solver.order.clamp(1, 2);
-    if config.solver.order > 2 {
+    let requested_order = config.solver.driven_hcurl_order();
+    let order: u8 = requested_order.clamp(1, 2);
+    if requested_order > 2 {
         log::warn!(
-            "HCurl driven supports order 1/2 only; Solver.Order={} requested, using order 2.",
-            config.solver.order
+            "HCurl driven supports order 1/2 only; requested order={} (Driven.HCurlOrder or Solver.Order), using order 2.",
+            requested_order
         );
     }
 

@@ -657,6 +657,16 @@ impl Default for SolverConfig {
 
 fn default_device() -> String { "CPU".to_string() }
 fn default_discretization() -> String { "HCurl".to_string() }
+fn default_formulation_auto() -> String { "Auto".to_string() }
+
+fn parse_hcurl_formulation(value: &str) -> Option<bool> {
+    match value.to_lowercase().as_str() {
+        "hcurl" | "nedelec" => Some(true),
+        "h1" => Some(false),
+        "auto" | "" => None,
+        _ => None,
+    }
+}
 
 impl SolverConfig {
     /// Returns `true` when H(curl)/Nedelec discretization is requested.
@@ -665,6 +675,52 @@ impl SolverConfig {
             self.discretization.to_lowercase().as_str(),
             "hcurl" | "nedelec"
         )
+    }
+
+    /// Returns effective H(curl) selection for the driven solver.
+    ///
+    /// Precedence:
+    /// 1. Solver.Driven.Formulation (HCurl/Nedelec/H1)
+    /// 2. Solver.Discretization (global fallback)
+    pub fn uses_hcurl_for_driven(&self) -> bool {
+        if let Some(drv) = &self.driven {
+            if let Some(v) = parse_hcurl_formulation(&drv.formulation) {
+                return v;
+            }
+        }
+        self.uses_hcurl()
+    }
+
+    /// Returns effective H(curl) selection for the eigenmode solver.
+    ///
+    /// Precedence:
+    /// 1. Solver.Eigenmode.Formulation (HCurl/Nedelec/H1)
+    /// 2. Solver.Discretization (global fallback)
+    pub fn uses_hcurl_for_eigenmode(&self) -> bool {
+        if let Some(eig) = &self.eigenmode {
+            if let Some(v) = parse_hcurl_formulation(&eig.formulation) {
+                return v;
+            }
+        }
+        self.uses_hcurl()
+    }
+
+    /// Effective HCurl polynomial order for driven solver.
+    /// Falls back to Solver.Order when Driven.HCurlOrder is not set.
+    pub fn driven_hcurl_order(&self) -> u8 {
+        self.driven
+            .as_ref()
+            .and_then(|d| d.hcurl_order)
+            .unwrap_or(self.order)
+    }
+
+    /// Effective HCurl polynomial order for eigenmode solver.
+    /// Falls back to Solver.Order when Eigenmode.HCurlOrder is not set.
+    pub fn eigenmode_hcurl_order(&self) -> u8 {
+        self.eigenmode
+            .as_ref()
+            .and_then(|e| e.hcurl_order)
+            .unwrap_or(self.order)
     }
 }
 
@@ -687,6 +743,20 @@ pub struct EigenmodeSolver {
     /// Number of modes to save to disk
     #[serde(rename = "Save", default = "default_save")]
     pub save: usize,
+
+    /// Optional discretization override for eigenmode only.
+    ///
+    /// Supported values (case-insensitive):
+    /// - `Auto` (default): follow `Solver.Discretization`
+    /// - `HCurl` / `Nedelec`: force edge-element path
+    /// - `H1`: force scalar nodal path
+    #[serde(rename = "Formulation", default = "default_formulation_auto")]
+    pub formulation: String,
+
+    /// Optional HCurl order override for eigenmode (1=ND1, 2=ND2).
+    /// If omitted, `Solver.Order` is used.
+    #[serde(rename = "HCurlOrder", default)]
+    pub hcurl_order: Option<u8>,
 
     /// Conductor wall conductivity σ [S/m] for Q_conductor calculation.
     /// Set to a positive value (e.g. 5.8e7 for copper) to enable ohmic surface
@@ -713,6 +783,20 @@ pub struct DrivenSolver {
 
     #[serde(rename = "SaveStep", default = "default_save_step")]
     pub save_step: usize,
+
+    /// Optional discretization override for driven solver only.
+    ///
+    /// Supported values (case-insensitive):
+    /// - `Auto` (default): follow `Solver.Discretization`
+    /// - `HCurl` / `Nedelec`: force edge-element path
+    /// - `H1`: force scalar nodal path
+    #[serde(rename = "Formulation", default = "default_formulation_auto")]
+    pub formulation: String,
+
+    /// Optional HCurl order override for driven (1=ND1, 2=ND2).
+    /// If omitted, `Solver.Order` is used.
+    #[serde(rename = "HCurlOrder", default)]
+    pub hcurl_order: Option<u8>,
 
     #[serde(rename = "AdaptiveTol", default)]
     pub adaptive_tol: f64,

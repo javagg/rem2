@@ -28,11 +28,12 @@ pub(crate) fn solve_hcurl(
         RemError::Config("missing Eigenmode solver config".into())
     })?;
 
-    let order = config.solver.order.clamp(1, 2);
-    if config.solver.order > 2 {
+    let requested_order = config.solver.eigenmode_hcurl_order();
+    let order = requested_order.clamp(1, 2);
+    if requested_order > 2 {
         log::warn!(
-            "HCurl currently supports order 1/2 only; Solver.Order={} requested, using order 2.",
-            config.solver.order
+            "HCurl currently supports order 1/2 only; requested order={} (Eigenmode.HCurlOrder or Solver.Order), using order 2.",
+            requested_order
         );
     }
 
