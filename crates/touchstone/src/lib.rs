@@ -6,5 +6,5 @@
 pub mod write;
 pub mod read;
 
-pub use write::{write_snp, TsFormat, TsFreqUnit};
+pub use write::{write_snp, write_snp_v2, TsFormat, TsFreqUnit};
 pub use read::{read_snp, TouchstoneFile, TsReadError};

@@ -1147,6 +1147,116 @@ pub struct MomSolverConfig {
     /// Default 0.0 (phase-only correction).
     #[serde(rename = "DeembedAlpha", default)]
     pub deembed_alpha_np_per_m: f64,
+
+    /// Hierarchical basis function order: 1 = RWG, 2 = HO-RWG, 3 = P3.
+    /// Used when `Basis = "Hierarchical"` to select the polynomial degree.
+    /// Ignored for explicit basis tokens (e.g. `Basis = "HO"`).
+    #[serde(rename = "BasisOrder", default)]
+    pub basis_order: Option<u8>,
+
+    /// Floquet/periodic unit cell first lattice vector [m] as [x, y, z].
+    /// Required when `Basis = "Periodic"` or `Basis = "Floquet"`.
+    #[serde(rename = "FloquetA1", default)]
+    pub floquet_a1: Option<[f64; 3]>,
+
+    /// Floquet/periodic unit cell second lattice vector [m] as [x, y, z].
+    /// Required when `Basis = "Periodic"` or `Basis = "Floquet"`.
+    #[serde(rename = "FloquetA2", default)]
+    pub floquet_a2: Option<[f64; 3]>,
+
+    /// Floquet incident wavenumber [rad/m] as [kx, ky].
+    /// Default [0, 0] (normal incidence). Used when `Basis = "Floquet"`.
+    #[serde(rename = "FloquetKInc", default)]
+    pub floquet_k_inc: Option<[f64; 2]>,
+
+    /// Number of characteristic modes to compute for CMA post-processing.
+    /// Ignored unless `Equation = "CMA"`.  Default 10.
+    #[serde(rename = "CmaModes", default)]
+    pub cma_modes: Option<usize>,
+
+    /// Symmetry planes for DOF elimination.
+    /// Each entry specifies a plane (e.g. `"x=0"`, `"y=0"`) on which
+    /// RWG edge DOFs are eliminated (enforces PEC/PMC symmetry condition).
+    #[serde(rename = "SymmetryPlanes", default)]
+    pub symmetry_planes: Vec<SymmetryPlaneConfig>,
+
+    /// Automatically detect lumped ports from mesh boundary edges.
+    /// When true, the solver scans boundary edge clusters and adds any
+    /// discovered port candidates after the explicitly defined ports.
+    /// Default false.
+    #[serde(rename = "AutoDetectPorts", default)]
+    pub auto_detect_ports: bool,
+
+    /// Minimum number of faces required for an auto-detected port cluster.
+    /// Smaller clusters are ignored.  Default 1.
+    #[serde(rename = "AutoPortMinFaces", default = "default_auto_port_min_faces")]
+    pub auto_port_min_faces: usize,
+
+    /// Maximum transverse width [m] of an auto-detected port cluster.
+    /// Wider clusters are ignored.  Default 1.0 m (effectively unlimited
+    /// for most circuits).
+    #[serde(rename = "AutoPortMaxWidth", default = "default_auto_port_max_width")]
+    pub auto_port_max_width: f64,
+
+    /// When true, fail with an error if a WavePort modal profile cannot be
+    /// constructed on the selected port patch (instead of falling back to
+    /// uniform excitation).  Default false.
+    #[serde(rename = "WavePortRequireModal", default)]
+    pub waveport_require_modal: bool,
+
+    /// Optional TRL calibration kit parameters for 2-port de-embedding.
+    #[serde(rename = "TrlKit", default)]
+    pub trl_kit: Option<TrlKitConfig>,
+
+    /// Optional output renormalization impedance [ohm].
+    /// When set, final S-parameters are renormalized from per-port Z0 to this value.
+    #[serde(rename = "OutputRefImpedance", default)]
+    pub output_ref_impedance: Option<f64>,
+
+    /// Export per-face current density CSV at the final sweep frequency.
+    #[serde(rename = "ExportCurrentDensity", default)]
+    pub export_current_density: bool,
+}
+
+fn default_auto_port_min_faces() -> usize { 1 }
+fn default_auto_port_max_width() -> f64   { 1.0 }
+
+/// A symmetry-plane definition for MoM DOF elimination.
+///
+/// The `Plane` field accepts strings of the form `"x=0"`, `"y=0.5"`, `"z=-0.1"`.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct SymmetryPlaneConfig {
+    /// Plane specification, e.g. `"x=0"`, `"y=0"`, `"z=0"`.
+    #[serde(rename = "Plane", default)]
+    pub plane: String,
+}
+
+/// TRL calibration kit configuration for 2-port S-parameter correction.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TrlKitConfig {
+    /// Physical length of the thru standard [m].
+    #[serde(rename = "ThruLength")]
+    pub thru_length: f64,
+
+    /// Physical length of the line standard [m].
+    #[serde(rename = "LineLength")]
+    pub line_length: f64,
+
+    /// Characteristic impedance of the line standard [ohm].
+    #[serde(rename = "LineImpedance")]
+    pub line_impedance: f64,
+
+    /// Effective dielectric constant used for initial gamma estimate.
+    #[serde(rename = "EpsilonEff")]
+    pub epsilon_eff: f64,
+
+    /// Reflect standard type (e.g. "open", "short", "load").
+    #[serde(rename = "ReflectType")]
+    pub reflect_type: String,
+
+    /// Magnitude of the reflect standard reflection coefficient.
+    #[serde(rename = "ReflectMagnitude")]
+    pub reflect_magnitude: f64,
 }
 
 fn default_mom_equation() -> String { "CFIE".to_string() }
@@ -1222,6 +1332,29 @@ pub struct MomPort {
     /// Positive values shift the reference plane away from the port.
     #[serde(rename = "DeembedLength", default)]
     pub deembed_length: f64,
+
+    /// Inner conductor radius [m] for coaxial port geometry.
+    /// When set together with `OuterRadius`, overrides the auto-detected
+    /// radii for `Type = "Coaxial"` ports.  Ignored for lumped ports.
+    #[serde(rename = "InnerRadius", default)]
+    pub inner_radius: Option<f64>,
+
+    /// Outer conductor radius [m] for coaxial port geometry.
+    /// See `InnerRadius`.
+    #[serde(rename = "OuterRadius", default)]
+    pub outer_radius: Option<f64>,
+
+    /// Optional shunt load resistance [ohm] stamped at this port.
+    #[serde(rename = "LoadR", default)]
+    pub load_r: f64,
+
+    /// Optional shunt load inductance [H] stamped at this port.
+    #[serde(rename = "LoadL", default)]
+    pub load_l: f64,
+
+    /// Optional shunt load capacitance [F] stamped at this port.
+    #[serde(rename = "LoadC", default)]
+    pub load_c: f64,
 }
 
 // ---------------------------------------------------------------------------
@@ -1242,6 +1375,12 @@ pub struct SubstrateConfig {
     /// If false, semi-infinite dielectric extends downward.
     #[serde(rename = "BottomPec", default = "default_bottom_pec")]
     pub bottom_pec: bool,
+
+    /// Ground conductor conductivity sigma [S/m].
+    /// When > 0 the ground plane is treated as a lossy conductor using SIBC.
+    /// Default 0.0 (ideal PEC / not used).
+    #[serde(rename = "GroundConductivity", default)]
+    pub ground_conductivity: f64,
 }
 
 /// Single dielectric layer in the substrate stack.
@@ -1283,9 +1422,7 @@ pub struct SubstrateLayerConfig {
     ///
     /// When set, overrides the scalar `Permittivity` field.  Supports
     /// uniaxial anisotropy (ε_xx = ε_yy ≠ ε_zz) typical of laminated PCB
-    /// substrates (e.g., Rogers 4350B: ε_xy ≈ 3.48, ε_z ≈ 3.66).
-    /// The Sommerfeld integral uses ε_t = ε_xx for lateral wavenumber and
-    /// ε_z = ε_zz for vertical wavenumber in TM modes.
+    /// substrates. The layered Green model uses ε_t = ε_xx and ε_z = ε_zz.
     #[serde(rename = "PermittivityTensor", default)]
     pub permittivity_tensor: Option<[f64; 3]>,
 }
@@ -1775,22 +1912,10 @@ pub enum OptimObjective {
     MaxBandwidthS11dB {
         #[serde(rename = "Port")]       port:       usize,
         #[serde(rename = "ThreshDb")]   thresh_db:  f64,
-        #[serde(rename = "FreqMinHz")]  freq_min_hz: f64,
-        #[serde(rename = "FreqMaxHz")]  freq_max_hz: f64,
     },
-    /// Minimize squared deviation from a target S11 value in dB.
-    TargetS11dB {
-        #[serde(rename = "Port")]      port:      usize,
-        #[serde(rename = "FreqHz")]    freq_hz:   f64,
-        #[serde(rename = "TargetDb")]  target_db: f64,
-    },
+
 }
 
-/// Top-level parametric sweep / optimization configuration.
-///
-/// Place under `Solver.Parametric` in a MoM config JSON.
-///
-/// # Sweep example
 /// ```json
 /// "Parametric": {
 ///   "Mode": "Sweep",
