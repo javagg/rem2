@@ -13,7 +13,6 @@ members = [
     "crates/driven",
     "crates/transient",
     "crates/result",
-    "crates/convert",
     "crates/cli",
     "crates/parallel",
     "crates/wasm",
@@ -43,7 +42,6 @@ rem-surface   = { path = "crates/surface" }
 rem-materials = { path = "crates/materials" }
 rem-bc            = { path = "crates/bc" }
 rem-result        = { path = "crates/result" }
-rem-convert       = { path = "crates/convert" }
 rem-electrostatic = { path = "crates/electrostatic" }
 rem-magnetostatic = { path = "crates/magnetostatic" }
 rem-eigenmode     = { path = "crates/eigenmode" }
