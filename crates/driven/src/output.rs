@@ -1,9 +1,15 @@
 //! Output routines for driven (frequency-domain) results.
 
+use fem_element::nedelec::{TetND1, TetND2, TriND1, TriND2};
+use fem_element::reference::VectorReferenceElement;
+use fem_mesh::topology::MeshTopology;
+use fem_mesh::transformation::ElementTransformation;
+use fem_space::{FESpace, HCurlSpace};
+use num_complex::Complex64;
 use rem_core::{RemError, RemResult};
 use rem_mesh::RemMesh;
-use std::path::Path;
 use std::io::Write;
+use std::path::Path;
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DomainEnergyRecord {
     pub domain_tag: u32,
@@ -248,6 +254,212 @@ pub fn write_field_vtk(
         let v = if i < phi.len() { phi[i] } else { 0.0 };
         writeln!(f, "{:.6e}", v).map_err(RemError::Io)?;
     }
+
+    Ok(())
+}
+
+/// Write HCurl driven field as VTK with vector E-field cell data (real + imag).
+///
+/// Evaluates the Nedelec edge-element solution E = Σ x_e · φ_e at each
+/// element centroid and writes `CELL_DATA VECTORS E_real` / `E_imag`.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn write_field_vector_vtk(
+    out_dir: &str,
+    mesh: &RemMesh,
+    e_dofs: &[Complex64],
+    step: usize,
+    order: u8,
+) -> RemResult<()> {
+    let path = Path::new(out_dir).join(format!("driven_{:04}.vtk", step));
+    let mut f = std::fs::File::create(&path).map_err(RemError::Io)?;
+
+    writeln!(f, "# vtk DataFile Version 2.0").map_err(RemError::Io)?;
+    writeln!(f, "REM HCurl Driven step {}", step).map_err(RemError::Io)?;
+    writeln!(f, "ASCII").map_err(RemError::Io)?;
+    writeln!(f, "DATASET UNSTRUCTURED_GRID").map_err(RemError::Io)?;
+
+    match mesh.dim {
+        2 => write_driven_vtk_2d(&mut f, mesh, e_dofs, order)?,
+        3 => write_driven_vtk_3d(&mut f, mesh, e_dofs, order)?,
+        d => return Err(RemError::Config(format!(
+            "HCurl driven VTK requires 2-D or 3-D, got dim={}", d
+        ))),
+    }
+    Ok(())
+}
+
+/// 2-D driven VTK helper (TriND1/TriND2).
+#[cfg(not(target_arch = "wasm32"))]
+fn write_driven_vtk_2d(
+    f: &mut std::fs::File,
+    mesh: &RemMesh,
+    e_dofs: &[Complex64],
+    order: u8,
+) -> RemResult<()> {
+    use fem_mesh::SimplexMesh;
+    let simplex: SimplexMesh<2> = mesh.to_simplex_mesh_2d();
+    let space = HCurlSpace::new(simplex, order);
+    let smesh = space.mesh();
+
+    let dim = 2usize;
+    let ref_elem: Box<dyn VectorReferenceElement> = match order {
+        1 => Box::new(TriND1),
+        2 => Box::new(TriND2),
+        o => return Err(RemError::Config(format!("Driven VTK supports order 1/2 only, got {o}"))),
+    };
+    let n_ldofs = ref_elem.n_dofs();
+    let xi: Vec<f64> = vec![1.0 / 3.0; 2];
+    let mut ref_phi = vec![0.0; n_ldofs * dim];
+    let mut phys_phi = vec![0.0; n_ldofs * dim];
+    let n_elem = smesh.n_elements();
+    let n_node = smesh.n_nodes();
+
+    writeln!(f, "POINTS {} double", n_node).map_err(RemError::Io)?;
+    for n in 0..n_node as u32 {
+        let c = smesh.coords_of(n);
+        writeln!(f, "{:.6e} {:.6e} 0.0", c[0], c[1]).map_err(RemError::Io)?;
+    }
+
+    let cells_size: usize = smesh.elem_iter().map(|e| 1 + smesh.elem_nodes(e).len()).sum();
+    writeln!(f, "CELLS {} {}", n_elem, cells_size).map_err(RemError::Io)?;
+    let mut e_real_fields = Vec::with_capacity(n_elem);
+    let mut e_imag_fields = Vec::with_capacity(n_elem);
+    for e in smesh.elem_iter() {
+        let nodes = smesh.elem_nodes(e);
+        write!(f, "{}", nodes.len()).map_err(RemError::Io)?;
+        for &nid in nodes { write!(f, " {}", nid).map_err(RemError::Io)?; }
+        writeln!(f).map_err(RemError::Io)?;
+
+        let elem_dofs = space.element_dofs(e);
+        let signs = space.element_signs(e);
+        let tr = ElementTransformation::from_simplex_nodes(smesh, nodes);
+        let j_inv_t = tr.jacobian_inv_t().clone();
+        ref_elem.eval_basis_vec(&xi, &mut ref_phi);
+        for i in 0..n_ldofs {
+            for r in 0..dim {
+                let mut s = 0.0;
+                for c in 0..dim { s += j_inv_t[(r, c)] * ref_phi[i * dim + c]; }
+                phys_phi[i * dim + r] = s;
+            }
+        }
+        for i in 0..n_ldofs {
+            for c in 0..dim { phys_phi[i * dim + c] *= signs[i]; }
+        }
+
+        let mut er = [0.0f64; 3];
+        let mut ei = [0.0f64; 3];
+        for i in 0..n_ldofs {
+            let c = e_dofs[elem_dofs[i] as usize];
+            let base_re = c.re * phys_phi[i * dim];
+            let base_im = c.im * phys_phi[i * dim];
+            er[0] += base_re; er[1] += c.re * phys_phi[i * dim + 1];
+            ei[0] += base_im; ei[1] += c.im * phys_phi[i * dim + 1];
+        }
+        e_real_fields.push(er);
+        e_imag_fields.push(ei);
+    }
+
+    writeln!(f, "CELL_TYPES {}", n_elem).map_err(RemError::Io)?;
+    for e in smesh.elem_iter() {
+        match smesh.element_type(e) {
+            fem_mesh::ElementType::Tri6 => writeln!(f, "22")?,
+            _ => writeln!(f, "5")?,
+        }
+    }
+
+    writeln!(f, "CELL_DATA {}", n_elem).map_err(RemError::Io)?;
+    writeln!(f, "VECTORS E_real double").map_err(RemError::Io)?;
+    for e in &e_real_fields { writeln!(f, "{:.6e} {:.6e} {:.6e}", e[0], e[1], e[2])?; }
+    writeln!(f, "VECTORS E_imag double").map_err(RemError::Io)?;
+    for e in &e_imag_fields { writeln!(f, "{:.6e} {:.6e} {:.6e}", e[0], e[1], e[2])?; }
+
+    Ok(())
+}
+
+/// 3-D driven VTK helper (TetND1/TetND2).
+#[cfg(not(target_arch = "wasm32"))]
+fn write_driven_vtk_3d(
+    f: &mut std::fs::File,
+    mesh: &RemMesh,
+    e_dofs: &[Complex64],
+    order: u8,
+) -> RemResult<()> {
+    use fem_mesh::SimplexMesh;
+    let simplex: SimplexMesh<3> = mesh.to_simplex_mesh();
+    let space = HCurlSpace::new(simplex, order);
+    let smesh = space.mesh();
+
+    let dim = 3usize;
+    let ref_elem: Box<dyn VectorReferenceElement> = match order {
+        1 => Box::new(TetND1),
+        2 => Box::new(TetND2),
+        o => return Err(RemError::Config(format!("Driven VTK supports order 1/2 only, got {o}"))),
+    };
+    let n_ldofs = ref_elem.n_dofs();
+    let xi: Vec<f64> = vec![1.0 / 4.0; 3];
+    let mut ref_phi = vec![0.0; n_ldofs * dim];
+    let mut phys_phi = vec![0.0; n_ldofs * dim];
+    let n_elem = smesh.n_elements();
+    let n_node = smesh.n_nodes();
+
+    writeln!(f, "POINTS {} double", n_node).map_err(RemError::Io)?;
+    for n in 0..n_node as u32 {
+        let c = smesh.coords_of(n);
+        writeln!(f, "{:.6e} {:.6e} {:.6e}", c[0], c[1], c[2]).map_err(RemError::Io)?;
+    }
+
+    let cells_size: usize = smesh.elem_iter().map(|e| 1 + smesh.elem_nodes(e).len()).sum();
+    writeln!(f, "CELLS {} {}", n_elem, cells_size).map_err(RemError::Io)?;
+    let mut e_real_fields = Vec::with_capacity(n_elem);
+    let mut e_imag_fields = Vec::with_capacity(n_elem);
+    for e in smesh.elem_iter() {
+        let nodes = smesh.elem_nodes(e);
+        write!(f, "{}", nodes.len()).map_err(RemError::Io)?;
+        for &nid in nodes { write!(f, " {}", nid).map_err(RemError::Io)?; }
+        writeln!(f).map_err(RemError::Io)?;
+
+        let elem_dofs = space.element_dofs(e);
+        let signs = space.element_signs(e);
+        let tr = ElementTransformation::from_simplex_nodes(smesh, nodes);
+        let j_inv_t = tr.jacobian_inv_t().clone();
+        ref_elem.eval_basis_vec(&xi, &mut ref_phi);
+        for i in 0..n_ldofs {
+            for r in 0..dim {
+                let mut s = 0.0;
+                for c in 0..dim { s += j_inv_t[(r, c)] * ref_phi[i * dim + c]; }
+                phys_phi[i * dim + r] = s;
+            }
+        }
+        for i in 0..n_ldofs {
+            for c in 0..dim { phys_phi[i * dim + c] *= signs[i]; }
+        }
+
+        let mut er = [0.0f64; 3];
+        let mut ei = [0.0f64; 3];
+        for i in 0..n_ldofs {
+            let c = e_dofs[elem_dofs[i] as usize];
+            for d in 0..dim {
+                er[d] += c.re * phys_phi[i * dim + d];
+                ei[d] += c.im * phys_phi[i * dim + d];
+            }
+        }
+        e_real_fields.push(er);
+        e_imag_fields.push(ei);
+    }
+
+    writeln!(f, "CELL_TYPES {}", n_elem).map_err(RemError::Io)?;
+    for e in smesh.elem_iter() {
+        match smesh.element_type(e) {
+            fem_mesh::ElementType::Tet10 => writeln!(f, "24")?,
+            _ => writeln!(f, "10")?,
+        }
+    }
+
+    writeln!(f, "CELL_DATA {}", n_elem).map_err(RemError::Io)?;
+    writeln!(f, "VECTORS E_real double").map_err(RemError::Io)?;
+    for e in &e_real_fields { writeln!(f, "{:.6e} {:.6e} {:.6e}", e[0], e[1], e[2])?; }
+    writeln!(f, "VECTORS E_imag double").map_err(RemError::Io)?;
+    for e in &e_imag_fields { writeln!(f, "{:.6e} {:.6e} {:.6e}", e[0], e[1], e[2])?; }
 
     Ok(())
 }

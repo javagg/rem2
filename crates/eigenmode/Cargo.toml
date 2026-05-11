@@ -12,5 +12,7 @@ rem-parallel  = { workspace = true }
 rem-electrostatic = { workspace = true }
 fem-assembly = { workspace = true }
 fem-space    = { workspace = true }
+fem-element  = { workspace = true }
+fem-mesh     = { workspace = true }
 nalgebra = { workspace = true }
 log      = { workspace = true }
