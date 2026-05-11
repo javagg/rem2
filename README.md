@@ -57,8 +57,8 @@ wasm-pack build crates/wasm --target web
 | Transient solver | ✓ | ✓ |
 | Boundary element (BEM) | ✓ | ✓ |
 | WebAssembly / browser UI | ✓ | ✓ |
-| Sonnet 19 / Palace convert | ✓ | ✓ |
 | Surface geometry primitives | ✓ | ✓ |
+| Sonnet 19 / Palace convert | — | ✓ |
 | 3-D MoM (full-wave) | — | ✓ |
 | Planar full-wave solver | — | ✓ |
 | FE-BI hybrid solver | — | ✓ |
@@ -88,16 +88,18 @@ rem/
 │   ├── driven        — frequency-domain driven FEM solver
 │   ├── transient     — time-domain transient FEM solver
 │   ├── bem           — boundary element solver
-│   ├── result        — post-processing and field export
-│   ├── convert       — Sonnet / Palace format converters
 │   ├── touchstone    — Touchstone SNP file I/O
 │   ├── parallel      — MPI/Rayon parallel execution helpers
+│   ├── result        — post-processing and field export
 │   ├── cli           — Community command-line binary (`rem`)
 │   ├── wasm          — WebAssembly entry point
 │   └── yew-app       — Yew browser UI (excluded from default workspace)
 └── vendor/
     ├── rmetis        — Rust bindings for METIS partitioner
     └── rmsh-*/       — Rust mesh I/O utilities
+```
+
+**Note:** Project format converters (Sonnet19, Ansys, ADS) have been moved to the private **rem-pro** workspace for exclusive Pro feature development.
 ```
 
 ---
