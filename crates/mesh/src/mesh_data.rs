@@ -601,6 +601,7 @@ impl RemMesh {
             face_type,
             face_types,
             face_offsets,
+            face_to_elem: None,
         }
     }
 
@@ -705,6 +706,7 @@ impl RemMesh {
             face_type,
             face_types,
             face_offsets,
+            face_to_elem: None,
         }
     }
 }
