@@ -1703,6 +1703,16 @@ pub struct DdmSolverConfig {
     #[serde(rename = "FreqHz", default = "default_ddm_freq_hz")]
     pub freq_hz: f64,
 
+    /// Start frequency for sweep [Hz] (default: same as FreqHz).
+    #[serde(rename = "FreqMin", default = "default_ddm_freq_hz")]
+    pub freq_min: f64,
+    /// End frequency for sweep [Hz] (default: same as FreqHz).
+    #[serde(rename = "FreqMax", default = "default_ddm_freq_hz")]
+    pub freq_max: f64,
+    /// Frequency step [Hz] (default: 0 = single frequency).
+    #[serde(rename = "FreqStep", default)]
+    pub freq_step: f64,
+
     /// Relative permittivity ε_r for subdomain Helmholtz assembly (default 1.0).
     #[serde(rename = "EpsR", default = "default_one_f64")]
     pub eps_r: f64,

@@ -231,6 +231,18 @@ fn assemble_efie_rwg(
     let omega_mu0 = omega * MU0;
     let inv_omega_eps0 = 1.0 / (omega * EPS0);
 
+    // GPU path — free-space EFIE kernel in WGSL compute shader
+    #[cfg(feature = "wgpu-gpu")]
+    if let Ok(Some(z)) = crate::gpu::fill_impedance_wgpu_efie(
+        n, quad.n_pts(),
+        &surf.nodes, &surf.faces, bases,
+        &quad.bary, &quad.weights,
+        omega_mu0, inv_omega_eps0, k,
+    ) {
+        log::info!("GPU EFIE fill: n={}, quad_n={}", n, quad.n_pts());
+        return Ok(z);
+    }
+
     let cols: Vec<Vec<Complex64>> = {
         let compute = |ni: usize| -> Vec<Complex64> {
             let bn = &bases[ni];
@@ -258,7 +270,7 @@ fn assemble_efie_rwg(
 }
 
 /// Single EFIE matrix element Z_EFIE[m,n] for RWG bases.
-fn zmn_efie_rwg(
+pub(crate) fn zmn_efie_rwg(
     bm: &RwgBasis,
     bn: &RwgBasis,
     surf: &SurfaceMesh,
@@ -322,7 +334,22 @@ fn assemble_mfie_rwg(
     quad: &TriQuad,
 ) -> RemResult<DMatrix<Complex64>> {
     let n = bases.len();
+    let omega = k * C0;
+    let omega_mu0 = omega * MU0;
+    let inv_omega_eps0 = 1.0 / (omega * EPS0);
 
+    // GPU path — free-space MFIE kernel
+    #[cfg(feature = "wgpu-gpu")]
+    if let Ok(Some(z)) = crate::gpu::fill_impedance_wgpu_mfie(
+        n, quad.n_pts(), &surf.nodes, &surf.faces, bases,
+        &quad.bary, &quad.weights,
+        omega_mu0, inv_omega_eps0, k,
+    ) {
+        log::info!("GPU MFIE fill: n={}, quad_n={}", n, quad.n_pts());
+        return Ok(z);
+    }
+
+    // CPU path
     let cols: Vec<Vec<Complex64>> = {
         let compute = |ni: usize| -> Vec<Complex64> {
             let bn = &bases[ni];
@@ -497,8 +524,35 @@ fn assemble_efie_rwg_green(
     let omega_mu0 = omega * MU0;
     let inv_omega_eps0 = 1.0 / (omega * EPS0);
 
-    // We need to capture `green` safely. Build a thread-local compute closure.
-    // (No Rayon here — GreenFunction is not guaranteed Send+Sync in general.)
+    // GPU path — precompute log-spaced Green's function lookup table
+    #[cfg(feature = "wgpu-gpu")]
+    if crate::gpu::wgpu_adapter_available() && n >= crate::gpu::GPU_MIN_BASIS {
+        let (rho_min, rho_max) = compute_rho_bounds(surf);
+        let table_n = 256;
+        let mut green_table = Vec::with_capacity(table_n);
+        let z_avg: f64 = surf.faces.iter().map(|f| f.centroid[2]).sum::<f64>() / surf.faces.len() as f64;
+        let log_min = rho_min.ln();
+        let log_max = rho_max.ln();
+        for i in 0..table_n {
+            let t = i as f64 / (table_n - 1) as f64;
+            let rho = (log_min + t * (log_max - log_min)).exp();
+            let r  = [rho, 0.0, z_avg];
+            let rp = [0.0, 0.0, z_avg];
+            let g = if rho < 1e-14 { Complex64::ZERO } else { green.g(&r, &rp) };
+            green_table.push(g);
+        }
+        if let Ok(Some(z)) = crate::gpu::fill_impedance_wgpu_efie_with_green_table(
+            n, quad.n_pts(), &surf.nodes, &surf.faces, bases,
+            &quad.bary, &quad.weights,
+            omega_mu0, inv_omega_eps0, k,
+            &green_table, rho_min, rho_max,
+        ) {
+            log::info!("GPU EFIE fill (green table): n={}, quad_n={}", n, quad.n_pts());
+            return Ok(z);
+        }
+    }
+
+    // CPU path
     let mut z = DMatrix::<Complex64>::from_element(n, n, Complex64::ZERO);
     for ni in 0..n {
         let bn = &bases[ni];
@@ -570,8 +624,40 @@ fn assemble_mfie_rwg_green(
     k: f64,
     quad: &TriQuad,
 ) -> RemResult<DMatrix<Complex64>> {
-    let _ = k; // k retained for near-singular handling if needed in future
     let n = bases.len();
+    let omega = k * C0;
+    let omega_mu0 = omega * MU0;
+    let inv_omega_eps0 = 1.0 / (omega * EPS0);
+
+    // GPU path — MFIE with Green's function table
+    #[cfg(feature = "wgpu-gpu")]
+    if crate::gpu::wgpu_adapter_available() && n >= crate::gpu::GPU_MIN_BASIS {
+        let (rho_min, rho_max) = compute_rho_bounds(surf);
+        let table_n = 256;
+        let mut green_table = Vec::with_capacity(table_n);
+        let z_avg: f64 = surf.faces.iter().map(|f| f.centroid[2]).sum::<f64>() / surf.faces.len() as f64;
+        let log_min = rho_min.ln();
+        let log_max = rho_max.ln();
+        for i in 0..table_n {
+            let t = i as f64 / (table_n - 1) as f64;
+            let rho = (log_min + t * (log_max - log_min)).exp();
+            let r  = [rho, 0.0, z_avg];
+            let rp = [0.0, 0.0, z_avg];
+            let g = if rho < 1e-14 { Complex64::ZERO } else { green.g(&r, &rp) };
+            green_table.push(g);
+        }
+        if let Ok(Some(z)) = crate::gpu::fill_impedance_wgpu_mfie_with_green_table(
+            n, quad.n_pts(), &surf.nodes, &surf.faces, bases,
+            &quad.bary, &quad.weights,
+            omega_mu0, inv_omega_eps0, k,
+            &green_table, rho_min, rho_max,
+        ) {
+            log::info!("GPU MFIE fill (green table): n={}, quad_n={}", n, quad.n_pts());
+            return Ok(z);
+        }
+    }
+
+    // CPU path
     let mut z = DMatrix::<Complex64>::from_element(n, n, Complex64::ZERO);
     for ni in 0..n {
         let bn = &bases[ni];
@@ -643,6 +729,24 @@ fn zmn_mfie_rwg_green(
         }
     }
     identity_term + curl_term
+}
+
+/// Compute horizontal-distance bounds for a surface mesh (for Green's function table).
+fn compute_rho_bounds(surf: &SurfaceMesh) -> (f64, f64) {
+    let mut rho_min = f64::MAX;
+    let mut rho_max = 0.0_f64;
+    for fi in 0..surf.faces.len() {
+        for fj in fi..surf.faces.len() {
+            let dx = surf.faces[fi].centroid[0] - surf.faces[fj].centroid[0];
+            let dy = surf.faces[fi].centroid[1] - surf.faces[fj].centroid[1];
+            let rho = (dx*dx + dy*dy).sqrt();
+            if rho > 0.0 { rho_min = rho_min.min(rho); }
+            rho_max = rho_max.max(rho);
+        }
+    }
+    if rho_min >= f64::MAX || rho_min < 1e-14 { rho_min = 1e-4; }
+    if rho_max < rho_min * 1.1 { rho_max = rho_min * 10.0; }
+    (rho_min, rho_max)
 }
 
 /// ∇G(r,r') = G(r,r') * (jk + 1/R) * (r - r') / R
