@@ -495,6 +495,16 @@ pub fn solve_pcg_ilu0(
 ///
 /// Algebraic Multigrid typically gives 5-30× speedup over Jacobi/SSOR
 /// for large SPD systems from FEM discretisations.
+///
+/// ## Environment variable overrides
+///
+/// | Variable              | Default | Description |
+/// |-----------------------|---------|-------------|
+/// | `REM_AMG_SMOOTHER`    | `jacobi`| `jacobi`, `gs`, `symgs`, `chebyshev` |
+/// | `REM_AMG_PRE_SWEEPS`  | `1`     | Pre-smoothing sweeps per level |
+/// | `REM_AMG_POST_SWEEPS` | `1`     | Post-smoothing sweeps per level |
+/// | `REM_AMG_STRATEGY`    | `sa`    | `sa` (smoothed aggregation) or `rs` (Ruge-Stüben) |
+/// | `REM_AMG_THETA`       | `0.25`  | Strong-connection threshold |
 #[cfg(not(target_arch = "wasm32"))]
 pub fn solve_pcg_amg(
     mat: &CsrMatrix,
@@ -508,7 +518,7 @@ pub fn solve_pcg_amg(
         max_iter,
         ..fem_solver::SolverConfig::default()
     };
-    let amg_cfg = fem_amg::AmgConfig::default();
+    let amg_cfg = amg_config_from_env();
     let mut x = vec![0.0f64; b.len()];
     match fem_amg::solve_amg_cg(&fem_mat, b, &mut x, &amg_cfg, &solver_cfg) {
         Ok(r) => Ok(SolveResult {
@@ -518,6 +528,56 @@ pub fn solve_pcg_amg(
             converged: r.converged,
         }),
         Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Build `AmgConfig` from environment variables, falling back to defaults.
+#[cfg(not(target_arch = "wasm32"))]
+fn amg_config_from_env() -> fem_amg::AmgConfig {
+    let default = fem_amg::AmgConfig::default();
+
+    let smoother = match std::env::var("REM_AMG_SMOOTHER")
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "gs" | "gaussseidel" => fem_amg::SmootherType::GaussSeidel,
+        "symgs" | "symmetricgaussseidel" | "sgs" => fem_amg::SmootherType::SymmetricGaussSeidel,
+        "chebyshev" | "cheb" => fem_amg::SmootherType::Chebyshev { degree: 3, ratio: 10.0 },
+        _ => default.smoother,
+    };
+
+    let pre_sweeps = std::env::var("REM_AMG_PRE_SWEEPS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(default.pre_sweeps);
+
+    let post_sweeps = std::env::var("REM_AMG_POST_SWEEPS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(default.post_sweeps);
+
+    let strategy = match std::env::var("REM_AMG_STRATEGY")
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "rs" | "rugestuben" => fem_amg::CoarsenStrategy::RugeStüben,
+        _ => default.strategy,
+    };
+
+    let theta = std::env::var("REM_AMG_THETA")
+        .ok()
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(default.theta);
+
+    fem_amg::AmgConfig {
+        smoother,
+        pre_sweeps,
+        post_sweeps,
+        strategy,
+        theta,
+        ..default
     }
 }
 
