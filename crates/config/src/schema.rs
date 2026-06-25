@@ -131,7 +131,7 @@ pub enum ProblemType {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Model {
-    #[serde(rename = "Mesh")]
+    #[serde(rename = "Mesh", default)]
     pub mesh: String,
 
     #[serde(rename = "L0", default = "default_l0")]
