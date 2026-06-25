@@ -1,4 +1,4 @@
-/// COO → CSR sparse matrix and PCG solver for FEM.
+﻿/// COO → CSR sparse matrix and PCG solver for FEM.
 ///
 /// Design goals:
 /// - WASM-compatible (no unsafe, no FFI)
@@ -1291,4 +1291,26 @@ mod tests_csr_complex {
         assert_eq!(result.solution.len(), 2);
         assert!(result.residual_norm < 1e-8);
     }
+}
+
+
+pub fn combine_csr_complex(
+    k: &CsrMatrix, m: &CsrMatrix,
+    alpha: num_complex::Complex64, beta: num_complex::Complex64,
+) -> CsrMatrixComplex {
+    let n = k.nrows;
+    assert_eq!(n, m.nrows);
+    let nnz = k.col_idx.len();
+    let mut col_idx = Vec::with_capacity(nnz);
+    let mut values = Vec::with_capacity(nnz);
+    let mut row_ptr = vec![0usize; n + 1];
+    for i in 0..n {
+        for p in k.row_ptr[i]..k.row_ptr[i + 1] {
+            col_idx.push(k.col_idx[p]);
+            values.push(alpha * num_complex::Complex64::new(k.values[p], 0.0)
+                      + beta  * num_complex::Complex64::new(m.values[p], 0.0));
+        }
+        row_ptr[i + 1] = values.len();
+    }
+    CsrMatrixComplex { nrows: n, ncols: n, row_ptr, col_idx, values }
 }
