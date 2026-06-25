@@ -17,7 +17,7 @@ fn is_supported_formulation(v: &str) -> bool {
 
 const KNOWN_PROBLEM_TYPES: &[&str] = &[
     "Electrostatic", "Magnetostatic", "Eigenmode", "Driven", "Transient",
-    "MoM", "SBR", "Planar", "FEBI",
+    "MoM", "SBR", "Planar", "FEBI", "BEM",
 ];
 
 // ---------------------------------------------------------------------------
