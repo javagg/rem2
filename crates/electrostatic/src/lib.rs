@@ -18,7 +18,7 @@ pub mod postprocess;
 pub mod output;
 
 use rem_config::PalaceConfig;
-use rem_core::{RemResult, solve_spd, report_peak_memory, CsrMatrix, TripletMatrix};
+use rem_core::{RemResult, solve_spd, report_peak_memory, CsrMatrix, TripletMatrix, timing};
 use rem_parallel::Comm;
 use rem_materials::DomainMap;
 use rem_mesh::{RemMesh, BoundaryTag, ElementKind, FemSubMesh2d, amr, extract_submesh_tri3, refine_marked_tri3};
@@ -27,6 +27,7 @@ use std::path::Path;
 
 /// Entry point called from rem-cli.
 pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
+    let _span = timing::span("electrostatic.total");
     log::info!("\n=== Electrostatic solver ===\n");
 
     match config.solver.order {

@@ -1,4 +1,4 @@
-﻿//! Driven (frequency-domain) solver — Phase 7 (v0.4)
+//! Driven (frequency-domain) solver — Phase 7 (v0.4)
 //!
 //! Solves the frequency-domain scalar wave equation:
 //!   −∇·(ε ∇φ) − k² ε φ = J_port      (k = ω/c)
@@ -35,7 +35,7 @@ pub mod vf;
 use nalgebra::{DMatrix, DVector};
 use num_complex::Complex64;
 use rem_config::{PalaceConfig, CurrentDipoleSpec};
-use rem_core::{CsrMatrix, RemError, RemResult, TripletMatrix, report_peak_memory, solve_pcg_complex, CsrMatrixComplex};
+use rem_core::{CsrMatrix, RemError, RemResult, TripletMatrix, report_peak_memory, solve_pcg_complex, CsrMatrixComplex, timing};
 use rem_eigenmode::assemble_mass::assemble_mass;
 use rem_electrostatic::{assemble::{assemble_stiffness, assemble_stiffness_aniso}, bc::{collect_dirichlet_dofs, collect_dirichlet_dofs_open_circuit, apply_dirichlet}, postprocess};
 use rem_materials::DomainMap;
@@ -122,6 +122,7 @@ impl DrivenResult {
 
 /// Entry point called from rem-cli.
 pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
+    let _span = timing::span("driven.total");
     log::info!("=== Driven (frequency-domain) solver ===");
 
     let mesh_path = Path::new(&config.model.mesh);

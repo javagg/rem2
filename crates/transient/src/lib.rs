@@ -29,7 +29,7 @@ pub mod output;
 pub mod near_field;
 
 use rem_config::PalaceConfig;
-use rem_core::{CsrMatrix, RemError, RemResult, TripletMatrix, solve_pcg};
+use rem_core::{CsrMatrix, RemError, RemResult, TripletMatrix, solve_pcg, timing};
 use rem_electrostatic::{assemble::assemble_stiffness, bc::{collect_dirichlet_dofs, apply_dirichlet}};
 use rem_eigenmode::assemble_mass::assemble_mass;
 use rem_materials::DomainMap;
@@ -170,6 +170,7 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
 /// Entry point for pre-loaded mesh (used by WASM path).
 /// Returns a `TransientResult` with time series, port voltages and peak E-field phi.
 pub fn run_with_mesh(config: &PalaceConfig, mesh: &RemMesh, comm: &dyn Comm) -> RemResult<TransientResult> {
+    let _span = timing::span("transient.total");
     log::info!("\n=== Transient (time-domain) solver ===\n");
 
     let td_cfg = config.solver.transient.as_ref().ok_or_else(|| {

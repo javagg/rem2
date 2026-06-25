@@ -30,6 +30,7 @@ pub mod postprocess;
 
 use rem_config::PalaceConfig;
 use rem_core::RemResult;
+use rem_core::timing;
 use rem_surface::quadrature::TriQuad;
 use rem_parallel::NoComm;
 
@@ -39,6 +40,7 @@ use rem_parallel::NoComm;
 /// surfaces from `config.boundaries.pec`, assembles the Laplace BIE system,
 /// solves the exterior Neumann problem, and writes capacitance results.
 pub fn run(config: &PalaceConfig) -> RemResult<()> {
+    let _span = timing::span("bem.total");
     log::info!("\n=== Boundary Element Method (BEM) solver ===\n");
 
     let output_dir = std::path::Path::new(config.problem.output_dir());

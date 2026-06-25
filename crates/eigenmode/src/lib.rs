@@ -22,7 +22,7 @@ mod hcurl;
 pub mod output;
 
 use rem_config::PalaceConfig;
-use rem_core::{CsrMatrix, RemError, RemResult, TripletMatrix, report_peak_memory, solve_pcg};
+use rem_core::{CsrMatrix, RemError, RemResult, TripletMatrix, report_peak_memory, solve_pcg, timing};
 use rem_electrostatic::{assemble::assemble_stiffness, bc::{collect_dirichlet_dofs, apply_dirichlet, collect_periodic_node_pairs, apply_periodic}};
 use rem_materials::DomainMap;
 use rem_mesh::{RemMesh, ElementKind, amr, refine_marked_tri3};
@@ -41,6 +41,7 @@ const AMR_FREQ_ABS_TOL: f64 = 1e6; // 1 MHz
 
 /// Entry point called from rem-cli.
 pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
+    let _span = timing::span("eigenmode.total");
     log::info!("\n=== Eigenmode (frequency-domain) solver ===\n");
     if config.solver.uses_hcurl_for_eigenmode() {
         log::info!(
