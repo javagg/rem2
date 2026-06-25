@@ -4,6 +4,7 @@ pub mod memory;
 pub mod near_field;
 pub mod sparse;
 pub mod operator;
+pub mod timing;
 
 pub use constants::{EPS0, MU0, C0, ETA0, NU0};
 pub use error::{RemError, RemResult};
@@ -32,6 +33,7 @@ pub fn solve_spd(
     max_iter: usize,
     comm: &dyn rem_parallel::Comm,
 ) -> SolveResult {
+    let _span = timing::span("solve_spd");
     // Native single-rank path: try AMG-PCG first (fastest), fall back to ILU(0)-PCG
     #[cfg(not(target_arch = "wasm32"))]
     if comm.size() == 1 {
