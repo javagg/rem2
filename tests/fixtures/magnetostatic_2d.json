@@ -1,0 +1,17 @@
+{
+    "Problem": { "Type": "Magnetostatic" },
+    "Model":   { "Mesh": "mag_2d.msh" },
+    "Domains": {
+        "Materials": [
+            { "Attributes": [1], "Permittivity": 1.0 },
+            { "Attributes": [2], "Permeability": 1000.0 }
+        ]
+    },
+    "Boundaries": {
+        "PEC": { "Attributes": [1, "2,4-6"] }
+    },
+    "Solver": {
+        "Order": 1,
+        "Linear": { "Type": "CG" }
+    }
+}

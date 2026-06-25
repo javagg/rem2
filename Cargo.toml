@@ -18,6 +18,8 @@ members = [
     "crates/wasm",
     "crates/touchstone",
     "crates/bem",
+    "crates/mom",
+    "crates/layered_green",
     "vendor/rmetis",
     "vendor/rmsh-model",
     "vendor/rmsh-io",
@@ -51,18 +53,19 @@ rem-transient     = { path = "crates/transient" }
 rem-bem           = { path = "crates/bem" }
 rem-touchstone    = { path = "crates/touchstone" }
 rem-wasm          = { path = "crates/wasm" }
+rem-layered-green = { path = "crates/layered_green" }
 rmetis            = { path = "vendor/rmetis", default-features = false }
 
 # fem-rs foundation crates (via git dependency)
-fem-core     = { git = "https://github.com/rem-rs/fem-rs.git", rev = "49fc64e" }
-fem-linalg   = { git = "https://github.com/rem-rs/fem-rs.git", rev = "49fc64e" }
-fem-mesh     = { git = "https://github.com/rem-rs/fem-rs.git", rev = "49fc64e" }
-fem-element  = { git = "https://github.com/rem-rs/fem-rs.git", rev = "49fc64e" }
-fem-space    = { git = "https://github.com/rem-rs/fem-rs.git", rev = "49fc64e" }
-fem-assembly = { git = "https://github.com/rem-rs/fem-rs.git", rev = "49fc64e" }
-fem-solver   = { git = "https://github.com/rem-rs/fem-rs.git", rev = "49fc64e" }
-fem-amg      = { git = "https://github.com/rem-rs/fem-rs.git", rev = "49fc64e" }
-fem-io       = { git = "https://github.com/rem-rs/fem-rs.git", rev = "49fc64e" }
+fem-core     = { git = "https://github.com/rem-rs/fem-rs.git", rev = "15d4b1a" }
+fem-linalg   = { git = "https://github.com/rem-rs/fem-rs.git", rev = "15d4b1a" }
+fem-mesh     = { git = "https://github.com/rem-rs/fem-rs.git", rev = "15d4b1a" }
+fem-element  = { git = "https://github.com/rem-rs/fem-rs.git", rev = "15d4b1a" }
+fem-space    = { git = "https://github.com/rem-rs/fem-rs.git", rev = "15d4b1a" }
+fem-assembly = { git = "https://github.com/rem-rs/fem-rs.git", rev = "15d4b1a" }
+fem-solver   = { git = "https://github.com/rem-rs/fem-rs.git", rev = "15d4b1a" }
+fem-amg      = { git = "https://github.com/rem-rs/fem-rs.git", rev = "15d4b1a" }
+fem-io       = { git = "https://github.com/rem-rs/fem-rs.git", rev = "15d4b1a" }
 
 # rmsh crates (vendored locally, stripped of rcad/STEP dependencies)
 rmsh-io      = { path = "vendor/rmsh-io", default-features = false }
