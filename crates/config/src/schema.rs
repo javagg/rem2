@@ -1065,6 +1065,22 @@ pub struct MomSolverConfig {
     #[serde(rename = "FastSolver", default = "default_fast_solver")]
     pub fast_solver: String,
 
+    /// Quadrature rule (1, 3, 5, 7). Overrides REM_MOM_QUAD_ORDER env var.
+    #[serde(rename = "QuadratureRule", default)]
+    pub quad_order: Option<usize>,
+
+    /// GMRES restart parameter (default 30). Overrides hardcoded restart.
+    #[serde(rename = "GmresRestart", default)]
+    pub gmres_restart: Option<usize>,
+
+    /// GMRES convergence tolerance (default 1e-8). Overrides hardcoded tol.
+    #[serde(rename = "GmresTol", default)]
+    pub gmres_tol: Option<f64>,
+
+    /// GMRES max iterations (default 500). Overrides REM_MOM_GMRES_MAX_ITERS.
+    #[serde(rename = "GmresMaxIter", default)]
+    pub gmres_max_iter: Option<usize>,
+
     /// Incident plane wave polar angle [degrees] from +z axis (0 = broadside)
     #[serde(rename = "ThetaInc", default)]
     pub theta_inc_deg: f64,
