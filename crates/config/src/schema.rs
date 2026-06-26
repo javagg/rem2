@@ -1232,6 +1232,17 @@ pub struct MomSolverConfig {
     /// Export per-face current density CSV at the final sweep frequency.
     #[serde(rename = "ExportCurrentDensity", default)]
     pub export_current_density: bool,
+
+    /// Conductor surface roughness model: "hammerstad" | "groisse" | null.
+    /// When set, the Leontovich surface impedance is multiplied by the
+    /// roughness correction factor K_r ≥ 1 (requires RmsRoughness > 0).
+    #[serde(rename = "RoughnessModel", default)]
+    pub roughness_model: Option<String>,
+
+    /// RMS surface roughness Δ [m] for conductor loss modeling.
+    /// Typical values: 1e-6 (1 µm) for standard PCB copper.
+    #[serde(rename = "RmsRoughness", default)]
+    pub rms_roughness: Option<f64>,
 }
 
 fn default_auto_port_min_faces() -> usize { 1 }
@@ -1779,6 +1790,16 @@ pub struct PlanarSolverConfig {
     #[serde(rename = "FreqStep")]
     pub freq_step: f64,
 
+    /// Enable FFT-accelerated matrix-vector product (default: false).
+    #[serde(rename = "UseFft", default)]
+    pub use_fft: bool,
+
+    /// Conductor wall conductivity σ [S/m] for SIBC loss modeling.
+    /// Set > 0 (e.g. 5.8e7 for copper) to add Leontovich surface impedance
+    /// Zs = (1+j)/(σ·δs) on all conducting surfaces.
+    #[serde(rename = "WallConductivity", default)]
+    pub wall_conductivity: f64,
+
     /// Dielectric layers for the substrate (bottom-to-top).
     /// Format: `[eps_r, thickness_mm, ...]` per layer.
     #[serde(rename = "SubstrateLayers", default)]
@@ -1860,6 +1881,10 @@ pub enum ParamTarget {
     FreqMin,
     /// End frequency [Hz] of the MoM sweep.
     FreqMax,
+    /// Conductor wall conductivity [S/m] for SIBC loss modeling.
+    WallConductivity,
+    /// RMS surface roughness Δ [m] for SIBC roughness correction.
+    RmsRoughness,
 }
 
 /// A single named design parameter with its sweep values (Sweep mode) or
