@@ -1,4 +1,4 @@
-//! rem-layered-green — Green's function implementations for stratified media and free space.
+//! rem-layered-green �?Green's function implementations for stratified media and free space.
 //!
 //! This crate provides:
 //! - `GreenFunction` trait: unified interface for free-space and layered-media Green's functions
@@ -264,7 +264,7 @@ impl LayeredGreen {
         (dx * dx + dy * dy + dz * dz).sqrt()
     }
 
-    /// Horizontal distance ρ = √((x-x')² + (y-y')²)
+    /// Horizontal distance ρ = �?(x-x')² + (y-y')²)
     #[inline]
     fn horizontal_distance(r: &[f64; 3], r_prime: &[f64; 3]) -> f64 {
         let dx = r[0] - r_prime[0];
@@ -382,7 +382,7 @@ mod tests {
                 eps_r_z: None,
             },
         ];
-        let green = LayeredGreen::new(layers, 1.0);
+        let green = LayeredGreen::new(layers, 1.0, false);
         let r = [0.0, 0.0, 0.0];
         let g = green.g(&r, &r);
         assert_eq!(g, Complex64::ZERO);
@@ -401,7 +401,7 @@ mod tests {
                 eps_r_z: None,
             },
         ];
-        let green = LayeredGreen::new(layers, 10.0); // Use higher wavenumber
+        let green = LayeredGreen::new(layers, 10.0, false); // Use higher wavenumber
         let r = [1.0, 0.5, 0.2];
         let r_prime = [0.0, 0.0, 0.0];
         let grad = green.grad_g(&r, &r_prime);
@@ -445,7 +445,7 @@ mod tests {
                 eps_r_z: None,
             },
         ];
-        let green = LayeredGreen::new(layers, 10.0);
+        let green = LayeredGreen::new(layers, 10.0, false);
         assert_eq!(green.layers.len(), 3);
 
         let materials = green.build_material_stack();
@@ -484,7 +484,7 @@ mod tests {
                 eps_r_z: None,
             },
         ];
-        // 1 GHz, λ ≈ 0.3 m
+        // 1 GHz, λ �?0.3 m
         let k0 = 2.0 * PI * 1.0e9 / 299792458.0;
         let green = LayeredGreen::new(layers, k0);
         // Source and observation clearly in the top air region, separated by λ/2
@@ -519,7 +519,7 @@ mod tests {
                 eps_r_z: None,
             },
         ];
-        let green = LayeredGreen::new(layers, 5.0);
+        let green = LayeredGreen::new(layers, 5.0, false);
         let r = [0.0, 0.0, 0.001];
         let g = green.g(&r, &r);
         assert_eq!(g, Complex64::ZERO);

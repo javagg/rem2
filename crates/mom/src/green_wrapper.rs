@@ -38,7 +38,7 @@ pub fn box_free_space_from_k(k: f64) -> Box<dyn GreenFunction> {
 /// Boxed LayeredGreen trait object
 pub fn box_layered_green_from_freq(freq: f64, layers: Vec<DielectricLayer>) -> Box<dyn GreenFunction> {
     let k0 = 2.0 * PI * freq / C0;
-    Box::new(LayeredGreen::new(layers, k0))
+    Box::new(LayeredGreen::new(layers, k0, 0.0, false))
 }
 
 /// Create a single-layer substrate over PEC-like region.
@@ -46,8 +46,8 @@ pub fn box_layered_green_from_freq(freq: f64, layers: Vec<DielectricLayer>) -> B
 /// Common use: microstrip patch antenna or substrate-backed antenna.
 /// Returns a simple single-layer DielectricLayer for testing.
 pub fn single_layer_fr4() -> DielectricLayer {
-    // FR-4 dielectric: εᵣ ≈ 4.2, tan(δ) ≈ 0.02, μᵣ = 1
-    // Thickness ≈ 1 mm typical
+    // FR-4 dielectric: ε�?�?4.2, tan(δ) �?0.02, μ�?= 1
+    // Thickness �?1 mm typical
     DielectricLayer {
         eps_r: 4.2,
         loss_tan: 0.02,

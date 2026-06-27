@@ -120,6 +120,40 @@ pub fn apply_sibc_pulse(
     }
 }
 
+/// Apply the SIBC correction to a **pulse-basis** EFIE matrix with optional roughness + superconductor.
+pub fn apply_sibc_pulse_with_config(
+    z_mat: &mut DMatrix<Complex64>,
+    surf: &SurfaceMesh,
+    freq: f64,
+    sigma: f64,
+    roughness_model: Option<&str>,
+    rms_roughness_m: Option<f64>,
+    superconductor_ls: f64,
+    superconductor_rdc: f64,
+    superconductor_rrf: f64,
+    superconductor_xdc: f64,
+) {
+    if sigma <= 0.0 && superconductor_ls <= 0.0 {
+        return;
+    }
+    let z_s = if superconductor_ls > 0.0 || superconductor_rdc > 0.0 || superconductor_rrf > 0.0 || superconductor_xdc > 0.0 {
+        surface_impedance_superconductor(superconductor_ls, superconductor_rdc, superconductor_rrf, superconductor_xdc, freq)
+    } else {
+        match (roughness_model, rms_roughness_m) {
+            (Some(model), Some(rms)) if rms > 0.0 => {
+                surface_impedance_with_roughness(sigma, freq, rms, model)
+            }
+            _ => surface_impedance_from_conductivity(sigma, freq),
+        }
+    };
+    if z_s.norm() < 1e-30 {
+        return;
+    }
+    for (i, face) in surf.faces.iter().enumerate() {
+        z_mat[(i, i)] += z_s * face.area;
+    }
+}
+
 // ── Conductor surface roughness models ─────────────────────────────────────
 
 /// Hammerstad–Jensen roughness correction factor K_r.
@@ -203,6 +237,67 @@ fn erf_approx(x: f64) -> f64 {
     if x >= 0.0 { result } else { -result }
 }
 
+/// Superconducting surface impedance: Zs = Rdc + Rrf·√f + j·(2π·f·Ls + Xdc).
+/// Parameters: Ls [H], Rdc [Ω], Rrf [Ω/√Hz], Xdc [Ω].
+pub fn surface_impedance_superconductor(
+    ls: f64, rdc: f64, rrf: f64, xdc: f64, freq: f64,
+) -> Complex64 {
+    if ls <= 0.0 && rdc <= 0.0 && rrf <= 0.0 && xdc <= 0.0 {
+        return Complex64::ZERO;
+    }
+    let omega = 2.0 * PI * freq;
+    let re = rdc + rrf * freq.sqrt();
+    let im = omega * ls + xdc;
+    Complex64::new(re, im)
+}
+
+/// Apply SIBC correction to RWG-basis matrix with optional roughness + superconductor.
+pub fn apply_sibc_rwg_with_config(
+    z_mat: &mut DMatrix<Complex64>,
+    surf: &SurfaceMesh,
+    bases: &[RwgBasis],
+    freq: f64,
+    sigma: f64,
+    roughness_model: Option<&str>,
+    rms_roughness_m: Option<f64>,
+    superconductor_ls: f64,
+    superconductor_rdc: f64,
+    superconductor_rrf: f64,
+    superconductor_xdc: f64,
+    quad: &TriQuad,
+) {
+    if sigma <= 0.0 && superconductor_ls <= 0.0 {
+        return;
+    }
+    let z_s = if superconductor_ls > 0.0 || superconductor_rdc > 0.0 || superconductor_rrf > 0.0 || superconductor_xdc > 0.0 {
+        surface_impedance_superconductor(superconductor_ls, superconductor_rdc, superconductor_rrf, superconductor_xdc, freq)
+    } else {
+        match (roughness_model, rms_roughness_m) {
+            (Some(model), Some(rms)) if rms > 0.0 => {
+                surface_impedance_with_roughness(sigma, freq, rms, model)
+            }
+            _ => surface_impedance_from_conductivity(sigma, freq),
+        }
+    };
+    if z_s.norm() < 1e-30 {
+        return;
+    }
+    let n = bases.len();
+    for i in 0..n {
+        for j in i..n {
+            let overlap = rwg_surface_overlap(&bases[i], &bases[j], surf, quad);
+            if overlap.abs() < 1e-30 {
+                continue;
+            }
+            let delta = z_s * overlap;
+            z_mat[(i, j)] += delta;
+            if i != j {
+                z_mat[(j, i)] += delta;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,5 +372,28 @@ mod tests {
         assert!(erf_approx(0.0).abs() < 1e-6);
         assert!((erf_approx(1.0) - 0.8427).abs() < 2e-4);
         assert!((erf_approx(-1.0) + 0.8427).abs() < 2e-4);
+    }
+
+    #[test]
+    fn superconductor_zs_niobium_10ghz() {
+        // Nb: Ls=0.11 pH, Rdc=Rrf=Xdc=0 at 10 GHz → Zs = j·6.91 mΩ
+        let zs = surface_impedance_superconductor(0.11e-12, 0.0, 0.0, 0.0, 10.0e9);
+        assert!((zs.re - 0.0).abs() < 1e-15);
+        assert!((zs.im - 6.912e-3).abs() < 1e-6);
+    }
+
+    #[test]
+    fn superconductor_zs_with_rdc() {
+        let zs = surface_impedance_superconductor(0.5e-12, 0.1, 0.0, 0.0, 1.0e9);
+        assert!((zs.re - 0.1).abs() < 1e-15);
+        assert!((zs.im - 3.1416e-3).abs() < 1e-5);
+    }
+
+    #[test]
+    fn sibc_pulse_with_config_no_sigma_returns_early() {
+        let surf = two_face_surf();
+        let mut z = DMatrix::<Complex64>::zeros(2, 2);
+        apply_sibc_pulse_with_config(&mut z, &surf, 1e9, 0.0, None, None, 0.0, 0.0, 0.0, 0.0);
+        assert_eq!(z[(0, 0)], Complex64::ZERO);
     }
 }

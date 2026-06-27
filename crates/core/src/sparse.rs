@@ -1,4 +1,4 @@
-﻿/// COO → CSR sparse matrix and PCG solver for FEM.
+/// COO → CSR sparse matrix and PCG solver for FEM.
 ///
 /// Design goals:
 /// - WASM-compatible (no unsafe, no FFI)
@@ -905,6 +905,18 @@ impl CsrMatrixComplex {
             col_idx,
             values,
         }
+    }
+
+    /// Convert back to dense `DMatrix<Complex64>` (for GMRES fallback).
+    pub fn to_dense(&self) -> nalgebra::DMatrix<Complex64> {
+        let mut d = nalgebra::DMatrix::<Complex64>::zeros(self.nrows, self.ncols);
+        for i in 0..self.nrows {
+            for p in self.row_ptr[i]..self.row_ptr[i + 1] {
+                let j = self.col_idx[p];
+                d[(i, j)] = self.values[p];
+            }
+        }
+        d
     }
 
     /// Sparse matrix–vector product: y = A * x
