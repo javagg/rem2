@@ -1317,6 +1317,14 @@ pub struct TrlKitConfig {
     /// Magnitude of the reflect standard reflection coefficient.
     #[serde(rename = "ReflectMagnitude")]
     pub reflect_magnitude: f64,
+
+    /// Apply TRL de-embedding inside the per-frequency solve loop.
+    ///
+    /// Default false (batch post-process after all frequencies).
+    /// When true, TRL is applied per-frequency inside the solve loop,
+    /// which can improve accuracy for adaptive sweeps.
+    #[serde(rename = "SolveSide", default)]
+    pub solve_side: bool,
 }
 
 fn default_mom_equation() -> String { "CFIE".to_string() }
@@ -1388,6 +1396,14 @@ pub struct MomPort {
     /// in addition to single-ended S-parameters.
     #[serde(rename = "PairWith", default)]
     pub pair_with: Option<u32>,
+
+    /// Ground reference flag.
+    ///
+    /// When true, this port is treated as a ground reference (zero excitation,
+    /// current extraction negated). Used for CPW/GSG structures where the
+    /// signal port references adjacent ground planes.
+    #[serde(rename = "GndRef", default)]
+    pub gnd_ref: bool,
 
     /// Reference-plane de-embedding length [m] for this port.
     /// Positive values shift the reference plane away from the port.
