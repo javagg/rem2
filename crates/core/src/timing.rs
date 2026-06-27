@@ -24,6 +24,86 @@
 //!
 //! On `wasm32` targets all functions are no-ops and guarded out at compile time.
 
+use std::sync::atomic::{AtomicI64, Ordering};
+
+/// Global allocation counter (bytes in use, total allocations, total bytes allocated).
+/// Updated by the `CountingAllocator` wrapper when the `profile` feature is active.
+#[cfg(feature = "profile")]
+pub(crate) static ALLOC_STATS: AllocStats = AllocStats::new();
+
+#[cfg(feature = "profile")]
+pub(crate) struct AllocStats {
+    bytes_in_use: AtomicI64,
+    total_allocs: AtomicI64,
+    total_bytes: AtomicI64,
+}
+
+#[cfg(feature = "profile")]
+impl AllocStats {
+    pub const fn new() -> Self {
+        AllocStats {
+            bytes_in_use: AtomicI64::new(0),
+            total_allocs: AtomicI64::new(0),
+            total_bytes: AtomicI64::new(0),
+        }
+    }
+    pub fn snapshot(&self) -> (i64, i64, i64) {
+        (self.bytes_in_use.load(Ordering::Relaxed),
+         self.total_allocs.load(Ordering::Relaxed),
+         self.total_bytes.load(Ordering::Relaxed))
+    }
+}
+
+/// Wraps `std::alloc::System` to count allocations when the `profile` feature is active.
+#[cfg(feature = "profile")]
+#[global_allocator]
+static COUNTING_ALLOC: CountingAllocator = CountingAllocator;
+
+#[cfg(feature = "profile")]
+struct CountingAllocator;
+
+#[cfg(feature = "profile")]
+unsafe impl std::alloc::GlobalAlloc for CountingAllocator {
+    unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
+        let ptr = std::alloc::System.alloc(layout);
+        if !ptr.is_null() {
+            ALLOC_STATS.total_allocs.fetch_add(1, Ordering::Relaxed);
+            let size = layout.size() as i64;
+            ALLOC_STATS.bytes_in_use.fetch_add(size, Ordering::Relaxed);
+            ALLOC_STATS.total_bytes.fetch_add(size, Ordering::Relaxed);
+        }
+        ptr
+    }
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
+        std::alloc::System.dealloc(ptr, layout);
+        ALLOC_STATS.bytes_in_use.fetch_sub(layout.size() as i64, Ordering::Relaxed);
+    }
+    unsafe fn realloc(&self, ptr: *mut u8, layout: std::alloc::Layout, new_size: usize) -> *mut u8 {
+        ALLOC_STATS.bytes_in_use.fetch_sub(layout.size() as i64, Ordering::Relaxed);
+        let new_ptr = std::alloc::System.realloc(ptr, layout, new_size);
+        if !new_ptr.is_null() {
+            let new_size = new_size as i64;
+            ALLOC_STATS.bytes_in_use.fetch_add(new_size, Ordering::Relaxed);
+            ALLOC_STATS.total_bytes.fetch_add(new_size, Ordering::Relaxed);
+            ALLOC_STATS.total_allocs.fetch_add(1, Ordering::Relaxed);
+        }
+        new_ptr
+    }
+}
+
+/// Dump memory statistics to `timings.mem.json`.
+#[cfg(feature = "profile")]
+pub fn dump_mem_json() {
+    let (bytes_in_use, total_allocs, total_bytes) = ALLOC_STATS.snapshot();
+    let json = format!(
+        r#"{{"bytes_in_use":{},"total_allocs":{},"total_bytes":{}}}"#,
+        bytes_in_use, total_allocs, total_bytes
+    );
+    if let Ok(mut f) = std::fs::File::create("timings.mem.json") {
+        let _ = std::io::Write::write_all(&mut f, json.as_bytes());
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
     use std::collections::VecDeque;
@@ -207,6 +287,10 @@ mod native {
             let _ = f.write_all(json.as_bytes());
             let _ = f.write_all(b"\n");
         }
+
+        // Memory statistics
+        #[cfg(feature = "profile")]
+        super::dump_mem_json();
 
         // Flat text summary to stderr (one line per leaf-to-root path)
         fn lines(node: &TimingNode, prefix: &str, out: &mut Vec<String>) {
