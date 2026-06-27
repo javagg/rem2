@@ -1501,6 +1501,39 @@ pub struct BoxConfig {
     /// If > 0, treated as lossy metal rather than ideal PEC.
     #[serde(rename = "CoverConductivity", default)]
     pub cover_conductivity: f64,
+
+    /// Internal delta-gap ports on the rectilinear grid.
+    /// Each entry defines a port between two adjacent cells.
+    #[serde(rename = "Ports", default)]
+    pub ports: Vec<BoxPortConfig>,
+}
+
+/// A delta-gap port on the boxed rectilinear grid (Sonnet internal port).
+///
+/// The port is placed between `cell_a` and `cell_b` (must be adjacent
+/// in either x or y direction). The delta-gap excitation applies ±1V
+/// across the edge, and the port current is J_a − J_b.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BoxPortConfig {
+    /// Port index (1-based).
+    #[serde(rename = "Index")]
+    pub index: u32,
+
+    /// Port reference impedance [Ω].
+    #[serde(rename = "Impedance", default = "default_ref_impedance")]
+    pub impedance: f64,
+
+    /// Dominant E-field direction: "x" or "y".
+    #[serde(rename = "Direction", default = "default_port_direction")]
+    pub direction: String,
+
+    /// First cell grid index (ix, iy).
+    #[serde(rename = "CellA")]
+    pub cell_a: (usize, usize),
+
+    /// Second cell grid index (ix, iy), adjacent to CellA.
+    #[serde(rename = "CellB")]
+    pub cell_b: (usize, usize),
 }
 
 fn default_evanescent_modes() -> usize { 10 }
