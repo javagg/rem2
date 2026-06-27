@@ -1115,6 +1115,20 @@ pub struct MomSolverConfig {
     #[serde(rename = "WallConductivity", default)]
     pub wall_conductivity: f64,
 
+    /// Superconducting kinetic inductance Ls [H] (Sonnet SURFACE_IMPEDANCE).
+    /// When > 0, SIBC uses Zs = Rdc + Rrf√f + j(ω·Ls + Xdc).
+    #[serde(rename = "SurfaceLs", default)]
+    pub surface_ls: f64,
+    /// Superconducting DC resistance Rdc [Ω].
+    #[serde(rename = "SurfaceRdc", default)]
+    pub surface_rdc: f64,
+    /// Superconducting RF resistance Rrf [Ω/√Hz].
+    #[serde(rename = "SurfaceRrf", default)]
+    pub surface_rrf: f64,
+    /// Superconducting DC reactance Xdc [Ω].
+    #[serde(rename = "SurfaceXdc", default)]
+    pub surface_xdc: f64,
+
     /// Near-field source file path. When set, the RHS is built from the
     /// near-field CSV data instead of the plane-wave model.  The file
     /// contains spatially sampled E/H fields exported from a previous
@@ -1129,6 +1143,19 @@ pub struct MomSolverConfig {
     /// Typical values: 4–16 for narrow-band, 8–32 for wideband.
     #[serde(rename = "RomOrder", default)]
     pub rom_order: usize,
+
+    /// Enable adaptive frequency sweep (like Sonnet ABS_ENTRY).
+    /// When true, the solver starts with (FreqMin, FreqMax) and iteratively
+    /// inserts mid-points where S-parameter interpolation error exceeds the
+    /// adaptive tolerance, up to `AdaptiveTarget` points. The sweep points
+    /// are not uniform — they concentrate where the response varies rapidly.
+    #[serde(rename = "AdaptiveSweep", default)]
+    pub adaptive_sweep: bool,
+
+    /// Maximum number of frequency points for adaptive sweep.
+    /// Ignored when `AdaptiveSweep` is false. Default 100.
+    #[serde(rename = "AdaptiveTarget", default = "default_adaptive_target")]
+    pub adaptive_target: usize,
 
     /// Maximum AMR iterations.  `0` disables AMR (default).
     /// When > 0, the mesh is refined up to `amr_iter` times with a
@@ -1243,6 +1270,12 @@ pub struct MomSolverConfig {
     /// Typical values: 1e-6 (1 µm) for standard PCB copper.
     #[serde(rename = "RmsRoughness", default)]
     pub rms_roughness: Option<f64>,
+
+    /// Boxed/enclosed solver configuration (Sonnet-style shielded box).
+    /// When present, the solver uses the rectangular wave-guide mode expansion
+    /// (FFT-based coupling) instead of the free-space/layered Green's function.
+    #[serde(rename = "Box", default)]
+    pub box_config: Option<BoxConfig>,
 }
 
 fn default_auto_port_min_faces() -> usize { 1 }
@@ -1295,6 +1328,7 @@ fn default_polarization()  -> String { "theta".to_string() }
 fn default_ref_impedance() -> f64    { 50.0 }
 fn default_port_direction() -> String { "x".to_string() }
 fn default_amr_theta()     -> f64    { 0.5 }
+fn default_adaptive_target() -> usize { 100 }
 fn default_deembed_eps_eff() -> f64  { 1.0 }
 fn default_mom_port_kind() -> String { "Lumped".to_string() }
 
@@ -1403,12 +1437,75 @@ pub struct SubstrateConfig {
     #[serde(rename = "BottomPec", default = "default_bottom_pec")]
     pub bottom_pec: bool,
 
+    /// If true, a PEC cover is placed at the top of the layer stack (shielded box).
+    /// The top PEC height is the sum of all finite-thickness layers.
+    #[serde(rename = "TopPec", default)]
+    pub top_pec: bool,
+
     /// Ground conductor conductivity sigma [S/m].
     /// When > 0 the ground plane is treated as a lossy conductor using SIBC.
     /// Default 0.0 (ideal PEC / not used).
     #[serde(rename = "GroundConductivity", default)]
     pub ground_conductivity: f64,
 }
+
+/// Boxed MoM solver configuration (Sonnet-style enclosed box).
+///
+/// When present under `Solver.MoM.Box`, the solver switches from the free-space /
+/// layered Green's function to a rectangular waveguide mode expansion with FFT-based
+/// coupling (Sonnet-style). All conductors and ports must lie within the box extents.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BoxConfig {
+    /// Box width (x-direction) [m].
+    #[serde(rename = "Width")]
+    pub width: f64,
+
+    /// Box height (y-direction) [m].
+    #[serde(rename = "Height")]
+    pub height: f64,
+
+    /// Number of cells in the x-direction (rectilinear grid).
+    #[serde(rename = "CellsX")]
+    pub cells_x: usize,
+
+    /// Number of cells in the y-direction (rectilinear grid).
+    #[serde(rename = "CellsY")]
+    pub cells_y: usize,
+
+    /// Whether the top cover is PEC. If true, sets the top boundary to PEC.
+    /// If false, the top is open (absorbing / free-space above).
+    #[serde(rename = "TopCover", default)]
+    pub top_cover: bool,
+
+    /// Whether the bottom cover is PEC. If true, sets the bottom boundary to PEC.
+    /// If false, the bottom is open.
+    #[serde(rename = "BottomCover", default)]
+    pub bottom_cover: bool,
+
+    /// Number of evanescent modes to retain beyond the propagating cutoff.
+    /// Larger values improve accuracy for strongly coupling structures at the cost
+    /// of increased FFT size. Default 10.
+    #[serde(rename = "NumEvanescentModes", default = "default_evanescent_modes")]
+    pub num_evanescent_modes: usize,
+
+    /// Maximum conformal sub-sampling level for cells intersecting conductor boundaries.
+    /// Level 0 = base grid only; higher values refine cells near edges. Default 2.
+    #[serde(rename = "ConformalLevel", default = "default_conformal_level")]
+    pub conformal_level: u32,
+
+    /// Box wall PEC flag when true. Side walls are always PEC in Sonnet-style solvers.
+    #[serde(rename = "SideWallPec", default = "default_side_wall_pec")]
+    pub side_wall_pec: bool,
+
+    /// If true, the box covers are assigned the same conductivity as `TopCover`/`BottomCover`.
+    /// If > 0, treated as lossy metal rather than ideal PEC.
+    #[serde(rename = "CoverConductivity", default)]
+    pub cover_conductivity: f64,
+}
+
+fn default_evanescent_modes() -> usize { 10 }
+fn default_conformal_level() -> u32 { 2 }
+fn default_side_wall_pec() -> bool { true }
 
 /// Single dielectric layer in the substrate stack.
 #[derive(Debug, Clone, Deserialize)]
