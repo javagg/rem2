@@ -1061,9 +1061,14 @@ pub struct MomSolverConfig {
     #[serde(rename = "SingularTol", default = "default_singular_tol")]
     pub singular_tol: f64,
 
-    /// Linear solver for Z·I = V: "Direct" | "GMRES" | "ACA" | "FMM"
+    /// Linear solver for Z·I = V: "Direct" | "GMRES" | "ACA" | "FFT" | "WGPU"
     #[serde(rename = "FastSolver", default = "default_fast_solver")]
     pub fast_solver: String,
+
+    /// Enable GPU-accelerated impedance matrix assembly via wgpu compute shaders.
+    /// Has no effect unless compiled with --features rem-mom/wgpu-gpu.
+    #[serde(rename = "UseGPU", default = "default_use_gpu")]
+    pub use_gpu: bool,
 
     /// Quadrature rule (1, 3, 5, 7). Overrides REM_MOM_QUAD_ORDER env var.
     #[serde(rename = "QuadratureRule", default)]
@@ -1332,6 +1337,7 @@ fn default_mom_basis()     -> String { "RWG".to_string()  }
 fn default_cfie_alpha()    -> f64    { 0.5 }
 fn default_singular_tol()  -> f64    { 1.0e-6 }
 fn default_fast_solver()   -> String { "Direct".to_string() }
+fn default_use_gpu()       -> bool   { true }
 fn default_polarization()  -> String { "theta".to_string() }
 fn default_ref_impedance() -> f64    { 50.0 }
 fn default_port_direction() -> String { "x".to_string() }
