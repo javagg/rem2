@@ -1061,7 +1061,9 @@ pub struct MomSolverConfig {
     #[serde(rename = "SingularTol", default = "default_singular_tol")]
     pub singular_tol: f64,
 
-    /// Linear solver for Z·I = V: "Direct" | "GMRES" | "ACA" | "FFT" | "WGPU"
+    /// Linear solver for Z·I = V: "Auto" | "Direct" | "GMRES" | "ACA" | "FFT" | "FMM" | "MLFMA" | "WGPU"
+    /// When "Auto", the solver is chosen automatically based on problem size:
+    /// N < 1000 → Direct LU, 1000..5000 → FFT/FMM, >5000 → MLFMA.
     #[serde(rename = "FastSolver", default = "default_fast_solver")]
     pub fast_solver: String,
 
@@ -1069,6 +1071,11 @@ pub struct MomSolverConfig {
     /// Has no effect unless compiled with --features rem-mom/wgpu-gpu.
     #[serde(rename = "UseGPU", default = "default_use_gpu")]
     pub use_gpu: bool,
+
+    /// When true, automatically select solver based on problem size when
+    /// FastSolver = "Auto".  Has no effect when FastSolver is explicitly set.
+    #[serde(rename = "SolverAutoSelect", default)]
+    pub sol_auto_select: bool,
 
     /// Quadrature rule (1, 3, 5, 7). Overrides REM_MOM_QUAD_ORDER env var.
     #[serde(rename = "QuadratureRule", default)]
