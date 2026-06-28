@@ -1320,6 +1320,12 @@ pub struct MomSolverConfig {
     /// structures.  Set to true for manual calibration or debugging.
     #[serde(rename = "DisableCoCalibration", default)]
     pub disable_co_calibration: bool,
+
+    /// Parametric sweep definition (R-10.2).
+    /// When set, the solver runs a multi-dimensional sweep over geometry
+    /// and/or frequency parameters instead of a single simulation.
+    #[serde(rename = "ParametricSweep", default)]
+    pub parametric_sweep: Option<Vec<ParamDefConfig>>,
 }
 
 fn default_auto_port_min_faces() -> usize { 1 }
@@ -1640,7 +1646,57 @@ pub struct BoxConfig {
     /// places the signal near the top cover.
     #[serde(rename = "SignalLayerZ", default)]
     pub signal_layer_z: Option<f64>,
+
+    /// Circuit components connected to boxed solver ports (R-10.1).
+    ///
+    /// Each entry defines an R, L, C, or S-parameter component connected
+    /// across one or two ports.  Components are stamped into the port Z-matrix
+    /// after the EM solve as a post-processing step.
+    #[serde(rename = "Components", default)]
+    pub components: Vec<ComponentConfig>,
 }
+
+/// A circuit component attached to boxed solver ports (R-10.1).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ComponentConfig {
+    /// Component name (for logging / debugging).
+    #[serde(rename = "Name", default)]
+    pub name: String,
+    /// Component type: "R" | "L" | "C" | "RLC" | "Touchstone".
+    #[serde(rename = "Type")]
+    pub comp_type: String,
+    /// Component value [Ω / H / F].
+    /// For RLC: R,L,C comma-separated.  For Touchstone: file path.
+    #[serde(rename = "Value", default)]
+    pub value: String,
+    /// First port (0-based).
+    #[serde(rename = "PortA", default)]
+    pub port_a: usize,
+    /// Second port (0-based).  Omit or same as PortA for single-ended.
+    #[serde(rename = "PortB")]
+    pub port_b: Option<usize>,
+}
+
+/// A parameter definition for the parametric sweep engine (R-10.2).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ParamDefConfig {
+    /// Parameter name (e.g. "W", "L", "freq").
+    #[serde(rename = "Name")]
+    pub name: String,
+    /// Target type: "Frequency" | "ConductorWidth" | "ConductorPosition".
+    #[serde(rename = "Target")]
+    pub target: String,
+    /// Target-specific arguments as comma-separated numbers.
+    /// For Frequency: "min,max,step" [Hz].
+    /// For ConductorWidth: "direction,cell_start,cell_end,row,min_cells,max_cells".
+    #[serde(rename = "Args")]
+    pub args: String,
+    /// Number of sweep steps (including endpoints). Default 5.
+    #[serde(rename = "Steps", default = "default_param_steps")]
+    pub steps: usize,
+}
+
+fn default_param_steps() -> usize { 5 }
 
 /// Configuration for a single dielectric brick in the boxed VIE solver.
 #[derive(Debug, Clone, Deserialize)]
