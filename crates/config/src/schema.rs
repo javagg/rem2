@@ -1169,6 +1169,16 @@ pub struct MomSolverConfig {
     #[serde(rename = "AdaptiveTarget", default = "default_adaptive_target")]
     pub adaptive_target: usize,
 
+    /// Number of poles for the ABS (Adaptive Band Synthesis) rational model.
+    /// Must be even (conjugate pairs). Default 6. Ignored when AdaptiveSweep is false.
+    #[serde(rename = "AbsPoles", default)]
+    pub abs_poles: Option<usize>,
+
+    /// ABS convergence tolerance (relative L2 error). Default 1e-3.
+    /// Smaller values yield more frequency points. Ignored when AdaptiveSweep is false.
+    #[serde(rename = "AbsTol", default)]
+    pub abs_tol: Option<f64>,
+
     /// Maximum AMR iterations.  `0` disables AMR (default).
     /// When > 0, the mesh is refined up to `amr_iter` times with a
     /// Dörfler marking threshold of `AmrtTheta`.
@@ -1263,6 +1273,14 @@ pub struct MomSolverConfig {
     #[serde(rename = "TrlKit", default)]
     pub trl_kit: Option<TrlKitConfig>,
 
+    /// Optional SOLT calibration kit parameters for 2-port de-embedding.
+    ///
+    /// SOLT (Short-Open-Load-Thru) uses known 1-port reflection standards at
+    /// each port plus a Thru to extract an 8-term error model. Supports
+    /// frequency-dependent Short inductance, Open capacitance, and Load offset.
+    #[serde(rename = "SoltKit", default)]
+    pub solt_kit: Option<SoltKitConfig>,
+
     /// Optional output renormalization impedance [ohm].
     /// When set, final S-parameters are renormalized from per-port Z0 to this value.
     #[serde(rename = "OutputRefImpedance", default)]
@@ -1338,6 +1356,46 @@ pub struct TrlKitConfig {
     #[serde(rename = "SolveSide", default)]
     pub solve_side: bool,
 }
+
+/// SOLT calibration kit configuration for 2-port S-parameter correction.
+///
+/// Models the Short as Γ_S = −1 · exp(−2j·ω·L_short/Z0) with offset inductance,
+/// the Open as Γ_O = +1 · exp(2j·ω·C_open·Z0) with fringing capacitance,
+/// and the Load as a resistively-terminated line with possible offset delay.
+/// The Thru is modeled as a zero-length connection (S₂₁=S₁₂=1, S₁₁=S₂₂=0).
+#[derive(Debug, Clone, Deserialize)]
+pub struct SoltKitConfig {
+    /// Short offset inductance [H]. Default 0.
+    #[serde(rename = "ShortInductance", default)]
+    pub short_inductance: f64,
+
+    /// Open fringing capacitance [F]. Default 0.
+    #[serde(rename = "OpenCapacitance", default)]
+    pub open_capacitance: f64,
+
+    /// Load resistance [Ω]. Default 50.
+    #[serde(rename = "LoadResistance", default = "default_solt_load_r")]
+    pub load_resistance: f64,
+
+    /// Load offset inductance [H]. Default 0.
+    #[serde(rename = "LoadInductance", default)]
+    pub load_inductance: f64,
+
+    /// Load offset capacitance [F]. Default 0.
+    #[serde(rename = "LoadCapacitance", default)]
+    pub load_capacitance: f64,
+
+    /// Port reference impedance [Ω] for standard definitions. Default 50.
+    #[serde(rename = "RefImpedance", default = "default_ref_impedance")]
+    pub ref_impedance: f64,
+
+    /// Effective relative permittivity used for the Thru/Line propagation
+    /// model (needed for phase correction). Default 1.0.
+    #[serde(rename = "EpsilonEff", default = "default_deembed_eps_eff")]
+    pub epsilon_eff: f64,
+}
+
+fn default_solt_load_r() -> f64 { 50.0 }
 
 fn default_mom_equation() -> String { "CFIE".to_string() }
 fn default_mom_basis()     -> String { "RWG".to_string()  }
@@ -1535,7 +1593,57 @@ pub struct BoxConfig {
     /// Each entry defines a port between two adjacent cells.
     #[serde(rename = "Ports", default)]
     pub ports: Vec<BoxPortConfig>,
+
+    /// Dielectric bricks in the box volume (VIE).
+    /// Each brick fills a rectangular region of cells from z=ZBottom to
+    /// z=ZBottom+Thickness, subdivided into NzLayers vertical cells.
+    /// The brick is modeled as a polarization current (VIE) coupled to
+    /// the surface rooftop basis.
+    #[serde(rename = "DielectricBricks", default)]
+    pub dielectric_bricks: Vec<DielectricBrickConfig>,
+
+    /// Interior PEC wall polygons for non-rectangular cavity shapes.
+    ///
+    /// Each polygon is a list of `(x, y)` vertices [m] defining an interior
+    /// PEC wall.  Cells whose center falls outside ALL polygons are masked
+    /// (pec_tag = 0).  Cells intersected by the polygon boundary get their
+    /// `coverage` adjusted.  When specified, `SideWallPec` is still applied
+    /// to the bounding-box edges; the polygons define additional interior
+    /// walls.
+    #[serde(rename = "WallPolygons", default)]
+    pub wall_polygons: Vec<Vec<[f64; 2]>>,
 }
+
+/// Configuration for a single dielectric brick in the boxed VIE solver.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DielectricBrickConfig {
+    /// First cell x-index (inclusive).
+    #[serde(rename = "IxStart")]
+    pub ix_start: usize,
+    /// Last cell x-index (exclusive).
+    #[serde(rename = "IxEnd")]
+    pub ix_end: usize,
+    /// First cell y-index (inclusive).
+    #[serde(rename = "IyStart")]
+    pub iy_start: usize,
+    /// Last cell y-index (exclusive).
+    #[serde(rename = "IyEnd")]
+    pub iy_end: usize,
+    /// Number of vertical layers.
+    #[serde(rename = "NzLayers", default = "default_nz_layers")]
+    pub nz_layers: usize,
+    /// Relative permittivity.
+    #[serde(rename = "Permittivity", default = "default_permittivity")]
+    pub eps_r: f64,
+    /// Conductivity [S/m].
+    #[serde(rename = "Conductivity", default)]
+    pub sigma: f64,
+    /// Thickness of the brick [m].
+    #[serde(rename = "Thickness")]
+    pub thickness: f64,
+}
+
+fn default_nz_layers() -> usize { 1 }
 
 /// A delta-gap port on the boxed rectilinear grid (Sonnet internal port).
 ///
