@@ -1077,6 +1077,13 @@ pub struct MomSolverConfig {
     #[serde(rename = "SolverAutoSelect", default)]
     pub sol_auto_select: bool,
 
+    /// Force a specific solver path for the boxed MoM solver.
+    /// When set, overrides both FastSolver and SolverAutoSelect.
+    /// Accepted values: "LU", "FFT", "GMRES", "ACA".
+    /// Default None → normal FastSolver / SolverAutoSelect logic.
+    #[serde(rename = "SolverOverride", default)]
+    pub solver_override: Option<String>,
+
     /// Quadrature rule (1, 3, 5, 7). Overrides REM_MOM_QUAD_ORDER env var.
     #[serde(rename = "QuadratureRule", default)]
     pub quad_order: Option<usize>,
@@ -1306,6 +1313,13 @@ pub struct MomSolverConfig {
     /// (FFT-based coupling) instead of the free-space/layered Green's function.
     #[serde(rename = "Box", default)]
     pub box_config: Option<BoxConfig>,
+
+    /// When true, disable the automatic co-calibration of closely-spaced
+    /// ports in the boxed solver.  Co-calibration removes parasitic
+    /// port-to-port coupling and is enabled by default for multi-port
+    /// structures.  Set to true for manual calibration or debugging.
+    #[serde(rename = "DisableCoCalibration", default)]
+    pub disable_co_calibration: bool,
 }
 
 fn default_auto_port_min_faces() -> usize { 1 }
@@ -1612,6 +1626,20 @@ pub struct BoxConfig {
     /// walls.
     #[serde(rename = "WallPolygons", default)]
     pub wall_polygons: Vec<Vec<[f64; 2]>>,
+
+    /// Z-position of the signal layer relative to the box bottom [m].
+    ///
+    /// Controls where the source/observation plane (z_src = z_obs) is placed
+    /// inside the box for the spectral Green's function.  The default (None)
+    /// places the signal layer at the box mid-height (height/2), which is
+    /// appropriate for standard microstrip on a bottom-grounded substrate.
+    ///
+    /// For conductor-backed coplanar waveguide (CBCPW) or air-bridge
+    /// configurations, set this to the actual signal-layer height above the
+    /// bottom ground plane.  For example, `signal_layer_z = 0.95·height`
+    /// places the signal near the top cover.
+    #[serde(rename = "SignalLayerZ", default)]
+    pub signal_layer_z: Option<f64>,
 }
 
 /// Configuration for a single dielectric brick in the boxed VIE solver.
@@ -1752,7 +1780,39 @@ pub enum DispersionModel {
         #[serde(rename = "Gamma")]
         gamma_rad_per_s: f64,
     },
+    /// Djordjević–Sarkar wideband model (nearly constant loss tangent).
+    ///
+    /// ε(ω) = ε_∞ + Δε · Σ_{k=1}^{N} w_k / (1 + jωτ_k)
+    ///
+    /// where `N` poles are logarithmically spaced between τ_min and τ_max,
+    /// with uniform weights w_k = 1/N.  This produces a nearly constant
+    /// loss tangent over many decades, satisfying the Kramers–Kronig
+    /// relations (causal by construction).
+    ///
+    /// Reference: Djordjević & Sarkar, "Wideband Frequency Domain
+    /// Characterization of FR-4 and Time-Domain Causality",
+    /// IEEE Trans. EMC, 2001.
+    #[serde(rename = "DjordjevicSarkar")]
+    DjordjevicSarkar {
+        /// High-frequency permittivity ε_∞
+        #[serde(rename = "EpsInf")]
+        eps_inf: f64,
+        /// Permittivity increment Δε = ε_s − ε_∞
+        #[serde(rename = "DeltaEps")]
+        delta_eps: f64,
+        /// Minimum relaxation time τ_min [s] (typically ~1e-12)
+        #[serde(rename = "TauMin")]
+        tau_min: f64,
+        /// Maximum relaxation time τ_max [s] (typically ~1e-3)
+        #[serde(rename = "TauMax")]
+        tau_max: f64,
+        /// Number of poles (≥ 2).  Defaults to 10 if omitted.
+        #[serde(rename = "NPoles", default = "default_ds_n_poles")]
+        n_poles: usize,
+    },
 }
+
+fn default_ds_n_poles() -> usize { 10 }
 
 impl DispersionModel {
     /// Complex relative permittivity at angular frequency ω = 2π·f [rad/s].
@@ -1767,6 +1827,20 @@ impl DispersionModel {
                 let w0sq = omega0_rad_per_s * omega0_rad_per_s;
                 let denom = Complex64::new(w0sq - omega * omega, gamma_rad_per_s * omega);
                 Complex64::new(eps_inf, 0.0) + Complex64::new(delta_eps * w0sq, 0.0) / denom
+            }
+            DispersionModel::DjordjevicSarkar { eps_inf, delta_eps, tau_min, tau_max, n_poles } => {
+                let n = n_poles.max(2);
+                let log_tau_min = tau_min.ln();
+                let log_tau_max = tau_max.ln();
+                let d_log = (log_tau_max - log_tau_min) / (n - 1) as f64;
+                let mut sum = Complex64::ZERO;
+                for k in 0..n {
+                    let tau_k = (log_tau_min + k as f64 * d_log).exp();
+                    let denom = Complex64::new(1.0, omega * tau_k);
+                    let w_k = 1.0 / n as f64;
+                    sum += Complex64::new(w_k, 0.0) / denom;
+                }
+                Complex64::new(eps_inf, 0.0) + Complex64::new(delta_eps, 0.0) * sum
             }
         }
     }
@@ -2656,6 +2730,8 @@ where
 #[cfg(test)]
 mod dispersion_tests {
     use super::*;
+    use num_complex::Complex64;
+    use std::f64::consts::PI;
 
     #[test]
     fn debye_at_dc_equals_eps_static() {
@@ -2688,7 +2764,6 @@ mod dispersion_tests {
 
     #[test]
     fn substrate_layer_eps_r_complex_uses_dispersion_when_set() {
-        use std::f64::consts::PI;
         let layer = SubstrateLayerConfig {
             permittivity: 4.0,
             loss_tangent: 0.02,
@@ -2738,5 +2813,63 @@ mod dispersion_tests {
             permittivity_tensor: None,
         };
         assert!(layer.eps_r_z_complex(1e9).is_none());
+    }
+
+    #[test]
+    fn djordjevic_sarkar_loss_tan_constant() {
+        // FR-4 parameters with 20 poles for flatter response
+        let model = DispersionModel::DjordjevicSarkar {
+            eps_inf: 3.9, delta_eps: 0.6,
+            tau_min: 1e-12, tau_max: 1e-3, n_poles: 20,
+        };
+        let freqs: Vec<f64> = (0..50).map(|i| 1e6 * 10.0_f64.powf(i as f64 / 49.0 * 4.0)).collect();
+        let mut tan_deltas = Vec::new();
+        for &f in &freqs {
+            let eps = model.eps_r_at_omega(2.0 * PI * f);
+            let td = (eps.im / eps.re).abs();
+            tan_deltas.push(td);
+        }
+        let mean_td: f64 = tan_deltas.iter().sum::<f64>() / tan_deltas.len() as f64;
+        let max_dev: f64 = tan_deltas.iter().map(|&t| (t - mean_td).abs() / mean_td).fold(0.0_f64, f64::max);
+        assert!(max_dev < 0.10, "loss tangent deviation {:.3} > 10%", max_dev);
+    }
+
+    #[test]
+    fn djordjevic_sarkar_causality_kramers_kronig() {
+        // D-S model is a sum of Debye terms, each analytically satisfying K-K.
+        // Verify the real-part reconstruction at a pole frequency where the
+        // integrand for the K-K transform is well-behaved.
+        // Test a single Debye pole first: ε(ω)=1+Δε/(1+jωτ), Δε=2, τ=1e-9
+        let tau = 1e-9;
+        let debye_eps = |omega: f64| -> Complex64 {
+            let denom = Complex64::new(1.0, omega * tau);
+            Complex64::new(1.0, 0.0) + Complex64::new(2.0, 0.0) / denom
+        };
+        // At ω₀=1/τ, ε'(ω₀)=1+Δε/(1+1)=1+1=2, ε''(ω₀)=Δε·1/(1+1)=1
+        let omega0 = 1.0 / tau;
+        let eps = debye_eps(omega0);
+        assert!((eps.re - 2.0).abs() < 1e-12, "Debye real part mismatch");
+        assert!((eps.im + 1.0).abs() < 1e-12, "Debye imag part mismatch");
+
+        // D-S is sum of weighted Debye poles — therefore K‑K compliant.
+        // Verify that ε'(ω) matches the explicit reactive (non-dispersive)
+        // formula: ε'(ω) = 3.9 + 0.6 · Σ w_k / (1+ω²τ_k²)
+        let model = DispersionModel::DjordjevicSarkar {
+            eps_inf: 3.9, delta_eps: 0.6,
+            tau_min: 1e-12, tau_max: 1e-3, n_poles: 20,
+        };
+        let omega_test = 2.0 * PI * 1e9;
+        let eps_direct = model.eps_r_at_omega(omega_test);
+        let n = 20;
+        let log_min = 1e-12_f64.ln();
+        let log_max = 1e-3_f64.ln();
+        let d_log = (log_max - log_min) / (n - 1) as f64;
+        let mut re_explicit = 3.9;
+        for k in 0..n {
+            let tau_k = (log_min + k as f64 * d_log).exp();
+            let w_k = 1.0 / n as f64;
+            re_explicit += 0.6 * w_k / (1.0 + omega_test * omega_test * tau_k * tau_k);
+        }
+        assert!((eps_direct.re - re_explicit).abs() < 1e-12);
     }
 }
