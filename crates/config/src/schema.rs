@@ -1077,6 +1077,12 @@ pub struct MomSolverConfig {
     #[serde(rename = "SolverAutoSelect", default)]
     pub sol_auto_select: bool,
 
+    /// When FastSolver="Auto", switch from LU to FFT when the number of
+    /// unknowns (2 · cells_x · cells_y) exceeds this threshold.
+    /// Default 500 (empirical break-even for LU vs FFT-GMRES).
+    #[serde(rename = "SolverThreshold", default = "default_solver_threshold")]
+    pub solver_threshold: usize,
+
     /// Force a specific solver path for the boxed MoM solver.
     /// When set, overrides both FastSolver and SolverAutoSelect.
     /// Accepted values: "LU", "FFT", "GMRES", "ACA".
@@ -1422,6 +1428,7 @@ fn default_mom_basis()     -> String { "RWG".to_string()  }
 fn default_cfie_alpha()    -> f64    { 0.5 }
 fn default_singular_tol()  -> f64    { 1.0e-6 }
 fn default_fast_solver()   -> String { "Direct".to_string() }
+fn default_solver_threshold() -> usize { 500 }
 fn default_use_gpu()       -> bool   { true }
 fn default_polarization()  -> String { "theta".to_string() }
 fn default_ref_impedance() -> f64    { 50.0 }
