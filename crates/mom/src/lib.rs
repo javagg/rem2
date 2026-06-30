@@ -1,17 +1,17 @@
-//! rem-mom â€?Method of Moments solver for rem2
+//! rem-mom ï¿½?Method of Moments solver for rem2
 //!
 //! Implements full-wave electromagnetic scattering and radiation using the
 //! Method of Moments (MoM) with RWG basis functions and CFIE formulation.
 //!
 //! # Architecture
 //! ```text
-//! RemMesh  â†? SurfaceMesh  â†? RwgBases
-//!                  â†?              â†?
+//! RemMesh  ï¿½? SurfaceMesh  ï¿½? RwgBases
+//!                  ï¿½?              ï¿½?
 //!             quadrature      assemble Z (dense matrix)
-//!                  â†?              â†?
-//!             singular.rs    LU solve â†?currents
-//!                                  â†?
-//!                            postprocess â†?RCS CSV
+//!                  ï¿½?              ï¿½?
+//!             singular.rs    LU solve ï¿½?currents
+//!                                  ï¿½?
+//!                            postprocess ï¿½?RCS CSV
 //! ```
 
 pub mod surface_mesh;
@@ -82,7 +82,7 @@ pub struct RcsPoint {
     pub theta_deg: f64,
     pub phi_deg:   f64,
     pub rcs_m2:    f64,
-    /// RCS in dBsm = 10Â·log10(rcs_m2); -300 if rcs_m2 â‰?0
+    /// RCS in dBsm = 10Â·log10(rcs_m2); -300 if rcs_m2 ï¿½?0
     pub rcs_dbsm:  f64,
 }
 
@@ -276,7 +276,7 @@ pub fn run_with_mesh(
                         let rhs_dv = nalgebra::DVector::from_vec(rhs.clone());
                         assemble::gmres_solve_op(&fft_op, &rhs_dv)?.as_slice().to_vec()
                     } else {
-                        log::warn!("MoM FFT: mesh is not planar â€?falling back to GMRES with dense matrix");
+                        log::warn!("MoM FFT: mesh is not planar ï¿½?falling back to GMRES with dense matrix");
                         assemble::gmres_solve(&z_mat, &rhs)?
                     }
                 }
@@ -373,7 +373,7 @@ fn run_s_param_sweep(
         }
     }
 
-    // Frequency sweep â€?use ROM if RomOrder > 0
+    // Frequency sweep ï¿½?use ROM if RomOrder > 0
     let freq = mom_cfg.freq_min;
     let freq_max  = mom_cfg.freq_max;
     let freq_step = mom_cfg.freq_step;
@@ -602,7 +602,7 @@ fn run_s_param_sweep(
             );
             sparams::write_tline_csv(&tline,
                 &output_dir.join("postpro").join("tline_params.csv"))?;
-            log::info!("MoM RLGC output: {} freq points (â„?{:.4e} m)",
+            log::info!("MoM RLGC output: {} freq points (ï¿½?{:.4e} m)",
                 tline.len(), mom_cfg.tline_length);
         }
 
@@ -721,7 +721,7 @@ fn run_s_param_sweep(
                     postprocess::write_surface_current_vtk_rwg(&vtk_path, surf, &bases, &currents)?;
                 }
                 log::info!(
-                    "MoM far-field pattern port {}: {} frequencies â†?{}",
+                    "MoM far-field pattern port {}: {} frequencies ï¿½?{}",
                     port_label, freq_list.len(), ff_csv.display()
                 );
                 // backward-compat alias for port 1

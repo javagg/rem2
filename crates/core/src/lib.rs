@@ -4,6 +4,7 @@ pub mod memory;
 pub mod near_field;
 pub mod sparse;
 pub mod operator;
+pub mod terminal_ui;
 pub mod timing;
 
 pub use constants::{EPS0, MU0, C0, ETA0, NU0};
