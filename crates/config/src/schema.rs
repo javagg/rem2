@@ -64,6 +64,12 @@ pub struct PalaceConfig {
     /// REM extension: post-processing options (ignored by Palace).
     #[serde(rename = "Postprocessing", default)]
     pub postprocessing: Postprocessing,
+
+    /// REM extension: metadata from format converters (Sonnet19, etc.).
+    /// Carries PlanarTechLayers (material, thickness, roughness),
+    /// dielectric info, and other converter-specific data.
+    #[serde(rename = "Metadata", default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
 }
 
 // ---------------------------------------------------------------------------
