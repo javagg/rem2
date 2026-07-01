@@ -1796,6 +1796,17 @@ pub struct SubstrateLayerConfig {
     #[serde(rename = "DielectricConductivity", default = "default_dielectric_conductivity")]
     pub dielectric_conductivity: f64,
 
+    /// DC conductivity of the metal traces on this layer [S/m].
+    ///
+    /// When > 0, the solver applies a Leontovich surface-impedance boundary
+    /// condition (SIBC) to the PEC cells on this layer, using the surface
+    /// impedance  Zs = (1+j)·√(πfμ₀/σ).  This models ohmic loss in finite-
+    /// conductivity metals (e.g. Cu = 5.8e7, Au = 4.1e7 S/m).
+    ///
+    /// Default: 0.0 (perfect electric conductor, lossless).
+    #[serde(rename = "MetallizationConductivity", default = "default_metallization_conductivity")]
+    pub metallization_conductivity: f64,
+
     /// Relative permeability (isotropic)
     #[serde(rename = "Permeability", default = "default_permeability")]
     pub permeability: f64,
@@ -1988,6 +1999,7 @@ fn default_bottom_pec() -> bool { true }
 fn default_permittivity() -> f64 { 1.0 }
 fn default_permeability() -> f64 { 1.0 }
 fn default_dielectric_conductivity() -> f64 { 0.0 }
+fn default_metallization_conductivity() -> f64 { 0.0 }
 
 // ---------------------------------------------------------------------------
 // SBR+ solver config (REM extension �?ignored by Palace)
