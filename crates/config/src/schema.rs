@@ -1,8 +1,9 @@
 use crate::preprocess::expand_ranges;
+use rem_core::EPS0;
 use serde::{Deserialize, Deserializer};
 
 /// Deserialize a JSON value that may be either a scalar `f64` or an array `[f64, ...]`.
-/// When an array is given, the first element is used (anisotropic → isotropic fallback).
+/// When an array is given, the first element is used (anisotropic �?isotropic fallback).
 fn deserialize_scalar_or_first<'de, D>(d: D) -> Result<f64, D::Error>
 where
     D: Deserializer<'de>,
@@ -81,14 +82,14 @@ pub struct Problem {
     #[serde(rename = "Type")]
     pub problem_type: ProblemType,
 
-    /// Verbosity level 0-3. None in JSON → defaults to 1 at runtime.
+    /// Verbosity level 0-3. None in JSON �?defaults to 1 at runtime.
     #[serde(rename = "Verbose")]
     pub verbose: Option<u8>,
 
     #[serde(rename = "Output")]
     pub output: Option<String>,
 
-    /// Palace `OutputFormats` section — accepted for compatibility; REM ignores it.
+    /// Palace `OutputFormats` section �?accepted for compatibility; REM ignores it.
     #[serde(rename = "OutputFormats", default)]
     pub output_formats: Option<OutputFormats>,
 }
@@ -115,19 +116,19 @@ pub enum ProblemType {
     Eigenmode,
     Driven,
     Transient,
-    /// Method of Moments (RWG + EFIE/CFIE) — REM extension, not in Palace
+    /// Method of Moments (RWG + EFIE/CFIE) �?REM extension, not in Palace
     MoM,
-    /// Boundary Element Method (Laplace/Helmholtz) — REM extension, not in Palace
+    /// Boundary Element Method (Laplace/Helmholtz) �?REM extension, not in Palace
     BEM,
-    /// Shooting and Bouncing Rays + Physical Optics — REM extension, not in Palace
+    /// Shooting and Bouncing Rays + Physical Optics �?REM extension, not in Palace
     SBR,
-    /// Hybrid Finite Element – Boundary Integral — REM extension, not in Palace
+    /// Hybrid Finite Element �?Boundary Integral �?REM extension, not in Palace
     #[serde(rename = "FEBI")]
     FEBI,
-    /// Planar Method of Moments (uniform grid + FFT) — REM extension, not in Palace
+    /// Planar Method of Moments (uniform grid + FFT) �?REM extension, not in Palace
     #[serde(rename = "Planar")]
     Planar,
-    /// Parametric sweep or gradient optimization over design parameters — REM extension, not in Palace
+    /// Parametric sweep or gradient optimization over design parameters �?REM extension, not in Palace
     Parametric,
 }
 
@@ -171,16 +172,16 @@ pub struct Domains {
     #[serde(rename = "Materials", default)]
     pub materials: Vec<MaterialSpec>,
 
-    /// Palace `Postprocessing` under Domains — accepted for compatibility.
+    /// Palace `Postprocessing` under Domains �?accepted for compatibility.
     #[serde(rename = "Postprocessing", default)]
     pub postprocessing: Option<DomainsPostprocessing>,
 
-    /// Palace `CurrentDipole` — accepted for compatibility (not implemented).
+    /// Palace `CurrentDipole` �?accepted for compatibility (not implemented).
     #[serde(rename = "CurrentDipole", default)]
     pub current_dipole: Vec<CurrentDipoleSpec>,
 }
 
-/// Palace `Domains.CurrentDipole` (Hertzian dipole source — not implemented).
+/// Palace `Domains.CurrentDipole` (Hertzian dipole source �?not implemented).
 #[derive(Debug, Clone, Deserialize)]
 pub struct CurrentDipoleSpec {
     #[serde(rename = "Index")]
@@ -196,7 +197,7 @@ pub struct CurrentDipoleSpec {
     pub direction: Vec<f64>,
 }
 
-/// Palace `Domains.Postprocessing` — accepted for Palace compatibility.
+/// Palace `Domains.Postprocessing` �?accepted for Palace compatibility.
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct DomainsPostprocessing {
     #[serde(rename = "Energy", default)]
@@ -230,22 +231,22 @@ pub struct MaterialSpec {
     #[serde(rename = "Attributes", deserialize_with = "deserialize_attributes")]
     pub attributes: Vec<u32>,
 
-    /// Accepts scalar `9.3` or anisotropic array `[9.3, 9.3, 11.5]`; array → first element used.
+    /// Accepts scalar `9.3` or anisotropic array `[9.3, 9.3, 11.5]`; array �?first element used.
     #[serde(rename = "Permittivity", default = "default_scalar_or_first_one",
             deserialize_with = "deserialize_scalar_or_first")]
     pub permittivity: f64,
 
-    /// Accepts scalar `1.0` or anisotropic array `[1.0, 1.0, 1.0]`; array → first element used.
+    /// Accepts scalar `1.0` or anisotropic array `[1.0, 1.0, 1.0]`; array �?first element used.
     #[serde(rename = "Permeability", default = "default_scalar_or_first_one",
             deserialize_with = "deserialize_scalar_or_first")]
     pub permeability: f64,
 
-    /// Accepts scalar `3.0e-5` or anisotropic array `[3.0e-5, 3.0e-5, 8.6e-5]`; array → first element used.
+    /// Accepts scalar `3.0e-5` or anisotropic array `[3.0e-5, 3.0e-5, 8.6e-5]`; array �?first element used.
     #[serde(rename = "LossTan", default,
             deserialize_with = "deserialize_scalar_or_first")]
     pub loss_tangent: f64,
 
-    /// Magnetic loss tangent tan δ_m = μᵢ/μᵣ for lossy magnetic materials (ferrites, etc.).
+    /// Magnetic loss tangent tan δ_m = μ�?μ�?for lossy magnetic materials (ferrites, etc.).
     #[serde(rename = "LossTanMag", default)]
     pub loss_tangent_magnetic: f64,
 
@@ -260,7 +261,7 @@ pub struct MaterialSpec {
     pub material_axes: Vec<Vec<f64>>,
 
     /// Drude-Lorentz poles for frequency-dependent permittivity.
-    /// ε(ω) = ε∞ + Σ ωp² / (ω0² − ω² + jγω)
+    /// ε(ω) = ε�?+ Σ ωp² / (ω0² �?ω² + jγω)
     /// Relevant only for driven (frequency-domain) solvers.
     #[serde(rename = "DrudeLorentz", default)]
     pub drude_lorentz: Vec<DrudeLorentzPole>,
@@ -268,18 +269,18 @@ pub struct MaterialSpec {
 
 /// One Drude-Lorentz oscillator pole.
 ///
-/// Contributes `plasma_freq_sq / (resonance_freq_sq − ω² + j·damping·ω)` to εᵣ(ω).
+/// Contributes `plasma_freq_sq / (resonance_freq_sq �?ω² + j·damping·ω)` to ε�?ω).
 ///
 /// For a Drude free-carrier term: set `ResonanceFreq = 0`, `PlasmaFreq = ωp/(2π)`,
 /// `Damping = γ/(2π)`.
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct DrudeLorentzPole {
-    /// Plasma frequency fₚ [Hz] — the pole contribution strength.
-    /// ωp² = (2π fₚ)²
+    /// Plasma frequency f�?[Hz] �?the pole contribution strength.
+    /// ωp² = (2π f�?²
     #[serde(rename = "PlasmaFreq", default)]
     pub plasma_freq: f64,
 
-    /// Resonance frequency f₀ [Hz].  Zero → Drude (free-carrier) term.
+    /// Resonance frequency f₀ [Hz].  Zero �?Drude (free-carrier) term.
     /// ω₀² = (2π f₀)²
     #[serde(rename = "ResonanceFreq", default)]
     pub resonance_freq: f64,
@@ -331,7 +332,7 @@ pub struct Boundaries {
     #[serde(rename = "Terminal", default)]
     pub terminal: Vec<TerminalSpec>,
 
-    /// Palace `Periodic` / `FloquetWaveVector` boundaries — not implemented.
+    /// Palace `Periodic` / `FloquetWaveVector` boundaries �?not implemented.
     #[serde(rename = "Periodic", default)]
     pub periodic: Vec<PeriodicSpec>,
 
@@ -341,7 +342,7 @@ pub struct Boundaries {
     pub postprocessing_flux: Vec<BoundaryPostprocessingSpec>,
 }
 
-/// Palace `Boundaries.Periodic` — not implemented.
+/// Palace `Boundaries.Periodic` �?not implemented.
 #[derive(Debug, Clone, Deserialize)]
 pub struct PeriodicSpec {
     /// Floquet wave vector [kx, ky, kz] for quasi-periodic BCs.
@@ -365,7 +366,7 @@ pub struct PeriodicBoundaryPair {
     pub translation: Vec<f64>,
 }
 
-/// Palace `Boundaries.Postprocessing` — not yet implemented.
+/// Palace `Boundaries.Postprocessing` �?not yet implemented.
 #[derive(Debug, Clone, Deserialize)]
 pub struct BoundaryPostprocessingSpec {
     #[serde(rename = "Index", default)]
@@ -417,7 +418,7 @@ pub struct AttrList {
     pub attributes: Vec<u32>,
 }
 
-/// Resistive thin-sheet boundary condition (Ω/□ sheet resistance).
+/// Resistive thin-sheet boundary condition (Ω/�?sheet resistance).
 #[derive(Debug, Clone, Deserialize)]
 pub struct ResistiveSheetSpec {
     #[serde(rename = "Attributes", deserialize_with = "deserialize_attributes")]
@@ -550,7 +551,7 @@ pub struct SurfaceCurrentSpec {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SolverConfig {
-    /// Finite element polynomial order (1 = P1, 2 = P2, …)
+    /// Finite element polynomial order (1 = P1, 2 = P2, �?
     #[serde(rename = "Order", default = "default_order")]
     pub order: u8,
 
@@ -562,7 +563,7 @@ pub struct SolverConfig {
     #[serde(rename = "Discretization", default = "default_discretization")]
     pub discretization: String,
 
-    /// Palace `Device` — REM is CPU-only; value is accepted and ignored.
+    /// Palace `Device` �?REM is CPU-only; value is accepted and ignored.
     #[serde(rename = "Device", default = "default_device")]
     pub device: String,
 
@@ -616,7 +617,7 @@ pub struct SolverConfig {
 /// REM near-to-far-field configuration.
 ///
 /// Computes radiation pattern from the driven solver's near-field solution.
-/// Uses Kirchhoff approximation: far-field amplitude ∝ ∫ **E**(r') e^{jk r̂·r'} dS'
+/// Uses Kirchhoff approximation: far-field amplitude �?�?**E**(r') e^{jk r̂·r'} dS'
 /// integrated over all boundary elements tagged in `surface_attributes`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct FarFieldConfig {
@@ -808,17 +809,17 @@ pub struct DrivenSolver {
     pub adaptive_tol: f64,
 
     /// Snapshot-based ROM order: number of full solves used to build the reduced basis.
-    /// 0 (default) = disabled; 4–16 recommended for smooth S-parameter sweeps.
+    /// 0 (default) = disabled; 4�?6 recommended for smooth S-parameter sweeps.
     /// When enabled, only `RomOrder` full complex solves are performed; all other
     /// frequency points are evaluated via the reduced system (much cheaper).
     #[serde(rename = "RomOrder", default)]
     pub rom_order: usize,
 
-    /// Palace `Samples` — accepted, not implemented (use MinFreq/MaxFreq/FreqStep).
+    /// Palace `Samples` �?accepted, not implemented (use MinFreq/MaxFreq/FreqStep).
     #[serde(rename = "Samples", default)]
     pub samples: Vec<FreqSampleSpec>,
 
-    /// Palace `Save` array — accepted, not implemented (use SaveStep integer).
+    /// Palace `Save` array �?accepted, not implemented (use SaveStep integer).
     #[serde(rename = "Save", default)]
     pub save: Vec<f64>,
 
@@ -880,15 +881,15 @@ pub struct TransientSolver {
     #[serde(rename = "SaveStep", default = "default_save_step")]
     pub save_step: usize,
 
-    /// Palace `Excitation` waveform type — accepted, not fully implemented.
+    /// Palace `Excitation` waveform type �?accepted, not fully implemented.
     #[serde(rename = "Excitation", default)]
     pub excitation: String,
 
-    /// Palace `ExcitationFreq` [GHz] — accepted, not fully implemented.
+    /// Palace `ExcitationFreq` [GHz] �?accepted, not fully implemented.
     #[serde(rename = "ExcitationFreq", default)]
     pub excitation_freq: f64,
 
-    /// Palace `ExcitationWidth` [ns] — accepted, not fully implemented.
+    /// Palace `ExcitationWidth` [ns] �?accepted, not fully implemented.
     #[serde(rename = "ExcitationWidth", default)]
     pub excitation_width: f64,
 
@@ -912,7 +913,7 @@ pub struct LinearSolver {
     #[serde(rename = "Type", default = "default_linear_type")]
     pub solver_type: String,
 
-    /// Palace `KSPType` — "CG"/"PCG" routes to PCG; "GMRES"/"" uses GMRES (default).
+    /// Palace `KSPType` �?"CG"/"PCG" routes to PCG; "GMRES"/"" uses GMRES (default).
     #[serde(rename = "KSPType", default)]
     pub ksp_type: String,
 
@@ -928,7 +929,7 @@ pub struct LinearSolver {
     #[serde(rename = "PCType", default = "default_pc_type")]
     pub pc_type: String,
 
-    /// Palace `ComplexCoarseSolve` — accepted, not implemented.
+    /// Palace `ComplexCoarseSolve` �?accepted, not implemented.
     #[serde(rename = "ComplexCoarseSolve", default)]
     pub complex_coarse_solve: bool,
 }
@@ -1033,7 +1034,7 @@ where
 }
 
 // ---------------------------------------------------------------------------
-// MoM solver config (REM extension — ignored by Palace)
+// MoM solver config (REM extension �?ignored by Palace)
 // ---------------------------------------------------------------------------
 
 /// MoM solver parameters, placed under `Solver.MoM` in the config file.
@@ -1059,7 +1060,7 @@ pub struct MomSolverConfig {
     #[serde(rename = "FreqStep")]
     pub freq_step: f64,
 
-    /// CFIE mixing coefficient α ∈ [0,1]: 0 = pure EFIE, 1 = pure MFIE
+    /// CFIE mixing coefficient α �?[0,1]: 0 = pure EFIE, 1 = pure MFIE
     #[serde(rename = "Alpha", default = "default_cfie_alpha")]
     pub alpha: f64,
 
@@ -1069,7 +1070,7 @@ pub struct MomSolverConfig {
 
     /// Linear solver for Z·I = V: "Auto" | "Direct" | "GMRES" | "ACA" | "FFT" | "FMM" | "MLFMA" | "WGPU"
     /// When "Auto", the solver is chosen automatically based on problem size:
-    /// N < 1000 → Direct LU, 1000..5000 → FFT/FMM, >5000 → MLFMA.
+    /// N < 1000 �?Direct LU, 1000..5000 �?FFT/FMM, >5000 �?MLFMA.
     #[serde(rename = "FastSolver", default = "default_fast_solver")]
     pub fast_solver: String,
 
@@ -1092,7 +1093,7 @@ pub struct MomSolverConfig {
     /// Force a specific solver path for the boxed MoM solver.
     /// When set, overrides both FastSolver and SolverAutoSelect.
     /// Accepted values: "LU", "FFT", "GMRES", "ACA".
-    /// Default None → normal FastSolver / SolverAutoSelect logic.
+    /// Default None �?normal FastSolver / SolverAutoSelect logic.
     #[serde(rename = "SolverOverride", default)]
     pub solver_override: Option<String>,
 
@@ -1169,9 +1170,9 @@ pub struct MomSolverConfig {
 
     /// Snapshot ROM acceleration for S-parameter frequency sweeps.
     /// `0` disables ROM (default); positive value sets the number of anchor
-    /// frequencies at which a full MoM solve is performed — all other
+    /// frequencies at which a full MoM solve is performed �?all other
     /// frequencies use the Galerkin-projected low-dimensional system.
-    /// Typical values: 4–16 for narrow-band, 8–32 for wideband.
+    /// Typical values: 4�?6 for narrow-band, 8�?2 for wideband.
     #[serde(rename = "RomOrder", default)]
     pub rom_order: usize,
 
@@ -1179,7 +1180,7 @@ pub struct MomSolverConfig {
     /// When true, the solver starts with (FreqMin, FreqMax) and iteratively
     /// inserts mid-points where S-parameter interpolation error exceeds the
     /// adaptive tolerance, up to `AdaptiveTarget` points. The sweep points
-    /// are not uniform — they concentrate where the response varies rapidly.
+    /// are not uniform �?they concentrate where the response varies rapidly.
     #[serde(rename = "AdaptiveSweep", default)]
     pub adaptive_sweep: bool,
 
@@ -1311,7 +1312,7 @@ pub struct MomSolverConfig {
 
     /// Conductor surface roughness model: "hammerstad" | "groisse" | null.
     /// When set, the Leontovich surface impedance is multiplied by the
-    /// roughness correction factor K_r ≥ 1 (requires RmsRoughness > 0).
+    /// roughness correction factor K_r �?1 (requires RmsRoughness > 0).
     #[serde(rename = "RoughnessModel", default)]
     pub roughness_model: Option<String>,
 
@@ -1391,7 +1392,7 @@ pub struct TrlKitConfig {
 
 /// SOLT calibration kit configuration for 2-port S-parameter correction.
 ///
-/// Models the Short as Γ_S = −1 · exp(−2j·ω·L_short/Z0) with offset inductance,
+/// Models the Short as Γ_S = �? · exp(�?j·ω·L_short/Z0) with offset inductance,
 /// the Open as Γ_O = +1 · exp(2j·ω·C_open·Z0) with fringing capacitance,
 /// and the Load as a resistively-terminated line with possible offset delay.
 /// The Thru is modeled as a zero-length connection (S₂₁=S₁₂=1, S₁₁=S₂₂=0).
@@ -1746,7 +1747,7 @@ fn default_nz_layers() -> usize { 1 }
 ///
 /// The port is placed between `cell_a` and `cell_b` (must be adjacent
 /// in either x or y direction). The delta-gap excitation applies ±1V
-/// across the edge, and the port current is J_a − J_b.
+/// across the edge, and the port current is J_a �?J_b.
 #[derive(Debug, Clone, Deserialize)]
 pub struct BoxPortConfig {
     /// Port index (1-based).
@@ -1785,6 +1786,16 @@ pub struct SubstrateLayerConfig {
     #[serde(rename = "LossTangent", default)]
     pub loss_tangent: f64,
 
+    /// Dielectric DC conductivity [S/m].
+    ///
+    /// Models ohmic loss in semiconducting substrates (e.g., Si: σ �?10-50 S/m).
+    /// The effective loss at frequency f is included as an additional imaginary
+    /// contribution to the complex permittivity:  ε'' += σ/(2πf·ε₀).
+    ///
+    /// Default: 0.0 (perfect dielectric).
+    #[serde(rename = "DielectricConductivity", default = "default_dielectric_conductivity")]
+    pub dielectric_conductivity: f64,
+
     /// Relative permeability (isotropic)
     #[serde(rename = "Permeability", default = "default_permeability")]
     pub permeability: f64,
@@ -1804,15 +1815,15 @@ pub struct SubstrateLayerConfig {
     /// at the simulation frequency and used in the Sommerfeld integral.
     ///
     /// Supported models:
-    /// - `"Debye"`: relaxation model  ε(ω) = ε_∞ + (ε_s − ε_∞) / (1 + jωτ)
-    /// - `"Lorentz"`: oscillator model ε(ω) = ε_∞ + Δε·ω₀² / (ω₀² − ω² + jγω)
+    /// - `"Debye"`: relaxation model  ε(ω) = ε_�?+ (ε_s �?ε_�? / (1 + jωτ)
+    /// - `"Lorentz"`: oscillator model ε(ω) = ε_�?+ Δε·ω₀² / (ω₀² �?ω² + jγω)
     #[serde(rename = "Dispersion", default)]
     pub dispersion: Option<DispersionModel>,
 
     /// Anisotropic permittivity tensor [ε_xx, ε_yy, ε_zz].
     ///
     /// When set, overrides the scalar `Permittivity` field.  Supports
-    /// uniaxial anisotropy (ε_xx = ε_yy ≠ ε_zz) typical of laminated PCB
+    /// uniaxial anisotropy (ε_xx = ε_yy �?ε_zz) typical of laminated PCB
     /// substrates. The layered Green model uses ε_t = ε_xx and ε_z = ε_zz.
     #[serde(rename = "PermittivityTensor", default)]
     pub permittivity_tensor: Option<[f64; 3]>,
@@ -1822,9 +1833,9 @@ pub struct SubstrateLayerConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "Type")]
 pub enum DispersionModel {
-    /// Debye relaxation:  ε(ω) = ε_∞ + (ε_s − ε_∞) / (1 + jωτ)
+    /// Debye relaxation:  ε(ω) = ε_�?+ (ε_s �?ε_�? / (1 + jωτ)
     Debye {
-        /// High-frequency permittivity ε_∞ (lossless plateau above resonance)
+        /// High-frequency permittivity ε_�?(lossless plateau above resonance)
         #[serde(rename = "EpsInf")]
         eps_inf: f64,
         /// Static (DC) permittivity ε_s
@@ -1834,12 +1845,12 @@ pub enum DispersionModel {
         #[serde(rename = "RelaxationTime")]
         tau_s: f64,
     },
-    /// Lorentz oscillator: ε(ω) = ε_∞ + Δε·ω₀² / (ω₀² − ω² + jγω)
+    /// Lorentz oscillator: ε(ω) = ε_�?+ Δε·ω₀² / (ω₀² �?ω² + jγω)
     Lorentz {
-        /// High-frequency permittivity ε_∞
+        /// High-frequency permittivity ε_�?
         #[serde(rename = "EpsInf")]
         eps_inf: f64,
-        /// Permittivity increment Δε = ε_s − ε_∞
+        /// Permittivity increment Δε = ε_s �?ε_�?
         #[serde(rename = "DeltaEps")]
         delta_eps: f64,
         /// Resonant angular frequency ω₀ [rad/s]
@@ -1851,7 +1862,7 @@ pub enum DispersionModel {
     },
     /// Djordjević–Sarkar wideband model (nearly constant loss tangent).
     ///
-    /// ε(ω) = ε_∞ + Δε · Σ_{k=1}^{N} w_k / (1 + jωτ_k)
+    /// ε(ω) = ε_�?+ Δε · Σ_{k=1}^{N} w_k / (1 + jωτ_k)
     ///
     /// where `N` poles are logarithmically spaced between τ_min and τ_max,
     /// with uniform weights w_k = 1/N.  This produces a nearly constant
@@ -1863,10 +1874,10 @@ pub enum DispersionModel {
     /// IEEE Trans. EMC, 2001.
     #[serde(rename = "DjordjevicSarkar")]
     DjordjevicSarkar {
-        /// High-frequency permittivity ε_∞
+        /// High-frequency permittivity ε_�?
         #[serde(rename = "EpsInf")]
         eps_inf: f64,
-        /// Permittivity increment Δε = ε_s − ε_∞
+        /// Permittivity increment Δε = ε_s �?ε_�?
         #[serde(rename = "DeltaEps")]
         delta_eps: f64,
         /// Minimum relaxation time τ_min [s] (typically ~1e-12)
@@ -1875,7 +1886,7 @@ pub enum DispersionModel {
         /// Maximum relaxation time τ_max [s] (typically ~1e-3)
         #[serde(rename = "TauMax")]
         tau_max: f64,
-        /// Number of poles (≥ 2).  Defaults to 10 if omitted.
+        /// Number of poles (�?2).  Defaults to 10 if omitted.
         #[serde(rename = "NPoles", default = "default_ds_n_poles")]
         n_poles: usize,
     },
@@ -1921,19 +1932,36 @@ impl SubstrateLayerConfig {
     /// Priority:
     /// 1. Dispersion model (`Dispersion` key), if present.
     /// 2. Anisotropic tensor (`PermittivityTensor`): uses ε_xx as lateral ε.
-    /// 3. Scalar `Permittivity` + `LossTangent`.
+    /// 3. Scalar `Permittivity` + `LossTangent` + `DielectricConductivity`.
+    ///
+    /// The imaginary part includes both the loss-tangent contribution and the
+    /// DC conductivity:
+    ///   ε'' = ε'·tanδ + σ_dc / (2πf · ε₀)
     pub fn eps_r_complex(&self, freq_hz: f64) -> num_complex::Complex64 {
         use num_complex::Complex64;
         use std::f64::consts::PI;
         if let Some(ref model) = self.dispersion {
             let omega = 2.0 * PI * freq_hz;
-            model.eps_r_at_omega(omega)
+            let mut eps = model.eps_r_at_omega(omega);
+            // Add DC conductivity contribution on top of the dispersion model
+            if self.dielectric_conductivity > 0.0 && freq_hz > 0.0 {
+                let sigma_term = self.dielectric_conductivity / (omega * EPS0);
+                eps.im -= sigma_term;
+            }
+            eps
         } else if let Some([eps_xx, _, _]) = self.permittivity_tensor {
-            // Use lateral (xx) component; imaginary part from loss tangent
-            Complex64::new(eps_xx, -eps_xx * self.loss_tangent)
+            let eps_imag_base = eps_xx * self.loss_tangent;
+            let sigma_contrib = if self.dielectric_conductivity > 0.0 && freq_hz > 0.0 {
+                self.dielectric_conductivity / (2.0 * PI * freq_hz * EPS0)
+            } else { 0.0 };
+            Complex64::new(eps_xx, -(eps_imag_base + sigma_contrib))
         } else {
             let eps = self.permittivity;
-            Complex64::new(eps, -eps * self.loss_tangent)
+            let eps_imag_base = eps * self.loss_tangent;
+            let sigma_contrib = if self.dielectric_conductivity > 0.0 && freq_hz > 0.0 {
+                self.dielectric_conductivity / (2.0 * PI * freq_hz * EPS0)
+            } else { 0.0 };
+            Complex64::new(eps, -(eps_imag_base + sigma_contrib))
         }
     }
 
@@ -1941,10 +1969,15 @@ impl SubstrateLayerConfig {
     ///
     /// For isotropic and non-tensor layers, equals `eps_r_complex`.
     /// For anisotropic tensor layers, returns ε_zz component.
-    pub fn eps_r_z_complex(&self, _freq_hz: f64) -> Option<num_complex::Complex64> {
+    pub fn eps_r_z_complex(&self, freq_hz: f64) -> Option<num_complex::Complex64> {
         use num_complex::Complex64;
+        use std::f64::consts::PI;
         if let Some([_, _, eps_zz]) = self.permittivity_tensor {
-            Some(Complex64::new(eps_zz, -eps_zz * self.loss_tangent))
+            let eps_imag_base = eps_zz * self.loss_tangent;
+            let sigma_contrib = if self.dielectric_conductivity > 0.0 && freq_hz > 0.0 {
+                self.dielectric_conductivity / (2.0 * PI * freq_hz * EPS0)
+            } else { 0.0 };
+            Some(Complex64::new(eps_zz, -(eps_imag_base + sigma_contrib)))
         } else {
             None // isotropic: caller may treat as same as eps_r_complex
         }
@@ -1954,9 +1987,10 @@ impl SubstrateLayerConfig {
 fn default_bottom_pec() -> bool { true }
 fn default_permittivity() -> f64 { 1.0 }
 fn default_permeability() -> f64 { 1.0 }
+fn default_dielectric_conductivity() -> f64 { 0.0 }
 
 // ---------------------------------------------------------------------------
-// SBR+ solver config (REM extension — ignored by Palace)
+// SBR+ solver config (REM extension �?ignored by Palace)
 // ---------------------------------------------------------------------------
 
 /// SBR+ solver parameters, placed under `Solver.SBR` in the config file.
@@ -2010,7 +2044,7 @@ fn default_weight_thresh()  -> f64    { 1.0e-4 }
 fn default_target_type()    -> String { "PEC".to_string() }
 
 // ---------------------------------------------------------------------------
-// FE-BI solver config (REM extension — ignored by Palace)
+// FE-BI solver config (REM extension �?ignored by Palace)
 // ---------------------------------------------------------------------------
 
 /// Hybrid FE-BI solver parameters, placed under `Solver.FEBI` in the config file.
@@ -2040,7 +2074,7 @@ pub struct FeBiSolverConfig {
     #[serde(rename = "Equation", default = "default_febi_equation")]
     pub equation: String,
 
-    /// CFIE mixing coefficient α ∈ [0,1]: 0 = pure EFIE, 1 = pure MFIE
+    /// CFIE mixing coefficient α �?[0,1]: 0 = pure EFIE, 1 = pure MFIE
     #[serde(rename = "Alpha", default = "default_febi_alpha")]
     pub alpha: f64,
 
@@ -2090,7 +2124,7 @@ fn default_exterior_eps()       -> f64    { 1.0 }
 fn default_exterior_mu()        -> f64    { 1.0 }
 
 // ---------------------------------------------------------------------------
-// DDM solver config (REM extension — ignored by Palace)
+// DDM solver config (REM extension �?ignored by Palace)
 // ---------------------------------------------------------------------------
 
 /// Domain Decomposition Method solver parameters, placed under `Solver.DDM`.
@@ -2130,12 +2164,12 @@ pub struct DdmSolverConfig {
 
     /// Anderson acceleration history depth m (0 = disabled).
     /// Stores the last m residual/iterate pairs and solves a small LS problem each
-    /// iteration to accelerate convergence. Typical values: 3–10.
+    /// iteration to accelerate convergence. Typical values: 3�?0.
     #[serde(rename = "AndersonDepth", default = "default_ddm_anderson_depth")]
     pub anderson_depth: usize,
 
     /// Operating frequency [Hz] for the Helmholtz FEM subdomain solves.
-    /// Used to compute k = ω√(μ₀ε₀) for the wave operator and Robin α = jk.
+    /// Used to compute k = ω�?μ₀ε₀) for the wave operator and Robin α = jk.
     /// Default 1 GHz.  Set to match your Driven solver FreqMin/FreqMax centre.
     #[serde(rename = "FreqHz", default = "default_ddm_freq_hz")]
     pub freq_hz: f64,
@@ -2252,7 +2286,7 @@ pub struct PlanarPortSpec {
 fn default_planar_n() -> usize { 20 }
 
 // ---------------------------------------------------------------------------
-// Parametric sweep / gradient optimization (REM extension — ignored by Palace)
+// Parametric sweep / gradient optimization (REM extension �?ignored by Palace)
 // ---------------------------------------------------------------------------
 
 /// Mode for parametric run: full grid sweep or gradient optimization.
@@ -2322,7 +2356,7 @@ pub struct SweepParam {
     #[serde(rename = "Max")]
     pub max: Option<f64>,
 
-    /// Number of equally-spaced steps from `Min` to `Max` (Sweep mode, ≥ 2).
+    /// Number of equally-spaced steps from `Min` to `Max` (Sweep mode, �?2).
     #[serde(rename = "Steps")]
     pub steps: Option<usize>,
 
@@ -2455,7 +2489,7 @@ fn default_mc_sigma()        -> f64   { 0.05 }
 fn default_one()             -> usize { 1 }
 
 // ---------------------------------------------------------------------------
-// Postprocessing (REM extension — ignored by Palace)
+// Postprocessing (REM extension �?ignored by Palace)
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
@@ -2590,7 +2624,7 @@ pub fn validate_palace_compat(cfg: &PalaceConfig) {
         }
         if !dp.probe.is_empty() {
             log::info!(
-                "[REM] Domains.Postprocessing.Probe: {} probe(s) — \
+                "[REM] Domains.Postprocessing.Probe: {} probe(s) �?\
                  results written to postpro/probe-phi.csv and probe-E.csv \
                  (Electrostatic and Magnetostatic solvers).",
                 dp.probe.len()
@@ -2611,14 +2645,14 @@ pub fn validate_palace_compat(cfg: &PalaceConfig) {
             .any(|p| p.floquet_wave_vector.iter().any(|&v| v.abs() > 1e-14));
         if k_complex {
             log::warn!(
-                "[REM] Boundaries.Periodic: {} spec(s), {} pair(s) — non-zero FloquetWaveVector \
+                "[REM] Boundaries.Periodic: {} spec(s), {} pair(s) �?non-zero FloquetWaveVector \
                  detected. Complex phase-shift BCs are not yet supported; Γ-point (k=0) pairs will \
                  be applied, others skipped.",
                 cfg.boundaries.periodic.len(), n_pairs
             );
         } else {
             log::info!(
-                "[REM] Boundaries.Periodic: {} spec(s), {} pair(s) — Γ-point periodic BCs enabled.",
+                "[REM] Boundaries.Periodic: {} spec(s), {} pair(s) �?Γ-point periodic BCs enabled.",
                 cfg.boundaries.periodic.len(), n_pairs
             );
         }
@@ -2665,7 +2699,7 @@ pub fn validate_palace_compat(cfg: &PalaceConfig) {
     for lp in &cfg.boundaries.lumped_port {
         if !lp.elements.is_empty() {
             log::info!(
-                "Boundaries.LumpedPort[{}]: {} elements — all element attributes mapped to port BC.",
+                "Boundaries.LumpedPort[{}]: {} elements �?all element attributes mapped to port BC.",
                 lp.index, lp.elements.len()
             );
         }
@@ -2700,7 +2734,7 @@ pub fn validate_palace_compat(cfg: &PalaceConfig) {
 }
 
 // ---------------------------------------------------------------------------
-// Postprocessing (REM extension — ignored by Palace)
+// Postprocessing (REM extension �?ignored by Palace)
 // ---------------------------------------------------------------------------
 
 /// Top-level `Postprocessing` section (REM extension).
@@ -2805,7 +2839,7 @@ mod dispersion_tests {
     #[test]
     fn debye_at_dc_equals_eps_static() {
         let model = DispersionModel::Debye { eps_inf: 2.0, eps_static: 4.5, tau_s: 1e-11 };
-        // At ω≈0, ε(ω) → ε_s
+        // At ω�?, ε(ω) �?ε_s
         let eps = model.eps_r_at_omega(1.0); // very low freq
         assert!((eps.re - 4.5).abs() < 0.01, "Debye DC: re={:.4}", eps.re);
         assert!(eps.im < 0.0, "Debye DC: imaginary part should be negative (loss)");
@@ -2814,7 +2848,7 @@ mod dispersion_tests {
     #[test]
     fn debye_at_high_freq_equals_eps_inf() {
         let model = DispersionModel::Debye { eps_inf: 2.0, eps_static: 4.5, tau_s: 1e-11 };
-        // At very high ω (ωτ >> 1), ε(ω) → ε_∞
+        // At very high ω (ωτ >> 1), ε(ω) �?ε_�?
         let eps = model.eps_r_at_omega(1e14); // 10 THz >> 1/τ
         assert!((eps.re - 2.0).abs() < 0.05, "Debye HF: re={:.4}", eps.re);
     }
@@ -2827,7 +2861,7 @@ mod dispersion_tests {
             eps_inf: 1.0, delta_eps: 1.0, omega0_rad_per_s: omega0, gamma_rad_per_s: gamma,
         };
         let eps = model.eps_r_at_omega(omega0); // at resonance
-        // At resonance: ε = ε_∞ + Δε·ω₀²/(jγω₀) = ε_∞ - j Δε·ω₀/γ
+        // At resonance: ε = ε_�?+ Δε·ω₀²/(jγω₀) = ε_�?- j Δε·ω₀/γ
         assert!(eps.im.abs() > eps.re.abs(), "Lorentz at resonance: should be loss-dominated");
     }
 
@@ -2836,6 +2870,7 @@ mod dispersion_tests {
         let layer = SubstrateLayerConfig {
             permittivity: 4.0,
             loss_tangent: 0.02,
+            dielectric_conductivity: 0.0,
             permeability: 1.0,
             thickness: 1e-3,
             name: String::new(),
@@ -2846,7 +2881,7 @@ mod dispersion_tests {
         };
         let freq = 1e9; // 1 GHz
         let eps = layer.eps_r_complex(freq);
-        // Debye at 1 GHz: ωτ = 2π·1e9·1e-11 ≈ 0.063; still close to ε_s
+        // Debye at 1 GHz: ωτ = 2π·1e9·1e-11 �?0.063; still close to ε_s
         assert!(eps.re > 4.0 && eps.re < 6.5, "Debye 1 GHz re={:.3}", eps.re);
         assert!(eps.im < 0.0, "Should have negative imaginary part (loss)");
     }
@@ -2856,6 +2891,7 @@ mod dispersion_tests {
         let layer = SubstrateLayerConfig {
             permittivity: 3.48,
             loss_tangent: 0.004,
+            dielectric_conductivity: 0.0,
             permeability: 1.0,
             thickness: 0.254e-3,
             name: "Rogers4350B".to_string(),
@@ -2875,6 +2911,7 @@ mod dispersion_tests {
         let layer = SubstrateLayerConfig {
             permittivity: 4.2,
             loss_tangent: 0.02,
+            dielectric_conductivity: 0.0,
             permeability: 1.0,
             thickness: 1e-3,
             name: String::new(),
@@ -2920,7 +2957,7 @@ mod dispersion_tests {
         assert!((eps.re - 2.0).abs() < 1e-12, "Debye real part mismatch");
         assert!((eps.im + 1.0).abs() < 1e-12, "Debye imag part mismatch");
 
-        // D-S is sum of weighted Debye poles — therefore K‑K compliant.
+        // D-S is sum of weighted Debye poles �?therefore K‑K compliant.
         // Verify that ε'(ω) matches the explicit reactive (non-dispersive)
         // formula: ε'(ω) = 3.9 + 0.6 · Σ w_k / (1+ω²τ_k²)
         let model = DispersionModel::DjordjevicSarkar {
