@@ -37,22 +37,48 @@ pub fn read_msh_bytes(bytes: &[u8]) -> RemResult<RawMesh> {
 }
 
 fn to_raw_mesh(mesh: rmsh_model::Mesh) -> RawMesh {
-    let mut nodes: Vec<(usize, f64, f64, f64)> = mesh
-        .nodes
-        .values()
-        .map(|n| (n.id as usize, n.position.x, n.position.y, n.position.z))
+    // rmsh stores node IDs as Gmsh tags (u64).  MSH v4 can use sparsely-numbered
+    // tags.  Remap them to dense 1-based indices for compatibility.
+    let mut node_tags: Vec<u64> = mesh.nodes.keys().copied().collect();
+    node_tags.sort_unstable();
+    let tag_to_idx: std::collections::HashMap<u64, usize> = node_tags
+        .iter()
+        .enumerate()
+        .map(|(i, &tag)| (tag, i + 1))
         .collect();
-    // Preserve legacy expectation that node index roughly follows node tag ordering.
-    nodes.sort_by_key(|(id, _, _, _)| *id);
+
+    let mut nodes: Vec<(usize, f64, f64, f64)> = node_tags
+        .iter()
+        .map(|tag| {
+            let n = &mesh.nodes[tag];
+            (tag_to_idx[tag], n.position.x, n.position.y, n.position.z)
+        })
+        .collect();
 
     let mut elements: Vec<RawElement> = mesh
         .elements
         .into_iter()
-        .map(|e| RawElement {
-            id: e.id as usize,
-            elem_type: gmsh_type_for_element(e.etype),
-            phys_tag: e.physical_tag.unwrap_or(0).max(0) as u32,
-            node_ids: e.node_ids.into_iter().map(|id| id as usize).collect(),
+        .filter_map(|e| -> Option<RawElement> {
+            let node_ids: Vec<usize> = e.node_ids.iter()
+                .map(|id| tag_to_idx.get(id).copied().unwrap_or(0))
+                .collect();
+            // Skip elements that reference missing node IDs
+            if node_ids.iter().any(|&n| n == 0) {
+                let missing: Vec<_> = e.node_ids.iter()
+                    .filter(|id| !tag_to_idx.contains_key(id))
+                    .collect();
+                log::warn!(
+                    "Skipping element {} (type {:?}): {} node(s) not in node map: {:?}",
+                    e.id, e.etype, missing.len(), missing
+                );
+                return None;
+            }
+            Some(RawElement {
+                id: e.id as usize,
+                elem_type: gmsh_type_for_element(e.etype),
+                phys_tag: e.physical_tag.unwrap_or(0).max(0) as u32,
+                node_ids,
+            })
         })
         .collect();
     elements.sort_by_key(|e| e.id);
