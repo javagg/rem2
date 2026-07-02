@@ -195,10 +195,22 @@ impl RemMesh {
             };
             // For elements mapped to lower-order approximations (Hex27→Hex8, Quad9→Quad4),
             // truncate to corner nodes. P2 elements (Tet10, Tri6, Line3) use all their nodes.
+            let n_nodes = nodes.len();
             let n_expected = kind.n_nodes();
             let node_ids: Vec<usize> = re.node_ids.iter()
                 .take(n_expected)
-                .map(|&n| n - 1)
+                .filter_map(|&n| {
+                    let idx = n.checked_sub(1)?;  // 1-based → 0-based, skip on underflow
+                    if idx >= n_nodes {
+                        log::warn!(
+                            "Element {} (type {}): node index {} >= node count {}; clipping to 0",
+                            re.id, re.elem_type, idx, n_nodes
+                        );
+                        Some(0)
+                    } else {
+                        Some(idx)
+                    }
+                })
                 .collect();
             if node_ids.len() < n_expected {
                 log::warn!("Element {} (type {}) has fewer nodes ({}) than expected ({}); skipping",
@@ -517,6 +529,20 @@ impl RemMesh {
         }
 
         // --- volume element connectivity ---
+        let n_nodes = self.nodes.len();
+        // Validate that all node IDs are within range before pushing to fem-rs
+        let validate_nid = |nid: usize| -> u32 {
+            if nid >= n_nodes {
+                log::warn!(
+                    "to_simplex_mesh: node index {} out of range [0, {}); clipping to 0",
+                    nid, n_nodes
+                );
+                0u32
+            } else {
+                nid as u32
+            }
+        };
+
         // Detect whether the mesh is uniform (all same kind) or mixed.
         let first_kind = self.volume_elements.first().map(|e| e.kind);
         let is_uniform = first_kind.map_or(true, |k| {
@@ -531,7 +557,7 @@ impl RemMesh {
             );
             let mut tags: Vec<i32> = Vec::with_capacity(self.volume_elements.len());
             for e in &self.volume_elements {
-                for &nid in &e.node_ids { conn.push(nid as u32); }
+                for &nid in &e.node_ids { conn.push(validate_nid(nid)); }
                 tags.push(e.tag as i32);
             }
             (conn, tags, et, None, None)
@@ -542,7 +568,7 @@ impl RemMesh {
             let mut etypes: Vec<FET> = Vec::with_capacity(self.volume_elements.len());
             let mut offsets: Vec<usize> = vec![0usize];
             for e in &self.volume_elements {
-                for &nid in &e.node_ids { conn.push(nid as u32); }
+                for &nid in &e.node_ids { conn.push(validate_nid(nid)); }
                 tags.push(e.tag as i32);
                 etypes.push(to_fem_elem_type(e.kind).unwrap_or(FET::Tet4));
                 offsets.push(conn.len());
@@ -568,7 +594,7 @@ impl RemMesh {
             let mut ftags: Vec<fem_mesh::BoundaryTag> =
                 Vec::with_capacity(self.boundary_elements.len());
             for e in &self.boundary_elements {
-                for &nid in &e.node_ids { fconn.push(nid as u32); }
+                for &nid in &e.node_ids { fconn.push(validate_nid(nid)); }
                 ftags.push(e.tag as i32);
             }
             (fconn, ftags, ft, None, None)
@@ -578,7 +604,7 @@ impl RemMesh {
             let mut fetypes: Vec<FET> = Vec::new();
             let mut foffsets: Vec<usize> = vec![0usize];
             for e in &self.boundary_elements {
-                for &nid in &e.node_ids { fconn.push(nid as u32); }
+                for &nid in &e.node_ids { fconn.push(validate_nid(nid)); }
                 ftags.push(e.tag as i32);
                 fetypes.push(to_fem_elem_type(e.kind).unwrap_or(FET::Tri3));
                 foffsets.push(fconn.len());
@@ -602,6 +628,8 @@ impl RemMesh {
             face_types,
             face_offsets,
             face_to_elem: None,
+            edge_conn: vec![],
+            edge_to_elem: vec![],
         }
     }
 
@@ -707,6 +735,8 @@ impl RemMesh {
             face_types,
             face_offsets,
             face_to_elem: None,
+            edge_conn: vec![],
+            edge_to_elem: vec![],
         }
     }
 }
