@@ -1245,6 +1245,15 @@ pub struct MomSolverConfig {
     #[serde(rename = "CmaModes", default)]
     pub cma_modes: Option<usize>,
 
+    /// Maximum number of Floquet modes for periodic-structure acceleration.
+    ///
+    /// Used by the Ewald-accelerated periodic Green function in `assemble_efie_periodic`.
+    /// Controls the ±n spectral terms in the Floquet-mode summation.
+    /// Higher values improve accuracy for large unit cells or off-normal incidence.
+    /// Default 0 means auto-select based on unit-cell electrical size.
+    #[serde(rename = "FloquetMaxModes", default)]
+    pub floquet_max_modes: i32,
+
     /// Symmetry planes for DOF elimination.
     /// Each entry specifies a plane (e.g. `"x=0"`, `"y=0"`) on which
     /// RWG edge DOFs are eliminated (enforces PEC/PMC symmetry condition).
@@ -1325,6 +1334,19 @@ pub struct MomSolverConfig {
     /// and/or frequency parameters instead of a single simulation.
     #[serde(rename = "ParametricSweep", default)]
     pub parametric_sweep: Option<Vec<ParamDefConfig>>,
+
+    /// Number of cells per free-space wavelength for automatic grid sizing.
+    ///
+    /// When set under `Solver.MoM` (non-zero), the boxed solver adjusts
+    /// the rectilinear grid resolution based on the highest sweep frequency:
+    ///   `cells = ceil(box_dim / (c₀ / freq_max / subs_per_lambda))`
+    /// capped at 200×200.  When unset or zero, the explicit `Box.CellsX/CellsY`
+    /// values are used without adjustment.
+    ///
+    /// Typical range: 10–40 (higher = finer, slower).  Ignored when
+    /// `Box` configuration is absent.
+    #[serde(rename = "SubsPerLambda", default)]
+    pub subs_per_lambda: f64,
 }
 
 fn default_auto_port_min_faces() -> usize { 1 }
