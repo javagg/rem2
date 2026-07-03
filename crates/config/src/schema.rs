@@ -602,6 +602,22 @@ pub struct SolverConfig {
     /// REM extension: Planar MoM solver parameters (ignored by Palace).
     #[serde(rename = "Planar", default)]
     pub planar: Option<PlanarSolverConfig>,
+
+    /// REM extension: FE-BI hybrid solver parameters (ignored by Palace).
+    #[serde(rename = "FEBI", default)]
+    pub febi: Option<FeBiSolverConfig>,
+
+    /// REM extension: SBR+ solver parameters (ignored by Palace).
+    #[serde(rename = "SBR", default)]
+    pub sbr: Option<SbrSolverConfig>,
+
+    /// REM extension: DDM solver parameters (ignored by Palace).
+    #[serde(rename = "DDM", default)]
+    pub ddm: Option<DdmSolverConfig>,
+
+    /// REM extension: Parametric sweep / gradient optimization (ignored by Palace).
+    #[serde(rename = "Parametric", default)]
+    pub parametric: Option<ParametricConfig>,
 }
 
 /// REM near-to-far-field configuration.
@@ -644,6 +660,10 @@ impl Default for SolverConfig {
             far_field: None,
             mom: None,
             planar: None,
+            febi: None,
+            sbr: None,
+            ddm: None,
+            parametric: None,
         }
     }
 }
