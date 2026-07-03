@@ -10,6 +10,14 @@ pub fn total_charge(sigma: &[f64], surf: &SurfaceMesh) -> f64 {
         .sum()
 }
 
+/// Compute total charge on a subset of faces given by a boolean mask.
+pub fn charge_on_mask(sigma: &[f64], surf: &SurfaceMesh, mask: &[bool]) -> f64 {
+    sigma.iter().zip(surf.faces.iter()).zip(mask.iter())
+        .filter(|(_, &m)| m)
+        .map(|((&s, f), _)| s * f.area)
+        .sum()
+}
+
 /// Compute capacitance C = Q / V from total charge and applied potential.
 ///
 /// For a grounded sphere at potential V₀, C = Q * ε₀ / V₀.

@@ -1,4 +1,4 @@
-[workspace]
+﻿[workspace]
 resolver = "2"
 members = [
     "crates/core",
@@ -57,15 +57,15 @@ rem-layered-green = { path = "crates/layered_green" }
 rmetis            = { path = "vendor/rmetis", default-features = false }
 
 # fem-rs foundation crates (via git dependency)
-fem-core     = { git = "https://github.com/rem-rs/fem-rs.git", rev = "15d4b1a" }
-fem-linalg   = { git = "https://github.com/rem-rs/fem-rs.git", rev = "15d4b1a" }
-fem-mesh     = { git = "https://github.com/rem-rs/fem-rs.git", rev = "15d4b1a" }
-fem-element  = { git = "https://github.com/rem-rs/fem-rs.git", rev = "15d4b1a" }
-fem-space    = { git = "https://github.com/rem-rs/fem-rs.git", rev = "15d4b1a" }
-fem-assembly = { git = "https://github.com/rem-rs/fem-rs.git", rev = "15d4b1a" }
-fem-solver   = { git = "https://github.com/rem-rs/fem-rs.git", rev = "15d4b1a" }
-fem-amg      = { git = "https://github.com/rem-rs/fem-rs.git", rev = "15d4b1a" }
-fem-io       = { git = "https://github.com/rem-rs/fem-rs.git", rev = "15d4b1a" }
+fem-core     = { git = "https://github.com/rem-rs/fem-rs.git", rev = "123c633" }
+fem-linalg   = { git = "https://github.com/rem-rs/fem-rs.git", rev = "123c633" }
+fem-mesh     = { git = "https://github.com/rem-rs/fem-rs.git", rev = "123c633" }
+fem-element  = { git = "https://github.com/rem-rs/fem-rs.git", rev = "123c633" }
+fem-space    = { git = "https://github.com/rem-rs/fem-rs.git", rev = "123c633" }
+fem-assembly = { git = "https://github.com/rem-rs/fem-rs.git", rev = "123c633" }
+fem-solver   = { git = "https://github.com/rem-rs/fem-rs.git", rev = "123c633" }
+fem-amg      = { git = "https://github.com/rem-rs/fem-rs.git", rev = "123c633" }
+fem-io       = { git = "https://github.com/rem-rs/fem-rs.git", rev = "123c633" }
 
 # rmsh crates (vendored locally, stripped of rcad/STEP dependencies)
 rmsh-io      = { path = "vendor/rmsh-io", default-features = false }
