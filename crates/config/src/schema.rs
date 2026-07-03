@@ -116,19 +116,19 @@ pub enum ProblemType {
     Eigenmode,
     Driven,
     Transient,
-    /// Method of Moments (RWG + EFIE/CFIE) �?REM extension, not in Palace
+    /// Method of Moments (RWG + EFIE/CFIE) — REM extension, not in Palace
     MoM,
-    /// Boundary Element Method (Laplace/Helmholtz) �?REM extension, not in Palace
+    /// Boundary Element Method (Laplace/Helmholtz) — REM extension, not in Palace
     BEM,
-    /// Shooting and Bouncing Rays + Physical Optics �?REM extension, not in Palace
+    /// Shooting and Bouncing Rays + Physical Optics — REM extension, not in Palace
     SBR,
-    /// Hybrid Finite Element �?Boundary Integral �?REM extension, not in Palace
+    /// Hybrid Finite Element — Boundary Integral — REM extension, not in Palace
     #[serde(rename = "FEBI")]
     FEBI,
-    /// Planar Method of Moments (uniform grid + FFT) �?REM extension, not in Palace
+    /// Planar Method of Moments (uniform grid + FFT) — REM extension, not in Palace
     #[serde(rename = "Planar")]
     Planar,
-    /// Parametric sweep or gradient optimization over design parameters �?REM extension, not in Palace
+    /// Parametric sweep or gradient optimization over design parameters — REM extension, not in Palace
     Parametric,
 }
 
@@ -261,10 +261,16 @@ pub struct MaterialSpec {
     pub material_axes: Vec<Vec<f64>>,
 
     /// Drude-Lorentz poles for frequency-dependent permittivity.
-    /// ε(ω) = ε�?+ Σ ωp² / (ω0² �?ω² + jγω)
+    /// ε(ω) = ε₀ + Σ ωp² / (ω₀² − ω² + jγω)
     /// Relevant only for driven (frequency-domain) solvers.
     #[serde(rename = "DrudeLorentz", default)]
     pub drude_lorentz: Vec<DrudeLorentzPole>,
+
+    /// Physical thickness of this material domain [m].
+    /// Used by the BEM layered-media kernel for substrate definition.
+    /// 0 = infinite half-space (default).
+    #[serde(rename = "Thickness", default)]
+    pub thickness: f64,
 }
 
 /// One Drude-Lorentz oscillator pole.
@@ -585,33 +591,17 @@ pub struct SolverConfig {
     #[serde(rename = "Linear", default)]
     pub linear: LinearSolver,
 
-    /// REM extension: MoM solver parameters (ignored by Palace).
-    #[serde(rename = "MoM", default)]
-    pub mom: Option<MomSolverConfig>,
-
-    /// REM extension: SBR+ solver parameters (ignored by Palace).
-    #[serde(rename = "SBR", default)]
-    pub sbr: Option<SbrSolverConfig>,
-
-    /// REM extension: Hybrid FE-BI solver parameters (ignored by Palace).
-    #[serde(rename = "FEBI", default)]
-    pub febi: Option<FeBiSolverConfig>,
-
-    /// REM extension: Domain Decomposition Method solver parameters (ignored by Palace).
-    #[serde(rename = "DDM", default)]
-    pub ddm: Option<DdmSolverConfig>,
-
-    /// REM extension: Planar MoM solver parameters (ignored by Palace).
-    #[serde(rename = "Planar", default)]
-    pub planar: Option<PlanarSolverConfig>,
-
     /// REM extension: near-to-far-field transform postprocessing.
     #[serde(rename = "FarField", default)]
     pub far_field: Option<FarFieldConfig>,
 
-    /// REM extension: parametric sweep / gradient optimization over design parameters.
-    #[serde(rename = "Parametric", default)]
-    pub parametric: Option<ParametricConfig>,
+    /// REM extension: MoM solver parameters (ignored by Palace).
+    #[serde(rename = "MoM", default)]
+    pub mom: Option<MomSolverConfig>,
+
+    /// REM extension: Planar MoM solver parameters (ignored by Palace).
+    #[serde(rename = "Planar", default)]
+    pub planar: Option<PlanarSolverConfig>,
 }
 
 /// REM near-to-far-field configuration.
@@ -651,13 +641,9 @@ impl Default for SolverConfig {
             electrostatic: None,
             magnetostatic: None,
             linear: LinearSolver::default(),
-            mom: None,
-            sbr: None,
-            febi: None,
-            ddm: None,
-            planar: None,
             far_field: None,
-            parametric: None,
+            mom: None,
+            planar: None,
         }
     }
 }
@@ -2603,24 +2589,6 @@ pub fn validate_palace_compat(cfg: &PalaceConfig) {
             log::info!(
                 "Domains.Materials[].MaterialAxes: {} axes provided -- tensor epsilon assembly enabled.",
                 m.material_axes.len()
-            );
-        }
-    }
-
-    // --- Solver.MoM ---
-    if let Some(ref m) = cfg.solver.mom {
-        if let Some(ref sub) = m.substrate {
-            log::info!(
-                "[REM] Solver.MoM.Substrate: {} layer(s), bottom_pec={} -- \
-                 layered-media Green function (DCIM) will be used for assembly.",
-                sub.layers.len(), sub.bottom_pec
-            );
-        }
-        if !m.ports.is_empty() {
-            log::info!(
-                "[REM] Solver.MoM.Ports: {} port(s), ref Z0={} Ohm -- \
-                 S-parameter sweep mode active; Touchstone and port-S.csv will be written.",
-                m.ports.len(), m.ref_impedance
             );
         }
     }

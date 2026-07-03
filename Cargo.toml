@@ -1,4 +1,4 @@
-﻿[workspace]
+[workspace]
 resolver = "2"
 members = [
     "crates/core",
@@ -17,9 +17,6 @@ members = [
     "crates/parallel",
     "crates/wasm",
     "crates/touchstone",
-    "crates/bem",
-    "crates/mom",
-    "crates/layered_green",
     "vendor/rmetis",
     "vendor/rmsh-model",
     "vendor/rmsh-io",

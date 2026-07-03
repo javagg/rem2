@@ -17,7 +17,6 @@ fn is_supported_formulation(v: &str) -> bool {
 
 const KNOWN_PROBLEM_TYPES: &[&str] = &[
     "Electrostatic", "Magnetostatic", "Eigenmode", "Driven", "Transient",
-    "MoM", "SBR", "Planar", "FEBI", "BEM",
 ];
 
 // ---------------------------------------------------------------------------
@@ -51,7 +50,7 @@ pub(crate) fn validate_json_structure(json: &str) -> RemResult<()> {
         .and_then(|t| t.as_str())
         .ok_or_else(|| RemError::Config(
             "Missing required key \"Problem.Type\". \
-             Must be one of: Electrostatic, Magnetostatic, Eigenmode, Driven, Transient, MoM, SBR".to_string()
+             Must be one of: Electrostatic, Magnetostatic, Eigenmode, Driven, Transient".to_string()
         ))?;
 
     if !KNOWN_PROBLEM_TYPES.contains(&ptype) {
@@ -72,8 +71,8 @@ pub(crate) fn validate_json_structure(json: &str) -> RemResult<()> {
         )),
     };
 
-    // Required: "Model.Mesh" (skip for Planar — generates its own grid)
-    if ptype != "Planar" && model.get("Mesh").and_then(|m| m.as_str()).is_none() {
+    // Required: "Model.Mesh"
+    if model.get("Mesh").and_then(|m| m.as_str()).is_none() {
         return Err(RemError::Config(
             "Missing required key \"Model.Mesh\". \
              Must be a path to a .msh or .mesh file.".to_string()
@@ -193,28 +192,6 @@ pub(crate) fn validate_config_semantics(cfg: &super::PalaceConfig) -> RemResult<
                 "[REM] Config: Problem.Type = \"Eigenmode\" but no Solver.Eigenmode section found. \
                  N (number of modes) must be set before running the eigenmode solver."
             );
-        }
-    }
-
-    // Planar: check frequency range and substrate layers
-    if cfg.problem.problem_type == ProblemType::Planar {
-        if let Some(planar) = &cfg.solver.planar {
-            if planar.freq_step <= 0.0 || planar.freq_max < planar.freq_min {
-                return Err(RemError::Config(format!(
-                    "Solver.Planar: FreqMin ({:.3e}) and FreqMax ({:.3e}) must be valid with FreqStep > 0.",
-                    planar.freq_min, planar.freq_max
-                )));
-            }
-            if planar.lx <= 0.0 || planar.ly <= 0.0 {
-                return Err(RemError::Config(
-                    "Solver.Planar: Lx and Ly must be positive.".to_string()
-                ));
-            }
-            if planar.nx == 0 || planar.ny == 0 {
-                return Err(RemError::Config(
-                    "Solver.Planar: Nx and Ny must be >= 1.".to_string()
-                ));
-            }
         }
     }
 

@@ -121,10 +121,8 @@ fn run_solver(config: &rem_config::PalaceConfig, comm: &dyn Comm) -> anyhow::Res
         ProblemType::Transient => {
             rem_transient::run(config, comm)?;
         }
-        ProblemType::BEM => {
-            rem_bem::run(config)?;
-        }
-        ProblemType::MoM
+        ProblemType::BEM
+        | ProblemType::MoM
         | ProblemType::Planar
         | ProblemType::SBR
         | ProblemType::FEBI

@@ -8,8 +8,7 @@
 pub fn ui_banner() {
     eprintln!("");
     eprintln!("╔══════════════════════════════════════════════════════════════════╗");
-    eprintln!("║                   REM Pro — Method of Moments                  ║");
-    eprintln!("║          Full-wave 3-D electromagnetic solver (MoM)            ║");
+    eprintln!("║          Rust Electromagnetic Solver (REM)                     ║");
     eprintln!("╚══════════════════════════════════════════════════════════════════╝");
     eprintln!("");
 }
