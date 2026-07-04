@@ -90,7 +90,7 @@ pub fn write_msh_v2<W: Write>(writer: &mut W, mesh: &Mesh) -> Result<(), MshErro
         let etype = gmsh_type_id(element.etype)?;
         match element.physical_tag {
             Some(physical_tag) => {
-                write!(writer, "{} {} 2 {} 0", element.id, etype, physical_tag)?;
+                write!(writer, "{} {} 2 {} {}", element.id, etype, physical_tag, element.geometrical_tag)?;
             }
             None => {
                 write!(writer, "{} {} 0", element.id, etype)?;
@@ -394,6 +394,12 @@ fn parse_elements_v2<R: BufRead>(
             None
         };
 
+        let geometrical_tag = if num_tags > 1 {
+            parts[4].parse::<i32>().unwrap_or(0)
+        } else {
+            0
+        };
+
         let node_start = 3 + num_tags;
         if parts.len() < node_start {
             return Err(MshError::Parse {
@@ -414,6 +420,7 @@ fn parse_elements_v2<R: BufRead>(
         let etype = ElementType::from_gmsh_type_id(element_type_id);
         let mut elem = Element::new(elem_tag, etype, node_ids);
         elem.physical_tag = physical_tag;
+        elem.geometrical_tag = geometrical_tag;
         mesh.add_element(elem);
     }
 

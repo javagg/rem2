@@ -228,8 +228,10 @@ impl ElementType {
 pub struct Element {
     pub id: u64,
     pub etype: ElementType,
-    /// Physical group tag
+    /// Physical group tag (MSH v2 `physical_tag`, v4 `entity_tag`).
     pub physical_tag: Option<i32>,
+    /// Geometrical entity tag (MSH v2 only; 0 = default).
+    pub geometrical_tag: i32,
     /// Node IDs forming this element (global IDs referencing `Node::id`).
     pub node_ids: Vec<u64>,
 }
@@ -240,6 +242,7 @@ impl Element {
             id,
             etype,
             physical_tag: None,
+            geometrical_tag: 0,
             node_ids,
         }
     }
