@@ -1696,7 +1696,74 @@ pub struct BoxConfig {
     /// after the EM solve as a post-processing step.
     #[serde(rename = "Components", default)]
     pub components: Vec<ComponentConfig>,
+
+    /// Multi-layer signal stack (REM extension).
+    ///
+    /// When present, each entry defines a metal layer with its own set of
+    /// wall polygons and z-position, enabling multi-layer EM simulation.
+    /// Via ports (in `Vias`) connect between layers.
+    /// When absent, the single-layer `WallPolygons` + `SignalLayerZ` is used.
+    #[serde(rename = "Layers", default)]
+    pub layers: Vec<SignalLayerConfig>,
+
+    /// Via port definitions for multi-layer configurations (REM extension).
+    ///
+    /// Each via connects two signal layers at the same (ix, iy) grid cell.
+    /// The via is modeled as a vertical current element.
+    #[serde(rename = "Vias", default)]
+    pub vias: Vec<ViaConfig>,
 }
+
+/// A signal layer in the multi-layer stack.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SignalLayerConfig {
+    /// Layer name (e.g. "Metal1", "M2").
+    #[serde(rename = "Name", default)]
+    pub name: String,
+
+    /// Z-position of the metal plane relative to box bottom [m].
+    #[serde(rename = "SignalLayerZ")]
+    pub signal_layer_z: f64,
+
+    /// Interior PEC wall polygons on this layer.
+    #[serde(rename = "WallPolygons", default)]
+    pub wall_polygons: Vec<Vec<[f64; 2]>>,
+}
+
+/// A via port connecting two signal layers.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ViaConfig {
+    /// Port index (1-based).
+    #[serde(rename = "Index")]
+    pub index: u32,
+
+    /// Reference impedance [ohm].
+    #[serde(rename = "Impedance", default = "default_via_impedance")]
+    pub z0: f64,
+
+    /// Source layer index (0-based into `Layers` array).
+    #[serde(rename = "LayerFrom", default)]
+    pub layer_from: usize,
+
+    /// Destination layer index (0-based into `Layers` array).
+    #[serde(rename = "LayerTo", default)]
+    pub layer_to: usize,
+
+    /// Grid cell x-index.
+    #[serde(rename = "CellX")]
+    pub ix: usize,
+
+    /// Grid cell y-index.
+    #[serde(rename = "CellY")]
+    pub iy: usize,
+
+    /// Via cross-section width [m] (for self-inductance).
+    #[serde(rename = "Width", default = "default_via_width")]
+    pub width: f64,
+}
+
+fn default_via_impedance() -> f64 { 50.0 }
+fn default_via_width() -> f64 { 100e-6 }
 
 /// A circuit component attached to boxed solver ports (R-10.1).
 #[derive(Debug, Clone, Deserialize)]
