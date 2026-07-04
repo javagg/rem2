@@ -1765,6 +1765,38 @@ pub struct ViaConfig {
 fn default_via_impedance() -> f64 { 50.0 }
 fn default_via_width() -> f64 { 100e-6 }
 
+/// Parameters for the thick-metal multi-sheet model.
+///
+/// Stored in `Metadata.ThickMetal` by format converters (Sonnet19, etc.).
+/// The boxed solver driver reads this from metadata and constructs
+/// a solver-internal `ThickMetalConfig` to enable multi-sheet volume
+/// current simulation.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ThickMetalBoxConfig {
+    /// Number of current sheets.  0 = auto (3 for SingleSurface, 5 for DoubleSurface).
+    #[serde(rename = "NumSheets", default)]
+    pub num_sheets: usize,
+
+    /// Total metal thickness [m].
+    #[serde(rename = "Thickness")]
+    pub thickness_m: f64,
+
+    /// Conductor conductivity [S/m] (e.g. 5.8e7 for Cu).
+    #[serde(rename = "Conductivity", default = "default_copper_conductivity")]
+    pub conductivity: f64,
+
+    /// Z-meshing strategy: "SingleSurface" (3 sheets) or "DoubleSurface" (5 sheets).
+    #[serde(rename = "Strategy", default = "default_tm_strategy")]
+    pub strategy: String,
+
+    /// Relative permittivity of the dielectric embedding the metal.
+    #[serde(rename = "EpsR", default = "default_permittivity")]
+    pub eps_r: f64,
+}
+
+fn default_copper_conductivity() -> f64 { 5.8e7 }
+fn default_tm_strategy() -> String { "SingleSurface".into() }
+
 /// A circuit component attached to boxed solver ports (R-10.1).
 #[derive(Debug, Clone, Deserialize)]
 pub struct ComponentConfig {
@@ -1864,6 +1896,14 @@ pub struct BoxPortConfig {
     /// Second cell grid index (ix, iy), adjacent to CellA.
     #[serde(rename = "CellB")]
     pub cell_b: (usize, usize),
+
+    /// Port reactance X [Ω] for complex reference impedance Z = R + jX.
+    /// Used by format converters (e.g. ADS Momentum) that parse complex
+    /// port impedance from the project file.  The solver ignores X for
+    /// now and uses the real part only; this preserves the data for
+    /// future implementation of complex reference impedance.
+    #[serde(rename = "Reactance", default)]
+    pub reactance: f64,
 }
 
 fn default_evanescent_modes() -> usize { 10 }
