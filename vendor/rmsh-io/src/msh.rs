@@ -90,7 +90,11 @@ pub fn write_msh_v2<W: Write>(writer: &mut W, mesh: &Mesh) -> Result<(), MshErro
         let etype = gmsh_type_id(element.etype)?;
         match element.physical_tag {
             Some(physical_tag) => {
-                write!(writer, "{} {} 2 {} {}", element.id, etype, physical_tag, element.geometrical_tag)?;
+                if element.geometrical_tag != 0 {
+                    write!(writer, "{} {} 2 {} {}", element.id, etype, physical_tag, element.geometrical_tag)?;
+                } else {
+                    write!(writer, "{} {} 1 {}", element.id, etype, physical_tag)?;
+                }
             }
             None => {
                 write!(writer, "{} {} 0", element.id, etype)?;
