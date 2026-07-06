@@ -77,7 +77,7 @@ pub struct PalaceConfig {
 // Problem
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct Problem {
     #[serde(rename = "Type")]
     pub problem_type: ProblemType,
@@ -109,27 +109,14 @@ impl Problem {
     pub fn output_dir(&self) -> &str { self.output.as_deref().unwrap_or(".") }
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Default)]
 pub enum ProblemType {
+    #[default]
     Electrostatic,
     Magnetostatic,
     Eigenmode,
     Driven,
     Transient,
-    /// Method of Moments (RWG + EFIE/CFIE) — REM extension, not in Palace
-    MoM,
-    /// Boundary Element Method (Laplace/Helmholtz) — REM extension, not in Palace
-    BEM,
-    /// Shooting and Bouncing Rays + Physical Optics — REM extension, not in Palace
-    SBR,
-    /// Hybrid Finite Element — Boundary Integral — REM extension, not in Palace
-    #[serde(rename = "FEBI")]
-    FEBI,
-    /// Planar Method of Moments (uniform grid + FFT) — REM extension, not in Palace
-    #[serde(rename = "Planar")]
-    Planar,
-    /// Parametric sweep or gradient optimization over design parameters — REM extension, not in Palace
-    Parametric,
 }
 
 // ---------------------------------------------------------------------------
@@ -591,33 +578,9 @@ pub struct SolverConfig {
     #[serde(rename = "Linear", default)]
     pub linear: LinearSolver,
 
-    /// REM extension: near-to-far-field transform postprocessing.
-    #[serde(rename = "FarField", default)]
-    pub far_field: Option<FarFieldConfig>,
-
-    /// REM extension: MoM solver parameters (ignored by Palace).
-    #[serde(rename = "MoM", default)]
-    pub mom: Option<MomSolverConfig>,
-
-    /// REM extension: Planar MoM solver parameters (ignored by Palace).
-    #[serde(rename = "Planar", default)]
-    pub planar: Option<PlanarSolverConfig>,
-
-    /// REM extension: FE-BI hybrid solver parameters (ignored by Palace).
-    #[serde(rename = "FEBI", default)]
-    pub febi: Option<FeBiSolverConfig>,
-
-    /// REM extension: SBR+ solver parameters (ignored by Palace).
-    #[serde(rename = "SBR", default)]
-    pub sbr: Option<SbrSolverConfig>,
-
     /// REM extension: DDM solver parameters (ignored by Palace).
     #[serde(rename = "DDM", default)]
     pub ddm: Option<DdmSolverConfig>,
-
-    /// REM extension: Parametric sweep / gradient optimization (ignored by Palace).
-    #[serde(rename = "Parametric", default)]
-    pub parametric: Option<ParametricConfig>,
 }
 
 /// REM near-to-far-field configuration.
@@ -657,13 +620,7 @@ impl Default for SolverConfig {
             electrostatic: None,
             magnetostatic: None,
             linear: LinearSolver::default(),
-            far_field: None,
-            mom: None,
-            planar: None,
-            febi: None,
-            sbr: None,
             ddm: None,
-            parametric: None,
         }
     }
 }

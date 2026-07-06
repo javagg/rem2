@@ -868,24 +868,7 @@ fn run_frequency_sweep(
         }
     }
 
-    // Near-to-far-field transform (if configured)
-    let mut far_field_pattern: Vec<far_field::FarFieldPoint> = Vec::new();
-    #[cfg(not(target_arch = "wasm32"))]
-    if let Some(ff_cfg) = &config.solver.far_field {
-        if !peak_phi.is_empty() {
-            log::info!("[REM] Computing far-field pattern at peak frequency {:.3e} Hz", peak_freq_hz);
-            far_field_pattern = far_field::compute_far_field(mesh, &peak_phi, peak_freq_hz, ff_cfg);
-            if !far_field_pattern.is_empty() {
-                far_field::write_far_field_csv(out_dir, &far_field_pattern, peak_freq_hz)?;
-            }
-        }
-    }
-    #[cfg(target_arch = "wasm32")]
-    if let Some(ff_cfg) = &config.solver.far_field {
-        if !peak_phi.is_empty() {
-            far_field_pattern = far_field::compute_far_field(mesh, &peak_phi, peak_freq_hz, ff_cfg);
-        }
-    }
+    // Near-to-far-field transform (disabled: FarField removed from SolverConfig)
 
     // Near-field export (if configured)
     #[cfg(not(target_arch = "wasm32"))]
@@ -962,6 +945,7 @@ fn run_frequency_sweep(
         None
     };
 
+    let far_field_pattern = Vec::new(); // disabled: FarField removed from SolverConfig
     Ok(DrivenResult { freq_results, peak_phi, peak_freq_hz, far_field_pattern, circuit_model })
 }
 

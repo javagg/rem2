@@ -1,8 +1,10 @@
 pub mod schema;
+pub mod mom;
 mod preprocess;
 mod validate;
 
 pub use schema::*;
+pub use mom::MomConfig;
 use rem_core::{RemError, RemResult};
 use std::path::Path;
 
