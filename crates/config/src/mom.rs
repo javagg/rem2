@@ -17,14 +17,15 @@
 //! ```
 
 use serde::Deserialize;
+use std::ops::Deref;
 
 /// Top-level MoM configuration — flat JSON with no `Solver.MoM` wrapper.
 ///
 /// All MoM-specific solver parameters live directly at the top level via
-/// `#[serde(flatten)]`; see [`super::MomSolverConfig`] for the full field list.
+/// `#[serde(flatten)]` + `Deref`, so `cfg.equation` works directly.
 #[derive(Debug, Clone, Deserialize)]
 pub struct MomConfig {
-    /// Output directory (written to `Problem.Output` in Palace compat mode).
+    /// Output directory.
     #[serde(rename = "Output", default)]
     pub output: Option<String>,
 
@@ -32,14 +33,19 @@ pub struct MomConfig {
     #[serde(rename = "Mesh", default)]
     pub mesh: String,
 
-    /// Reference length scale [m] for mesh refinement (default 1.0).
+    /// Reference length scale [m] (default 1.0).
     #[serde(rename = "L0", default = "default_l0")]
     pub l0: f64,
 
-    /// All MoM solver parameters are flattened to the top level.
-    /// This eliminates the old `Solver.MoM` nesting.
+    /// Flattened MoM solver parameters (all `Solver.MoM.*` fields).
     #[serde(flatten)]
     pub solver: super::MomSolverConfig,
+}
+
+/// All MoM solver fields are directly accessible: `cfg.equation`, `cfg.box_config`, etc.
+impl Deref for MomConfig {
+    type Target = super::MomSolverConfig;
+    fn deref(&self) -> &Self::Target { &self.solver }
 }
 
 fn default_l0() -> f64 { 1.0 }
