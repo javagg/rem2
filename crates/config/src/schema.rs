@@ -1001,7 +1001,7 @@ where
 // ---------------------------------------------------------------------------
 
 /// MoM solver parameters, placed under `Solver.MoM` in the config file.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct MomSolverConfig {
     /// Integral equation: "EFIE" | "MFIE" | "CFIE" | "PMCHWT"
     #[serde(rename = "Equation", default = "default_mom_equation")]
@@ -1324,6 +1324,26 @@ pub struct MomSolverConfig {
     /// `Box` configuration is absent.
     #[serde(rename = "SubsPerLambda", default)]
     pub subs_per_lambda: f64,
+
+    /// Explicit solver-type selector for unified dispatch.
+    ///
+    /// Values: `"FreeForm"` (RWG trianglular mesh), `"Boxed"` (rect grid / Sonnet-style),
+    /// `"Capacitance"` (electrostatic BIE).  When absent or `"Auto"`, the solver
+    /// infers the type from other config fields (Box presence, Problem.Type, etc.).
+    #[serde(rename = "MomType", default = "default_mom_type")]
+    pub mom_type: String,
+
+    /// Explicit kernel selector for unified dispatch.
+    ///
+    /// Values: `"FreeSpace"`, `"Layered"`, `"Cavity"`, `"Laplace"`, `"Auto"`.
+    #[serde(rename = "Kernel", default = "default_mom_kernel")]
+    pub kernel: String,
+
+    /// Explicit mesh format selector for unified dispatch.
+    ///
+    /// Values: `"TriSurface"` (triangular faces), `"RectGrid"` (rectilinear grid).
+    #[serde(rename = "MeshFormat", default = "default_mesh_format")]
+    pub mesh_format: String,
 }
 
 fn default_auto_port_min_faces() -> usize { 1 }
@@ -1429,6 +1449,9 @@ fn default_amr_theta()     -> f64    { 0.5 }
 fn default_adaptive_target() -> usize { 100 }
 fn default_deembed_eps_eff() -> f64  { 1.0 }
 fn default_mom_port_kind() -> String { "Lumped".to_string() }
+fn default_mom_type()     -> String { "Auto".to_string() }
+fn default_mom_kernel()   -> String { "Auto".to_string() }
+fn default_mesh_format()  -> String { "Auto".to_string() }
 
 /// A near-field probe point for E-field evaluation during S-parameter sweep.
 #[derive(Debug, Clone, Deserialize, Default)]
