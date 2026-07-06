@@ -4,7 +4,7 @@ mod preprocess;
 mod validate;
 
 pub use schema::*;
-pub use mom::MomConfig;
+pub use mom::{MomConfig, load_mom_config};
 use rem_core::{RemError, RemResult};
 use std::path::Path;
 
