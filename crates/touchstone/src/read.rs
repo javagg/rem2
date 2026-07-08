@@ -136,20 +136,21 @@ fn parse_option_line(
     Ok(())
 }
 
-/// Infer N (number of ports) from the flat token stream using frequency monotonicity.
+/// Infer N (number of ports) from the flat token stream.
 ///
 /// For a valid Touchstone file, the frequency column (every `per = 1+2N²`-th token)
-/// must be strictly positive and monotonically non-decreasing.  We try N=1,2,…
-/// and return the first N for which the token count divides evenly AND the
-/// extracted frequencies are monotonically non-decreasing.
+/// must be strictly positive.  We first try N=1,2,… with a monotonicity check (fast
+/// path for correctly-sorted files).  If that fails, we retry with a looser check
+/// that accepts unsorted frequencies but still disambiguates N via an RF-range test
+/// (max(freq) > 1e3) — S-param magnitude/angle tokens are all ≤ 1 or at most 360.
 fn infer_n_ports(tokens: &[f64]) -> Result<usize, TsReadError> {
+    // Fast path: require positive + monotonic (standard Touchstone)
     for n in 1..=32_usize {
         let per = 1 + 2 * n * n;
         if tokens.len() % per != 0 {
             continue;
         }
         let n_freqs = tokens.len() / per;
-        // Check frequency monotonicity
         let freqs: Vec<f64> = (0..n_freqs).map(|i| tokens[i * per]).collect();
         let mono = freqs.windows(2).all(|w| w[1] >= w[0]);
         let positive = freqs.iter().all(|&f| f >= 0.0);
@@ -157,8 +158,25 @@ fn infer_n_ports(tokens: &[f64]) -> Result<usize, TsReadError> {
             return Ok(n);
         }
     }
+    // Fallback: accept unsorted frequencies, but require at least one
+    // frequency > 1e3 in raw token value.  This prevents N under-estimation:
+    // when N is too small, S-param magnitude/angle tokens (bounded to ≤1 or
+    // at most 360) are mistaken for frequencies, and all would fail the RF test.
+    for n in 1..=32_usize {
+        let per = 1 + 2 * n * n;
+        if tokens.len() % per != 0 {
+            continue;
+        }
+        let n_freqs = tokens.len() / per;
+        let freqs: Vec<f64> = (0..n_freqs).map(|i| tokens[i * per]).collect();
+        let positive = freqs.iter().all(|&f| f >= 0.0);
+        let has_rf_range = freqs.iter().any(|&f| f > 1e3);
+        if positive && has_rf_range {
+            return Ok(n);
+        }
+    }
     Err(TsReadError::Parse(format!(
-        "cannot infer n_ports from {} tokens (tried N=1..32 with monotonicity check)",
+        "cannot infer n_ports from {} tokens (tried N=1..32 with positivity+RF-range check)",
         tokens.len()
     )))
 }
