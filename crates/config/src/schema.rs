@@ -581,6 +581,13 @@ pub struct SolverConfig {
     /// REM extension: DDM solver parameters (ignored by Palace).
     #[serde(rename = "DDM", default)]
     pub ddm: Option<DdmSolverConfig>,
+
+    /// Backward-compat: MoM solver config for `rem-suite run mom` conversion path.
+    /// The Sonnet/ADS converters still emit `Solver.MoM` blocks in PalaceConfig JSON;
+    /// this field allows existing test fixtures and converter output to deserialize
+    /// without breaking.  New code should use `MomConfig` / `load_mom_config` instead.
+    #[serde(rename = "MoM", default)]
+    pub mom: Option<MomSolverConfig>,
 }
 
 /// REM near-to-far-field configuration.
@@ -621,6 +628,7 @@ impl Default for SolverConfig {
             magnetostatic: None,
             linear: LinearSolver::default(),
             ddm: None,
+            mom: None,
         }
     }
 }
