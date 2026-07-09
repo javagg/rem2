@@ -1546,6 +1546,12 @@ pub struct MomPort {
     #[serde(rename = "LoadR", default)]
     pub load_r: f64,
 
+    /// Series reactance X [Ω] for complex reference impedance R + jX.
+    /// Written by the Sonnet converter when the port has non-zero reactance.
+    /// Applied as a series impedance correction during post-processing.
+    #[serde(rename = "Reactance", default)]
+    pub reactance: f64,
+
     /// Optional shunt load inductance [H] stamped at this port.
     #[serde(rename = "LoadL", default)]
     pub load_l: f64,
