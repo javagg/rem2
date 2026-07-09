@@ -1915,6 +1915,15 @@ pub struct SubstrateLayerConfig {
     #[serde(rename = "LossTangent", default)]
     pub loss_tangent: f64,
 
+    /// Anisotropic loss-tangent tensor [tanδ_xx, tanδ_yy, tanδ_zz].
+    ///
+    /// When set together with `PermittivityTensor`, the per-component loss
+    /// tangent is used instead of the scalar `LossTangent`.  For uniaxial
+    /// substrates (ε_xx = ε_yy ≠ ε_zz), the in‑plane tanδ_xx applies to
+    /// ε_xx/ε_yy and tanδ_zz applies to ε_zz.
+    #[serde(rename = "LossTangentTensor", default)]
+    pub loss_tangent_tensor: Option<[f64; 3]>,
+
     /// Dielectric DC conductivity [S/m].
     ///
     /// Models ohmic loss in semiconducting substrates (e.g., Si: σ �?10-50 S/m).
@@ -2090,7 +2099,8 @@ impl SubstrateLayerConfig {
             }
             eps
         } else if let Some([eps_xx, _, _]) = self.permittivity_tensor {
-            let eps_imag_base = eps_xx * self.loss_tangent;
+            let tan_d = self.loss_tangent_tensor.map_or(self.loss_tangent, |t| t[0]);
+            let eps_imag_base = eps_xx * tan_d;
             let sigma_contrib = if self.dielectric_conductivity > 0.0 && freq_hz > 0.0 {
                 self.dielectric_conductivity / (2.0 * PI * freq_hz * EPS0)
             } else { 0.0 };
@@ -2113,7 +2123,8 @@ impl SubstrateLayerConfig {
         use num_complex::Complex64;
         use std::f64::consts::PI;
         if let Some([_, _, eps_zz]) = self.permittivity_tensor {
-            let eps_imag_base = eps_zz * self.loss_tangent;
+            let tan_d_z = self.loss_tangent_tensor.map_or(self.loss_tangent, |t| t[2]);
+            let eps_imag_base = eps_zz * tan_d_z;
             let sigma_contrib = if self.dielectric_conductivity > 0.0 && freq_hz > 0.0 {
                 self.dielectric_conductivity / (2.0 * PI * freq_hz * EPS0)
             } else { 0.0 };
