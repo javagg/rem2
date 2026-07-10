@@ -1152,7 +1152,7 @@ pub struct MomSolverConfig {
     /// inserts mid-points where S-parameter interpolation error exceeds the
     /// adaptive tolerance, up to `AdaptiveTarget` points. The sweep points
     /// are not uniform �?they concentrate where the response varies rapidly.
-    #[serde(rename = "AdaptiveSweep", default)]
+    #[serde(rename = "AdaptiveSweep", default = "default_adaptive_sweep")]
     pub adaptive_sweep: bool,
 
     /// Maximum number of frequency points for adaptive sweep.
@@ -1454,6 +1454,7 @@ fn default_polarization()  -> String { "theta".to_string() }
 fn default_ref_impedance() -> f64    { 50.0 }
 fn default_port_direction() -> String { "x".to_string() }
 fn default_amr_theta()     -> f64    { 0.5 }
+fn default_adaptive_sweep() -> bool { true }
 fn default_adaptive_target() -> usize { 100 }
 fn default_deembed_eps_eff() -> f64  { 1.0 }
 fn default_mom_port_kind() -> String { "Lumped".to_string() }
