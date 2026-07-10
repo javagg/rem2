@@ -786,6 +786,18 @@ pub struct DrivenSolver {
     #[serde(rename = "RomOrder", default)]
     pub rom_order: usize,
 
+    /// AWE/Cauchy rational interpolation order: number of anchor frequencies.
+    /// 0 (default) = disabled.  When enabled, the S-matrix is assembled at
+    /// `AweOrder` anchor frequencies and then interpolated via rational function
+    /// fitting at all other frequency points.  This avoids O(N²) Z-matrix
+    /// assembly at every target frequency, giving a much larger speedup than
+    /// the snapshot ROM for sweeps with many frequency points.
+    ///
+    /// Recommended: 4-8 for smooth S-parameters; higher for resonant structures.
+    /// Requires `AweOrder < n_freq` to be effective.
+    #[serde(rename = "AweOrder", default)]
+    pub awe_order: usize,
+
     /// Palace `Samples` �?accepted, not implemented (use MinFreq/MaxFreq/FreqStep).
     #[serde(rename = "Samples", default)]
     pub samples: Vec<FreqSampleSpec>,
@@ -1146,6 +1158,14 @@ pub struct MomSolverConfig {
     /// Typical values: 4�?6 for narrow-band, 8�?2 for wideband.
     #[serde(rename = "RomOrder", default)]
     pub rom_order: usize,
+
+    /// AWE/Cauchy rational interpolation for frequency sweeps.
+    /// `0` disables (default); positive value sets the number of anchor
+    /// frequencies.  Faster than ROM for sweeps with many frequency points
+    /// because it avoids Z-matrix assembly at non-anchor frequencies.
+    /// Typical values: 4-8.
+    #[serde(rename = "AweOrder", default)]
+    pub awe_order: usize,
 
     /// Enable adaptive frequency sweep (like Sonnet ABS_ENTRY).
     /// When true, the solver starts with (FreqMin, FreqMax) and iteratively
@@ -1787,6 +1807,12 @@ pub struct ThickMetalBoxConfig {
     /// Relative permittivity of the dielectric embedding the metal.
     #[serde(rename = "EpsR", default = "default_permittivity")]
     pub eps_r: f64,
+
+    /// Maximum number of sheets for adaptive Z-meshing. 0 = use default (9).
+    /// When `num_sheets = 0`, the solver computes the actual sheet count
+    /// from skin depth at the operating frequency, capped by this value.
+    #[serde(rename = "MaxSheets", default)]
+    pub max_sheets: usize,
 }
 
 fn default_copper_conductivity() -> f64 { 5.8e7 }
