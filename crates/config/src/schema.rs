@@ -1613,6 +1613,18 @@ pub struct SubstrateConfig {
     pub ground_conductivity: f64,
 }
 
+/// Axis of symmetry for the boxed MoM solver.
+///
+/// When set on `BoxConfig.symmetry`, the solver decomposes the problem into
+/// even and odd mode sub-problems on a half-grid, giving ~2× speedup.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+pub enum SymmetryAxis {
+    #[serde(rename = "X")]
+    X,
+    #[serde(rename = "Y")]
+    Y,
+}
+
 /// Boxed MoM solver configuration (Sonnet-style enclosed box).
 ///
 /// When present under `Solver.MoM.Box`, the solver switches from the free-space /
@@ -1703,6 +1715,15 @@ pub struct BoxConfig {
     /// places the signal near the top cover.
     #[serde(rename = "SignalLayerZ", default)]
     pub signal_layer_z: Option<f64>,
+
+    /// Axis-aligned symmetry plane for half-grid reduction.
+    ///
+    /// When `Some("X")` or `Some("Y")`, the solver decomposes the problem
+    /// into even/odd mode sub-problems on a half-grid, reducing unknowns
+    /// by ~2× for symmetric structures.  The geometry (wall polygons + PEC
+    /// mask) must be symmetric about the mid-plane in the chosen direction.
+    #[serde(rename = "Symmetry", default, skip_serializing_if = "Option::is_none")]
+    pub symmetry: Option<SymmetryAxis>,
 
     /// Circuit components connected to boxed solver ports (R-10.1).
     ///
