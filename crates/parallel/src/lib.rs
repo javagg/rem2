@@ -1,6 +1,6 @@
 pub mod jsmpi;
-#[cfg(feature = "native-mpi")]
-mod native_mpi;
+#[cfg(feature = "mpi")]
+mod mpi_impl;
 
 use crate::jsmpi::*;
 
@@ -88,61 +88,61 @@ impl Comm for WorldComm {
 ///
 /// Uses raw MPI FFI to the system MPI library (Open MPI / MPICH)
 /// for true multi-process parallelism on HPC clusters.
-#[cfg(feature = "native-mpi")]
+#[cfg(feature = "mpi")]
 pub struct MpiWorldComm;
 
-#[cfg(feature = "native-mpi")]
+#[cfg(feature = "mpi")]
 impl MpiWorldComm {
     pub fn new() -> Self {
-        native_mpi::mpi_init();
+        mpi_impl::mpi_init();
         Self
     }
 }
 
-#[cfg(feature = "native-mpi")]
+#[cfg(feature = "mpi")]
 impl Drop for MpiWorldComm {
     fn drop(&mut self) {
-        native_mpi::mpi_finalize();
+        mpi_impl::mpi_finalize();
     }
 }
 
-#[cfg(feature = "native-mpi")]
+#[cfg(feature = "mpi")]
 impl Comm for MpiWorldComm {
     fn rank(&self) -> i32 {
         let mut rank: i32 = 0;
-        native_mpi::mpi_comm_rank(native_mpi::MPI_COMM_WORLD, &mut rank);
+        mpi_impl::mpi_comm_rank(mpi_impl::MPI_COMM_WORLD, &mut rank);
         rank
     }
 
     fn size(&self) -> i32 {
         let mut size: i32 = 0;
-        native_mpi::mpi_comm_size(native_mpi::MPI_COMM_WORLD, &mut size);
+        mpi_impl::mpi_comm_size(mpi_impl::MPI_COMM_WORLD, &mut size);
         size
     }
 
     fn barrier(&self) {
-        native_mpi::mpi_barrier(native_mpi::MPI_COMM_WORLD);
+        mpi_impl::mpi_barrier(mpi_impl::MPI_COMM_WORLD);
     }
 
     fn bcast_u8(&self, data: &mut [u8], root: i32) {
-        native_mpi::mpi_bcast(
+        mpi_impl::mpi_bcast(
             data.as_mut_ptr() as *mut std::ffi::c_void,
             data.len() as i32,
-            native_mpi::MPI_BYTE,
+            mpi_impl::MPI_BYTE,
             root,
-            native_mpi::MPI_COMM_WORLD,
+            mpi_impl::MPI_COMM_WORLD,
         );
     }
 
     fn allreduce_f64(&self, val: f64) -> f64 {
         let mut res: f64 = 0.0;
-        native_mpi::mpi_allreduce(
+        mpi_impl::mpi_allreduce(
             &val as *const f64 as *const std::ffi::c_void,
             &mut res as *mut f64 as *mut std::ffi::c_void,
             1,
-            native_mpi::MPI_DOUBLE,
-            native_mpi::MPI_SUM,
-            native_mpi::MPI_COMM_WORLD,
+            mpi_impl::MPI_DOUBLE,
+            mpi_impl::MPI_SUM,
+            mpi_impl::MPI_COMM_WORLD,
         );
         res
     }
@@ -150,13 +150,13 @@ impl Comm for MpiWorldComm {
     fn allreduce_f64_vec(&self, data: &mut [f64]) {
         let n = data.len();
         let mut recv = vec![0.0f64; n];
-        native_mpi::mpi_allreduce(
+        mpi_impl::mpi_allreduce(
             data.as_ptr() as *const std::ffi::c_void,
             recv.as_mut_ptr() as *mut std::ffi::c_void,
             n as i32,
-            native_mpi::MPI_DOUBLE,
-            native_mpi::MPI_SUM,
-            native_mpi::MPI_COMM_WORLD,
+            mpi_impl::MPI_DOUBLE,
+            mpi_impl::MPI_SUM,
+            mpi_impl::MPI_COMM_WORLD,
         );
         data.copy_from_slice(&recv);
     }
