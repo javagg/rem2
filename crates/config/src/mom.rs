@@ -111,100 +111,21 @@ impl super::MomSolverConfig {
         }
     }
 
-    /// Resolve per-port calibration into solver-level TRL/SOLT kit.
+    /// Resolve per-port calibration — currently disabled (no-op).
     ///
-    /// When ports carry `Calibration` data from a Sonnet Cal Port but no
-    /// explicit `TrlKit`/`SoltKit` is configured, auto-populate the
-    /// solver-level kit from the first CalPort's parameters.  This bridges
-    /// the per-port CalPort model into the existing global calibration path.
-    ///
-    /// Only processes 2-port S-parameter solves (TRL/SOLT require exactly
-    /// 2 ports).  When more than one CalPort with conflicting types exists,
-    /// the first one wins with a warning.
+    /// CalPort metadata is preserved but does NOT auto-populate global
+    /// TRL/SOLT kits.  Calibration requires fixture-simulated standard
+    /// responses which are not available in the current architecture.
+    /// See `apply_per_port_calibration()` in calib.rs for details.
     pub fn resolve_calibration(&mut self) {
-        use super::schema::{CalibrationConfig, TrlKitConfig, SoltKitConfig};
-
-        // Scan ports for Calibration data
-        let cal: Option<&CalibrationConfig> = self.ports.iter()
-            .find_map(|p| p.calibration.as_ref());
-
-        let Some(cal) = cal else { return };
-        if self.trl_kit.is_some() || self.solt_kit.is_some() {
-            return; // explicit kit already set
-        }
-
-        match cal.cal_type.to_ascii_uppercase().as_str() {
-            "TRL" => {
-                let line_len = cal.line_length;
-                let thru_len = cal.thru_length.max(0.0);
-                if line_len <= thru_len {
-                    log::warn!("CalPort TRL: LineLength ({:.3e}) <= ThruLength ({:.3e}), skipping",
-                        line_len, thru_len);
-                    return;
-                }
-                let delta_l = line_len - thru_len;
-                // Estimate ε_eff from line impedance (assume air-line for Z0=50,
-                // otherwise back-compute from Z0 characteristic)
-                let eps_eff = if (cal.line_impedance - 50.0).abs() < 1.0 {
-                    1.0 // air-like
-                } else {
-                    // Zo = 60/√ε · ln(4h/d) — rough estimate: ε ≈ (60/Zo)²
-                    (60.0 / cal.line_impedance.max(1.0)).powi(2)
-                };
-                self.trl_kit = Some(TrlKitConfig {
-                    thru_length: thru_len,
-                    line_length: line_len,
-                    line_impedance: cal.line_impedance,
-                    epsilon_eff: eps_eff,
-                    reflect_type: if cal.reflect_type.is_empty() {
-                        "SHORT".to_string()
-                    } else { cal.reflect_type.clone() },
-                    reflect_magnitude: 1.0,
-                    solve_side: false,
-                });
-                log::info!("CalPort: auto-populated TRL kit (Thru={:.3e}, Line={:.3e}, Δl={:.3e})",
-                    thru_len, line_len, delta_l);
-            }
-            "SOLT" => {
-                self.solt_kit = Some(SoltKitConfig {
-                    short_inductance: 0.0,
-                    open_capacitance: 0.0,
-                    load_resistance: cal.line_impedance,
-                    load_inductance: 0.0,
-                    load_capacitance: 0.0,
-                    ref_impedance: cal.line_impedance,
-                    epsilon_eff: 1.0,
-                });
-                log::info!("CalPort: auto-populated SOLT kit (Z0={:.1})", cal.line_impedance);
-            }
-            "LRM" => {
-                // LRM maps to TRL with zero-length THRU (ideal match is
-                // equivalent to a zero-length thru for the reference plane).
-                let line_len = cal.line_length;
-                if line_len <= 0.0 {
-                    log::warn!("CalPort LRM: LineLength must be positive, skipping");
-                    return;
-                }
-                let eps_eff = if (cal.line_impedance - 50.0).abs() < 1.0 {
-                    1.0
-                } else {
-                    (60.0 / cal.line_impedance.max(1.0)).powi(2)
-                };
-                self.trl_kit = Some(TrlKitConfig {
-                    thru_length: 0.0,
-                    line_length: line_len,
-                    line_impedance: cal.line_impedance,
-                    epsilon_eff: eps_eff,
-                    reflect_type: if cal.reflect_type.is_empty() {
-                        "SHORT".to_string()
-                    } else { cal.reflect_type.clone() },
-                    reflect_magnitude: 1.0,
-                    solve_side: false,
-                });
-                log::info!("CalPort: auto-populated LRM kit (Line={:.3e}, mapped to TRL)",
-                    line_len);
-            }
-            _ => {} // NONE / unknown: not supported
+        let n_cal = self.ports.iter().filter(|p| p.calibration.is_some()).count();
+        if n_cal > 0 {
+            log::warn!(
+                "resolve_calibration: {} CalPort(s) found but calibration is \
+                 disabled — no fixture-simulated standard responses available. \
+                 CalPort metadata is preserved; raw S-parameters unchanged.",
+                n_cal
+            );
         }
     }
 }
