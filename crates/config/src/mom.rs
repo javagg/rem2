@@ -69,7 +69,6 @@ impl super::MomSolverConfig {
     pub fn apply_preset(&mut self) {
         match self.preset.to_ascii_lowercase().as_str() {
             "sonnet19" | "sonnet" => {
-                self.equation = "EFIE".into();
                 self.basis = "Rooftop".into();
                 self.singular_tol = 1e-12;
                 self.fast_solver = "UFFT".into();
@@ -82,7 +81,6 @@ impl super::MomSolverConfig {
             "ads" => {
                 // ADS Momentum: planar MoM, same core as Sonnet19.
                 // Reserve for future ADS-specific port/calibration defaults.
-                self.equation = "EFIE".into();
                 self.basis = "Rooftop".into();
                 self.singular_tol = 1e-12;
                 self.fast_solver = "UFFT".into();
@@ -94,7 +92,6 @@ impl super::MomSolverConfig {
             }
             "q3d" | "q3d_extractor" => {
                 // Q3D Extractor: electrostatic BEM, capacitance matrix.
-                self.equation = "EFIE".into();
                 self.basis = "Pulse".into();
                 self.singular_tol = 1e-12;
                 self.fast_solver = "Direct".into();
