@@ -1023,6 +1023,22 @@ where
 /// MoM solver parameters, placed under `Solver.MoM` in the config file.
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct MomSolverConfig {
+    /// Model preset: "Sonnet19" | "ADS" | "Q3D" | "Custom"
+    ///
+    /// When set to a named preset, all solver defaults align to that
+    /// modeling approach.  Individual explicit fields are overridden by
+    /// the preset — set `Preset = "Custom"` for per-field control.
+    ///
+    /// - `Sonnet19` — planar boxed MoM (rect grid, Rooftop, EFIE, cavity
+    ///   modal expansion, UFFT, DOUBLE precision).  Default.
+    /// - `ADS`      — ADS Momentum (same planar boxed MoM core; reserved
+    ///   for future ADS-specific port/calibration defaults).
+    /// - `Q3D`      — Q3D Extractor (electrostatic BEM, Laplace kernel,
+    ///   Pulse basis, capacitance matrix extraction).
+    /// - `Custom`   — use explicit field values only.
+    #[serde(rename = "Preset", default = "default_mom_preset")]
+    pub preset: String,
+
     /// Integral equation: "EFIE" | "MFIE" | "CFIE" | "PMCHWT"
     #[serde(rename = "Equation", default = "default_mom_equation")]
     pub equation: String,
@@ -1376,6 +1392,7 @@ pub struct MomSolverConfig {
 
 fn default_auto_port_min_faces() -> usize { 1 }
 fn default_auto_port_max_width() -> f64   { 1.0 }
+fn default_mom_preset() -> String { "Sonnet19".to_string() }
 
 /// A symmetry-plane definition for MoM DOF elimination.
 ///
@@ -1463,11 +1480,11 @@ pub struct SoltKitConfig {
 
 fn default_solt_load_r() -> f64 { 50.0 }
 
-fn default_mom_equation() -> String { "CFIE".to_string() }
-fn default_mom_basis()     -> String { "RWG".to_string()  }
-fn default_cfie_alpha()    -> f64    { 0.5 }
-fn default_singular_tol()  -> f64    { 1.0e-6 }
-fn default_fast_solver()   -> String { "Direct".to_string() }
+fn default_mom_equation() -> String { "EFIE".to_string() }
+fn default_mom_basis()     -> String { "Rooftop".to_string()  }
+fn default_cfie_alpha()    -> f64    { 1.0 }
+fn default_singular_tol()  -> f64    { 1.0e-12 }
+fn default_fast_solver()   -> String { "UFFT".to_string() }
 fn default_solver_threshold() -> usize { 500 }
 fn default_use_gpu()       -> bool   { true }
 fn default_polarization()  -> String { "theta".to_string() }
@@ -1478,9 +1495,9 @@ fn default_adaptive_sweep() -> bool { true }
 fn default_adaptive_target() -> usize { 100 }
 fn default_deembed_eps_eff() -> f64  { 1.0 }
 fn default_mom_port_kind() -> String { "Lumped".to_string() }
-fn default_mom_type()     -> String { "Auto".to_string() }
-fn default_mom_kernel()   -> String { "Auto".to_string() }
-fn default_mesh_format()  -> String { "Auto".to_string() }
+fn default_mom_type()     -> String { "Boxed".to_string() }
+fn default_mom_kernel()   -> String { "Cavity".to_string() }
+fn default_mesh_format()  -> String { "RectGrid".to_string() }
 
 /// A near-field probe point for E-field evaluation during S-parameter sweep.
 #[derive(Debug, Clone, Deserialize, Default)]
