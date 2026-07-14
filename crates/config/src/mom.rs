@@ -110,3 +110,99 @@ impl super::MomSolverConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_cfg(preset: &str, extra: &str) -> MomConfig {
+        let json = format!(
+            r#"{{"Mesh":"test.msh","Preset":"{}",{}"FreqMin":1e9,"FreqMax":10e9,"FreqStep":0.1e9}}"#,
+            preset, extra
+        );
+        let mut cfg: MomConfig = serde_json::from_str(&json).unwrap();
+        cfg.solver.apply_preset();
+        cfg
+    }
+
+    fn assert_eq_eps(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-14, "expected {b}, got {a}");
+    }
+
+    #[test]
+    fn preset_default_is_sonnet19() {
+        let cfg = make_cfg("Sonnet19", "");
+        assert_eq!(cfg.equation, "EFIE");
+        assert_eq!(cfg.basis, "Rooftop");
+        assert_eq_eps(cfg.alpha, 1.0);
+        assert_eq_eps(cfg.singular_tol, 1e-12);
+        assert_eq!(cfg.fast_solver, "UFFT");
+        assert_eq!(cfg.mom_type, "Boxed");
+        assert_eq!(cfg.kernel, "Cavity");
+        assert_eq!(cfg.mesh_format, "RectGrid");
+        assert!(cfg.adaptive_sweep);
+        assert_eq!(cfg.adaptive_target, 100);
+    }
+
+    #[test]
+    fn preset_sonnet19_no_preset_field() {
+        // When Preset is not set, it defaults to "Sonnet19"
+        let json = r#"{"Mesh":"test.msh","FreqMin":1e9,"FreqMax":10e9,"FreqStep":0.1e9}"#;
+        let mut cfg: MomConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.preset, "Sonnet19");
+        cfg.solver.apply_preset();
+        assert_eq!(cfg.equation, "EFIE");
+        assert_eq!(cfg.basis, "Rooftop");
+    }
+
+    #[test]
+    fn preset_ads_matches_sonnet19() {
+        let cfg = make_cfg("ADS", "");
+        assert_eq!(cfg.equation, "EFIE");
+        assert_eq!(cfg.basis, "Rooftop");
+        assert_eq!(cfg.fast_solver, "UFFT");
+        assert_eq!(cfg.mom_type, "Boxed");
+        assert_eq!(cfg.kernel, "Cavity");
+        assert_eq!(cfg.mesh_format, "RectGrid");
+        assert!(cfg.adaptive_sweep);
+    }
+
+    #[test]
+    fn preset_q3d_sets_electrostatic_defaults() {
+        let cfg = make_cfg("Q3D", "");
+        assert_eq!(cfg.equation, "EFIE");
+        assert_eq!(cfg.basis, "Pulse");
+        assert_eq_eps(cfg.alpha, 1.0);
+        assert_eq!(cfg.fast_solver, "Direct");
+        assert_eq!(cfg.mom_type, "Capacitance");
+        assert_eq!(cfg.kernel, "Laplace");
+        assert_eq!(cfg.mesh_format, "TriSurface");
+        assert!(!cfg.adaptive_sweep);
+        assert_eq!(cfg.adaptive_target, 0);
+    }
+
+    #[test]
+    fn preset_custom_preserves_explicit_values() {
+        let json = r#"{
+            "Mesh":"test.msh",
+            "Preset":"Custom",
+            "FreqMin":1e9,"FreqMax":10e9,"FreqStep":0.1e9,
+            "Equation":"CFIE","Basis":"RWG","Alpha":0.5,
+            "FastSolver":"GMRES","AdaptiveSweep":false
+        }"#;
+        let mut cfg: MomConfig = serde_json::from_str(json).unwrap();
+        cfg.solver.apply_preset();
+        assert_eq!(cfg.equation, "CFIE");
+        assert_eq!(cfg.basis, "RWG");
+        assert_eq_eps(cfg.alpha, 0.5);
+        assert_eq!(cfg.fast_solver, "GMRES");
+        assert!(!cfg.adaptive_sweep);
+    }
+
+    #[test]
+    fn preset_unknown_treated_as_custom() {
+        let cfg = make_cfg("SomeRandomName", "");
+        assert_eq!(cfg.equation, "EFIE"); // serde default
+        assert_eq!(cfg.basis, "Rooftop"); // serde default
+    }
+}

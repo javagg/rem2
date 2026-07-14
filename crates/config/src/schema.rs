@@ -3078,6 +3078,7 @@ mod dispersion_tests {
                 eps_inf: 2.0, eps_static: 6.0, tau_s: 1e-11,
             }),
             permittivity_tensor: None,
+            loss_tangent_tensor: None,
         };
         let freq = 1e9; // 1 GHz
         let eps = layer.eps_r_complex(freq);
@@ -3098,6 +3099,7 @@ mod dispersion_tests {
             name: "Rogers4350B".to_string(),
             dispersion: None,
             permittivity_tensor: Some([3.48, 3.48, 3.66]),
+            loss_tangent_tensor: None,
         };
         let eps_lat = layer.eps_r_complex(1e9);
         let eps_z   = layer.eps_r_z_complex(1e9).expect("should be Some for tensor");
@@ -3119,6 +3121,7 @@ mod dispersion_tests {
             name: String::new(),
             dispersion: None,
             permittivity_tensor: None,
+            loss_tangent_tensor: None,
         };
         assert!(layer.eps_r_z_complex(1e9).is_none());
     }
