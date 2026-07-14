@@ -1059,7 +1059,13 @@ pub struct MomSolverConfig {
     #[serde(rename = "FreqStep")]
     pub freq_step: f64,
 
-    /// CFIE mixing coefficient α �?[0,1]: 0 = pure EFIE, 1 = pure MFIE
+    /// CFIE mixing coefficient α ∈ [0,1], only meaningful when Equation="CFIE":
+    /// - α = 0 → pure EFIE (电场积分方程)
+    /// - α = 1 → pure MFIE (磁场积分方程)
+    /// - α = 0.5 → balanced CFIE (默认值)
+    ///
+    /// 对 Equation="EFIE" 或 Equation="MFIE"（非 CFIE），此参数被求解器忽略。
+    /// Sonnet 使用纯 EFIE，因此 Sonnet19/ADS preset 设 Equation="EFIE" 而非 CFIE。
     #[serde(rename = "Alpha", default = "default_cfie_alpha")]
     pub alpha: f64,
 
