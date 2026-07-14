@@ -1396,6 +1396,16 @@ pub struct MomSolverConfig {
     /// Values: `"TriSurface"` (triangular faces), `"RectGrid"` (rectilinear grid).
     #[serde(rename = "MeshFormat", default = "default_mesh_format")]
     pub mesh_format: String,
+
+    /// Per-polygon pec_tag overrides for multi-conductor surface impedance.
+    ///
+    /// Each entry is `[polygon_index, pec_tag]`.  Emitted by the Sonnet converter
+    /// when a planar tech layer uses a SURFACE_IMPEDANCE conductor material.
+    /// The solver reads this during SIBC setup to propagate pec_tag through
+    /// `apply_exact_polygon_mask`, so `build_per_cell_zs` can look up the
+    /// correct Zs from `PerTagSurface` for each conductor.
+    #[serde(rename = "PolygonTags", default)]
+    pub polygon_tags: Vec<[u32; 2]>,
 }
 
 fn default_auto_port_min_faces() -> usize { 1 }
