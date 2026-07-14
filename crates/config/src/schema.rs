@@ -1406,6 +1406,22 @@ pub struct MomSolverConfig {
     /// correct Zs from `PerTagSurface` for each conductor.
     #[serde(rename = "PolygonTags", default)]
     pub polygon_tags: Vec<[u32; 2]>,
+
+    /// Conformal mesh strategy: "ExactClip" (REM) | "SonnetSubcell" (Sonnet).
+    ///
+    /// - `ExactClip` — exact Sutherland-Hodgman polygon clipping per cell,
+    ///   with sub-sampled basis integration for boundary cells (REM approach).
+    /// - `SonnetSubcell` — pre-computed N×N sub-grid staircasing, faithful
+    ///   to Sonnet's conformal mesh algorithm (`SonnetConformalMesh`).
+    ///
+    /// Default: "ExactClip" (backward compatible).
+    #[serde(rename = "ConformalStrategy", default = "default_conformal_strategy")]
+    pub conformal_strategy: String,
+
+    /// Sub-grid resolution for `SonnetSubcell` strategy (default 8).
+    /// Larger values improve boundary accuracy at higher computational cost.
+    #[serde(rename = "ConformalSubcells", default = "default_conformal_subcells")]
+    pub conformal_subcells: u32,
 }
 
 fn default_auto_port_min_faces() -> usize { 1 }
@@ -2054,6 +2070,8 @@ pub struct BoxPortConfig {
 
 fn default_evanescent_modes() -> usize { 10 }
 fn default_conformal_level() -> u32 { 2 }
+fn default_conformal_strategy() -> String { "ExactClip".to_string() }
+fn default_conformal_subcells() -> u32 { 8 }
 fn default_side_wall_pec() -> bool { true }
 
 /// Single dielectric layer in the substrate stack.
