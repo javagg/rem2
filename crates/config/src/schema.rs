@@ -1597,6 +1597,47 @@ pub struct MomPort {
     /// Optional shunt load capacitance [F] stamped at this port.
     #[serde(rename = "LoadC", default)]
     pub load_c: f64,
+
+    /// Calibration standard for Cal Port (Sonnet-style).
+    ///
+    /// When present, the port is treated as a Cal Port with an embedded
+    /// calibration standard (TRL, SOLT, or LRM).  The solver uses this
+    /// data to move the reference plane from the raw port to the
+    /// calibration plane during S-parameter extraction.
+    #[serde(rename = "Calibration", default)]
+    pub calibration: Option<CalibrationConfig>,
+}
+
+/// Calibration standard parameters for a Sonnet-style Cal Port.
+///
+/// Embedded calibration moves the S-parameter reference plane from the
+/// raw port location to the calibration standard's reference plane,
+/// removing parasitic port discontinuity.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct CalibrationConfig {
+    /// Calibration type: "TRL" | "LRM" | "SOLT" | "NONE".
+    #[serde(rename = "Type")]
+    pub cal_type: String,
+
+    /// THRU standard length [m].
+    #[serde(rename = "ThruLength", default)]
+    pub thru_length: f64,
+
+    /// LINE standard length [m] (TRL) or offset [m] (SOLT/LRM).
+    #[serde(rename = "LineLength", default)]
+    pub line_length: f64,
+
+    /// Reflect standard type: "SHORT" | "OPEN" | "LOAD".
+    #[serde(rename = "ReflectType", default)]
+    pub reflect_type: String,
+
+    /// Reflect standard offset [m].
+    #[serde(rename = "ReflectOffset", default)]
+    pub reflect_offset: f64,
+
+    /// Characteristic impedance of the line standard [ohm].
+    #[serde(rename = "LineImpedance", default = "default_ref_impedance")]
+    pub line_impedance: f64,
 }
 
 // ---------------------------------------------------------------------------
