@@ -177,7 +177,34 @@ impl super::MomSolverConfig {
                 });
                 log::info!("CalPort: auto-populated SOLT kit (Z0={:.1})", cal.line_impedance);
             }
-            _ => {} // LRM / NONE: not yet supported in the global kit path
+            "LRM" => {
+                // LRM maps to TRL with zero-length THRU (ideal match is
+                // equivalent to a zero-length thru for the reference plane).
+                let line_len = cal.line_length;
+                if line_len <= 0.0 {
+                    log::warn!("CalPort LRM: LineLength must be positive, skipping");
+                    return;
+                }
+                let eps_eff = if (cal.line_impedance - 50.0).abs() < 1.0 {
+                    1.0
+                } else {
+                    (60.0 / cal.line_impedance.max(1.0)).powi(2)
+                };
+                self.trl_kit = Some(TrlKitConfig {
+                    thru_length: 0.0,
+                    line_length: line_len,
+                    line_impedance: cal.line_impedance,
+                    epsilon_eff: eps_eff,
+                    reflect_type: if cal.reflect_type.is_empty() {
+                        "SHORT".to_string()
+                    } else { cal.reflect_type.clone() },
+                    reflect_magnitude: 1.0,
+                    solve_side: false,
+                });
+                log::info!("CalPort: auto-populated LRM kit (Line={:.3e}, mapped to TRL)",
+                    line_len);
+            }
+            _ => {} // NONE / unknown: not supported
         }
     }
 }
