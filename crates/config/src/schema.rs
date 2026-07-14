@@ -1160,6 +1160,14 @@ pub struct MomSolverConfig {
     #[serde(rename = "SurfaceXdc", default)]
     pub surface_xdc: f64,
 
+    /// Per-conductor surface impedance mapping (multiple Sonnet SURFACE_IMPEDANCE).
+    ///
+    /// Maps conductor pec_tag to (Ls, Rdc, Rrf, Xdc).  When set, cells with
+    /// matching pec_tag use these values instead of the global SurfaceLs/Rdc/Rrf/Xdc.
+    /// This enables different superconductors (e.g. Nb, Al) on the same circuit.
+    #[serde(rename = "PerTagSurface", default)]
+    pub per_tag_surface: Vec<PerTagSurfaceConfig>,
+
     /// Near-field source file path. When set, the RHS is built from the
     /// near-field CSV data instead of the plane-wave model.  The file
     /// contains spatially sampled E/H fields exported from a previous
@@ -1514,6 +1522,34 @@ pub struct NearFieldProbePoint {
     /// Optional human-readable label (used in CSV comments).
     #[serde(rename = "Label", default)]
     pub label: String,
+}
+
+/// Per-conductor surface impedance parameters (Sonnet SURFACE_IMPEDANCE).
+///
+/// Maps a pec_tag to the surface impedance model parameters for that
+/// conductor.  The surface impedance is:
+///   Zs(f) = Rdc + Rrf·√f + j·(2πf·Ls + Xdc)
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct PerTagSurfaceConfig {
+    /// Conductor pec_tag matching the mesh/box cell tag.
+    #[serde(rename = "Tag")]
+    pub tag: u32,
+
+    /// Kinetic inductance Ls [H].
+    #[serde(rename = "Ls", default)]
+    pub ls: f64,
+
+    /// DC resistance Rdc [Ω].
+    #[serde(rename = "Rdc", default)]
+    pub rdc: f64,
+
+    /// RF resistance coefficient Rrf [Ω/√Hz].
+    #[serde(rename = "Rrf", default)]
+    pub rrf: f64,
+
+    /// DC reactance Xdc [Ω].
+    #[serde(rename = "Xdc", default)]
+    pub xdc: f64,
 }
 
 /// A lumped port definition for MoM S-parameter extraction.
