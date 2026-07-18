@@ -1023,19 +1023,17 @@ where
 /// MoM solver parameters, placed under `Solver.MoM` in the config file.
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct MomSolverConfig {
-    /// Model preset: "Sonnet19" | "ADS" | "Q3D" | "Custom"
+    /// Model preset: "Sonnet19" | "ADS" | "Q3D"
     ///
     /// When set to a named preset, all solver defaults align to that
-    /// modeling approach.  Individual explicit fields are overridden by
-    /// the preset — set `Preset = "Custom"` for per-field control.
+    /// modeling approach.
     ///
     /// - `Sonnet19` — planar boxed MoM (rect grid, Rooftop, EFIE, cavity
     ///   modal expansion, UFFT, DOUBLE precision).  Default.
-    /// - `ADS`      — ADS Momentum (same planar boxed MoM core; reserved
-    ///   for future ADS-specific port/calibration defaults).
+    /// - `ADS`      — ADS Momentum (2.5D planar MoM, RWG basis, conformal
+    ///   triangular mesh, layered media Green's function, open boundaries).
     /// - `Q3D`      — Q3D Extractor (electrostatic BEM, Laplace kernel,
     ///   Pulse basis, capacitance matrix extraction).
-    /// - `Custom`   — use explicit field values only.
     #[serde(rename = "Preset", default = "default_mom_preset")]
     pub preset: String,
 
@@ -1073,9 +1071,9 @@ pub struct MomSolverConfig {
     #[serde(rename = "SingularTol", default = "default_singular_tol")]
     pub singular_tol: f64,
 
-    /// Linear solver for Z·I = V: "Auto" | "Direct" | "GMRES" | "ACA" | "FFT" | "FMM" | "MLFMA" | "WGPU"
+    /// Linear solver for Z·I = V: "Auto" | "Direct" | "GMRES" | "ACA" | "FFT" | "UFFT" | "FMM" | "MLFMA" | "WGPU"
     /// When "Auto", the solver is chosen automatically based on problem size:
-    /// N < 1000 �?Direct LU, 1000..5000 �?FFT/FMM, >5000 �?MLFMA.
+    /// N < 1000 → Direct LU, 1000..5000 → FMM, >5000 → MLFMA.
     #[serde(rename = "FastSolver", default = "default_fast_solver")]
     pub fast_solver: String,
 
@@ -1098,7 +1096,7 @@ pub struct MomSolverConfig {
     /// Force a specific solver path for the boxed MoM solver.
     /// When set, overrides both FastSolver and SolverAutoSelect.
     /// Accepted values: "LU", "FFT", "GMRES", "ACA".
-    /// Default None �?normal FastSolver / SolverAutoSelect logic.
+    /// Default None — normal FastSolver / SolverAutoSelect logic.
     #[serde(rename = "SolverOverride", default)]
     pub solver_override: Option<String>,
 
@@ -1183,9 +1181,9 @@ pub struct MomSolverConfig {
 
     /// Snapshot ROM acceleration for S-parameter frequency sweeps.
     /// `0` disables ROM (default); positive value sets the number of anchor
-    /// frequencies at which a full MoM solve is performed �?all other
+    /// frequencies at which a full MoM solve is performed, while all other
     /// frequencies use the Galerkin-projected low-dimensional system.
-    /// Typical values: 4�?6 for narrow-band, 8�?2 for wideband.
+    /// Typical values: 4-6 for narrow-band, 8-12 for wideband.
     #[serde(rename = "RomOrder", default)]
     pub rom_order: usize,
 
@@ -1201,7 +1199,7 @@ pub struct MomSolverConfig {
     /// When true, the solver starts with (FreqMin, FreqMax) and iteratively
     /// inserts mid-points where S-parameter interpolation error exceeds the
     /// adaptive tolerance, up to `AdaptiveTarget` points. The sweep points
-    /// are not uniform �?they concentrate where the response varies rapidly.
+    /// are not uniform — they concentrate where the response varies rapidly.
     #[serde(rename = "AdaptiveSweep", default = "default_adaptive_sweep")]
     pub adaptive_sweep: bool,
 
@@ -1222,7 +1220,7 @@ pub struct MomSolverConfig {
 
     /// Maximum AMR iterations.  `0` disables AMR (default).
     /// When > 0, the mesh is refined up to `amr_iter` times with a
-    /// Dörfler marking threshold of `AmrtTheta`.
+    /// Dörfler marking threshold of `AmrTheta`.
     #[serde(rename = "AmrIter", default)]
     pub amr_iter: usize,
 
@@ -1342,7 +1340,7 @@ pub struct MomSolverConfig {
 
     /// Conductor surface roughness model: "hammerstad" | "groisse" | null.
     /// When set, the Leontovich surface impedance is multiplied by the
-    /// roughness correction factor K_r �?1 (requires RmsRoughness > 0).
+    /// roughness correction factor K_r — 1 (requires RmsRoughness > 0).
     #[serde(rename = "RoughnessModel", default)]
     pub roughness_model: Option<String>,
 
@@ -1364,7 +1362,7 @@ pub struct MomSolverConfig {
     #[serde(rename = "DisableCoCalibration", default)]
     pub disable_co_calibration: bool,
 
-    /// Parametric sweep definition (R-10.2).
+    /// Parametric sweep definition.
     /// When set, the solver runs a multi-dimensional sweep over geometry
     /// and/or frequency parameters instead of a single simulation.
     #[serde(rename = "ParametricSweep", default)]
@@ -1383,14 +1381,6 @@ pub struct MomSolverConfig {
     #[serde(rename = "SubsPerLambda", default)]
     pub subs_per_lambda: f64,
 
-    /// Explicit solver-type selector for unified dispatch.
-    ///
-    /// Values: `"FreeForm"` (RWG trianglular mesh), `"Boxed"` (rect grid / Sonnet-style),
-    /// `"Capacitance"` (electrostatic BIE).  When absent or `"Auto"`, the solver
-    /// infers the type from other config fields (Box presence, Problem.Type, etc.).
-    #[serde(rename = "MomType", default = "default_mom_type")]
-    pub mom_type: String,
-
     /// Explicit kernel selector for unified dispatch.
     ///
     /// Values: `"FreeSpace"`, `"Layered"`, `"Cavity"`, `"Laplace"`, `"Auto"`.
@@ -1399,7 +1389,7 @@ pub struct MomSolverConfig {
 
     /// Explicit mesh format selector for unified dispatch.
     ///
-    /// Values: `"TriSurface"` (triangular faces), `"RectGrid"` (rectilinear grid).
+    /// Values: `"RectGrid"` (rectilinear grid), `"TriSurface"` (triangular faces).
     #[serde(rename = "MeshFormat", default = "default_mesh_format")]
     pub mesh_format: String,
 
@@ -1535,7 +1525,6 @@ fn default_adaptive_sweep() -> bool { true }
 fn default_adaptive_target() -> usize { 100 }
 fn default_deembed_eps_eff() -> f64  { 1.0 }
 fn default_mom_port_kind() -> String { "Lumped".to_string() }
-fn default_mom_type()     -> String { "Boxed".to_string() }
 fn default_mom_kernel()   -> String { "Cavity".to_string() }
 fn default_mesh_format()  -> String { "RectGrid".to_string() }
 

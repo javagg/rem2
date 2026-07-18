@@ -72,30 +72,29 @@ impl super::MomSolverConfig {
                 self.basis = "Rooftop".into();
                 self.singular_tol = 1e-12;
                 self.fast_solver = "UFFT".into();
-                self.mom_type = "Boxed".into();
                 self.kernel = "Cavity".into();
                 self.mesh_format = "RectGrid".into();
                 self.adaptive_sweep = true;
                 self.adaptive_target = 100;
             }
             "ads" => {
-                // ADS Momentum: planar MoM, same core as Sonnet19.
-                // Reserve for future ADS-specific port/calibration defaults.
-                self.basis = "Rooftop".into();
+                // ADS Momentum: 2.5D planar MoM with conformal triangular mesh,
+                // RWG basis, layered media Green's function, open boundaries.
+                // ACA + GMRES is preferred over FMM/MLFMA (which target 3D free-space).
+                self.basis = "RWG".into();
                 self.singular_tol = 1e-12;
-                self.fast_solver = "UFFT".into();
-                self.mom_type = "Boxed".into();
-                self.kernel = "Cavity".into();
-                self.mesh_format = "RectGrid".into();
-                self.adaptive_sweep = true;
-                self.adaptive_target = 100;
+                self.fast_solver = "ACA".into();
+                self.kernel = "Layered".into();
+                self.mesh_format = "TriSurface".into();
+                self.adaptive_sweep = false;
+                self.adaptive_target = 0;
             }
             "q3d" | "q3d_extractor" => {
                 // Q3D Extractor: electrostatic BEM, capacitance matrix.
+                // Uses FMM-accelerated GMRES (not Direct LU) for large problems.
                 self.basis = "Pulse".into();
                 self.singular_tol = 1e-12;
-                self.fast_solver = "Direct".into();
-                self.mom_type = "Capacitance".into();
+                self.fast_solver = "FMM".into();
                 self.kernel = "Laplace".into();
                 self.mesh_format = "TriSurface".into();
                 self.adaptive_sweep = false;
@@ -150,7 +149,6 @@ mod tests {
         assert_eq_eps(cfg.alpha, 1.0);
         assert_eq_eps(cfg.singular_tol, 1e-12);
         assert_eq!(cfg.fast_solver, "UFFT");
-        assert_eq!(cfg.mom_type, "Boxed");
         assert_eq!(cfg.kernel, "Cavity");
         assert_eq!(cfg.mesh_format, "RectGrid");
         assert!(cfg.adaptive_sweep);
@@ -169,15 +167,15 @@ mod tests {
     }
 
     #[test]
-    fn preset_ads_matches_sonnet19() {
+    fn preset_ads_sets_open_defaults() {
         let cfg = make_cfg("ADS", "");
         assert_eq!(cfg.equation, "EFIE");
-        assert_eq!(cfg.basis, "Rooftop");
-        assert_eq!(cfg.fast_solver, "UFFT");
-        assert_eq!(cfg.mom_type, "Boxed");
-        assert_eq!(cfg.kernel, "Cavity");
-        assert_eq!(cfg.mesh_format, "RectGrid");
-        assert!(cfg.adaptive_sweep);
+        assert_eq!(cfg.basis, "RWG");
+        assert_eq!(cfg.fast_solver, "ACA");
+        assert_eq!(cfg.kernel, "Layered");
+        assert_eq!(cfg.mesh_format, "TriSurface");
+        assert!(!cfg.adaptive_sweep);
+        assert_eq!(cfg.adaptive_target, 0);
     }
 
     #[test]
@@ -186,8 +184,7 @@ mod tests {
         assert_eq!(cfg.equation, "EFIE");
         assert_eq!(cfg.basis, "Pulse");
         assert_eq_eps(cfg.alpha, 1.0);
-        assert_eq!(cfg.fast_solver, "Direct");
-        assert_eq!(cfg.mom_type, "Capacitance");
+        assert_eq!(cfg.fast_solver, "FMM");
         assert_eq!(cfg.kernel, "Laplace");
         assert_eq!(cfg.mesh_format, "TriSurface");
         assert!(!cfg.adaptive_sweep);
