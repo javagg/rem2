@@ -1218,6 +1218,38 @@ pub struct MomSolverConfig {
     #[serde(rename = "AbsTol", default)]
     pub abs_tol: Option<f64>,
 
+    /// ABS Q-factor convergence weight [0, 1].
+    /// 0.0 = disabled (default). When > 0, the ABS engine tracks the maximum
+    /// Q-factor from the rational model's pole locations and only converges
+    /// when Q varies by less than `AbsQFactorTol` between iterations.
+    /// Ignored when AdaptiveSweep is false.
+    #[serde(rename = "AbsQFactor", default)]
+    pub abs_q_factor: f64,
+
+    /// ABS Q-factor relative tolerance for convergence.
+    /// Only used when `AbsQFactor > 0`.  Default 0.05 (5%).
+    #[serde(rename = "AbsQFactorTol", default = "default_abs_q_factor_tol")]
+    pub abs_q_factor_tol: f64,
+
+    /// Enable Enhanced Resonance Detection (ERD) in ABS sweep.
+    /// When true, the engine detects narrow-band resonances missed by
+    /// the adaptive sampling and inserts extra sample points at their
+    /// frequencies.  Default false.
+    #[serde(rename = "AbsEnhancedResonance", default)]
+    pub abs_enhanced_resonance: bool,
+
+    /// Enable DC point extrapolation in ABS sweep.
+    /// When `freq_min == 0` and this is true, the engine solves at a small
+    /// positive frequency and extrapolates the converged rational model to
+    /// DC (ω = 0).  Default false.
+    #[serde(rename = "AbsDcExtrapolate", default)]
+    pub abs_dc_extrapolate: bool,
+
+    /// ABS cache level for cross-sweep reuse.
+    /// "None" = no caching; "StopRestart" = cache during sweep; "MultiSweep" = persistent (default).
+    #[serde(rename = "AbsCacheLevel", default = "default_abs_cache_level")]
+    pub abs_cache_level: String,
+
     /// Maximum AMR iterations.  `0` disables AMR (default).
     /// When > 0, the mesh is refined up to `amr_iter` times with a
     /// Dörfler marking threshold of `AmrTheta`.
@@ -1349,6 +1381,9 @@ pub struct MomSolverConfig {
     #[serde(rename = "RmsRoughness", default)]
     pub rms_roughness: Option<f64>,
 
+    /// Physical temperature [K] for noise correlation and temp-dependent materials.
+    #[serde(rename = "TemperatureK", default)]
+    pub temperature_k: Option<f64>,
     /// Boxed/enclosed solver configuration (Sonnet-style shielded box).
     /// When present, the solver uses the rectangular wave-guide mode expansion
     /// (FFT-based coupling) instead of the free-space/layered Green's function.
@@ -1403,21 +1438,7 @@ pub struct MomSolverConfig {
     #[serde(rename = "PolygonTags", default)]
     pub polygon_tags: Vec<[u32; 2]>,
 
-    /// Conformal mesh strategy: "ExactClip" (REM) | "SonnetSubcell" (Sonnet).
-    ///
-    /// - `ExactClip` — exact Sutherland-Hodgman polygon clipping per cell,
-    ///   with sub-sampled basis integration for boundary cells (REM approach).
-    /// - `SonnetSubcell` — pre-computed N×N sub-grid staircasing, faithful
-    ///   to Sonnet's conformal mesh algorithm (`SonnetConformalMesh`).
-    ///
-    /// Default: "ExactClip" (backward compatible).
-    #[serde(rename = "ConformalStrategy", default = "default_conformal_strategy")]
-    pub conformal_strategy: String,
 
-    /// Sub-grid resolution for `SonnetSubcell` strategy (default 8).
-    /// Larger values improve boundary accuracy at higher computational cost.
-    #[serde(rename = "ConformalSubcells", default = "default_conformal_subcells")]
-    pub conformal_subcells: u32,
 }
 
 fn default_auto_port_min_faces() -> usize { 1 }
@@ -1523,6 +1544,10 @@ fn default_port_direction() -> String { "x".to_string() }
 fn default_amr_theta()     -> f64    { 0.5 }
 fn default_adaptive_sweep() -> bool { true }
 fn default_adaptive_target() -> usize { 100 }
+
+fn default_abs_q_factor_tol() -> f64 { 0.05 }
+
+fn default_abs_cache_level() -> String { "MultiSweep".to_string() }
 fn default_deembed_eps_eff() -> f64  { 1.0 }
 fn default_mom_port_kind() -> String { "Lumped".to_string() }
 fn default_mom_kernel()   -> String { "Cavity".to_string() }
@@ -2023,6 +2048,9 @@ pub struct DielectricBrickConfig {
     /// Thickness of the brick [m].
     #[serde(rename = "Thickness")]
     pub thickness: f64,
+    /// Polygon vertices (xy pairs [m]) for non-rectangular brick shape.
+    #[serde(rename = "Polygon", default)]
+    pub polygon: Vec<[f64; 2]>,
 }
 
 fn default_nz_layers() -> usize { 1 }
@@ -2065,8 +2093,6 @@ pub struct BoxPortConfig {
 
 fn default_evanescent_modes() -> usize { 10 }
 fn default_conformal_level() -> u32 { 2 }
-fn default_conformal_strategy() -> String { "ExactClip".to_string() }
-fn default_conformal_subcells() -> u32 { 8 }
 fn default_side_wall_pec() -> bool { true }
 
 /// Single dielectric layer in the substrate stack.
