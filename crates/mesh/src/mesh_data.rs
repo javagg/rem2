@@ -154,10 +154,8 @@ pub struct RemMesh {
 }
 
 impl RemMesh {
-    /// Build from raw GMSH data + Palace config.
-    pub fn from_raw(raw: RawMesh, config: &PalaceConfig) -> RemResult<Self> {
-        let l0 = config.model.l0;
-
+    /// Build from raw GMSH data with explicit scaling factor.
+    pub fn from_raw(raw: RawMesh, l0: f64) -> RemResult<Self> {
         // Scale coordinates
         let nodes: Vec<Node> = raw
             .nodes
@@ -242,26 +240,33 @@ impl RemMesh {
         }
 
         // Build domain tag map (physical group → material index)
-        let mut domain_tags: HashMap<u32, usize> = HashMap::new();
-        for (mat_idx, mat) in config.domains.materials.iter().enumerate() {
-            for &attr in &mat.attributes {
-                domain_tags.insert(attr, mat_idx);
-            }
-        }
-
-        // Build boundary tag map
-        let boundary_tags = build_boundary_tags(&config.boundaries)?;
-
-        Ok(RemMesh {
+        let domain_tags: HashMap<u32, usize> = HashMap::new();
+        
+        Ok(Self {
             nodes,
             volume_elements,
             boundary_elements,
             domain_tags,
-            boundary_tags,
+            boundary_tags: HashMap::new(),
             dim: mesh_dim,
             rank: 0,
             size: 1,
         })
+    }
+
+
+    /// Build from raw GMSH data + Palace config (for material/BC binding).
+    pub fn from_raw_with_config(raw: RawMesh, config: &PalaceConfig) -> RemResult<Self> {
+        let mut mesh = Self::from_raw(raw, config.model.l0)?;
+        // Bind materials from config to element physical tags
+        for (mat_idx, mat) in config.domains.materials.iter().enumerate() {
+            for &attr in &mat.attributes {
+                mesh.domain_tags.insert(attr, mat_idx);
+            }
+        }
+        // Build boundary tag map
+        mesh.boundary_tags = build_boundary_tags(&config.boundaries)?;
+        Ok(mesh)
     }
 
     pub fn set_comm(&mut self, rank: i32, size: i32) {

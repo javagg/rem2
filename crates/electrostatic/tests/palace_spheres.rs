@@ -70,7 +70,7 @@ fn solve() -> (rem_mesh::RemMesh, Vec<f64>) {
     let msh = annular_msh(R_I_MM, R_O_MM, N_R, N_THETA, TAG_INNER, TAG_OUTER, TAG_VOL);
     let raw = read_msh_str(&msh).expect("annular mesh should parse");
     let cfg = config();
-    let mesh = RemMesh::from_raw(raw, &cfg).expect("RemMesh::from_raw failed");
+    let mesh = RemMesh::from_raw(raw, cfg.model.l0).expect("RemMesh::from_raw failed");
     let dm   = DomainMap::from_config(&cfg).unwrap();
     let phi  = solve_one(&cfg, &mesh, &dm, Some(1), 1.0, &rem_parallel::NoComm).expect("solve failed");
     (mesh, phi)

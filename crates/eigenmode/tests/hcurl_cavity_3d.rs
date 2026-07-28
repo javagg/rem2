@@ -48,7 +48,7 @@ fn hcurl_cavity_te010() {
     let raw = read_msh_str(&String::from_utf8_lossy(
         &std::fs::read(project_root().join("examples/rem/cavity_3d/mesh/cavity_fine.msh")).unwrap()
     )).expect("parse msh");
-    let mesh = RemMesh::from_raw(raw, &config).expect("RemMesh::from_raw");
+    let mesh = RemMesh::from_raw(raw, config.model.l0).expect("RemMesh::from_raw");
     let domain_map = DomainMap::from_config(&config).expect("DomainMap");
     let result = rem_eigenmode::solve(&config, &mesh, &domain_map, &NoComm)
         .expect("HCurl 3-D solve");
@@ -71,7 +71,7 @@ fn hcurl_cavity_coarse() {
     let raw = read_msh_str(&String::from_utf8_lossy(
         &std::fs::read(project_root().join("examples/rem/cavity_3d/mesh/cavity.msh")).unwrap()
     )).expect("parse msh");
-    let mesh = RemMesh::from_raw(raw, &config).expect("RemMesh::from_raw");
+    let mesh = RemMesh::from_raw(raw, config.model.l0).expect("RemMesh::from_raw");
     let domain_map = DomainMap::from_config(&config).expect("DomainMap");
     let result = rem_eigenmode::solve(&config, &mesh, &domain_map, &NoComm)
         .expect("HCurl 3-D solve");

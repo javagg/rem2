@@ -41,7 +41,7 @@ fn hcurl_eigenmode_pec_cavity_te10_mode_2d() {
         tgt = f_te10
     );
     let config = load_config_from_str(&json, ConfigFormat::Json).expect("config should parse");
-    let mesh = RemMesh::from_raw(raw, &config).expect("RemMesh::from_raw failed");
+    let mesh = RemMesh::from_raw(raw, config.model.l0).expect("RemMesh::from_raw failed");
     let domain_map = DomainMap::from_config(&config).expect("DomainMap::from_config failed");
 
     let result =

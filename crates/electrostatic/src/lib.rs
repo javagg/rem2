@@ -40,7 +40,7 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
     // 1. Load mesh
     let mesh_path = Path::new(&config.model.mesh);
     let raw = read_msh_file(mesh_path)?;
-    let mut mesh = RemMesh::from_raw(raw, config)?;
+    let mut mesh = RemMesh::from_raw(raw, config.model.l0)?;
     mesh.set_comm(comm.rank(), comm.size());
     mesh.partition(comm);
     log::info!("Mesh loaded:");

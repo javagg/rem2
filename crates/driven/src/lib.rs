@@ -127,7 +127,7 @@ pub fn run(config: &PalaceConfig, comm: &dyn Comm) -> RemResult<()> {
 
     let mesh_path = Path::new(&config.model.mesh);
     let raw = read_msh_file(mesh_path)?;
-    let mut mesh = RemMesh::from_raw(raw, config)?;
+    let mut mesh = RemMesh::from_raw(raw, config.model.l0)?;
     mesh.set_comm(comm.rank(), comm.size());
 
     run_with_mesh(config, &mesh, comm).map(|_| ())

@@ -17,6 +17,7 @@
 
 use serde::Deserialize;
 use std::ops::Deref;
+use crate::schema::MaterialSpec;
 
 /// Top-level MoM configuration — flat JSON with no `Solver.MoM` wrapper.
 ///
@@ -25,8 +26,8 @@ use std::ops::Deref;
 #[derive(Debug, Clone, Deserialize)]
 pub struct MomConfig {
     /// Output directory.
-    #[serde(rename = "Output", default)]
-    pub output: Option<String>,
+    #[serde(rename = "Output", default = "default_output_dir")]
+    pub output_dir: String,
 
     /// Path to the Gmsh mesh file (`.msh`).
     #[serde(rename = "Mesh", default)]
@@ -36,10 +37,59 @@ pub struct MomConfig {
     #[serde(rename = "L0", default = "default_l0")]
     pub l0: f64,
 
+    /// PEC physical group attributes (surface metal).
+    #[serde(rename = "PEC", default)]
+    pub pec: Vec<u32>,
+
+    /// Material definitions for volume domains.
+    #[serde(rename = "Materials", default)]
+    pub materials: Vec<MaterialSpec>,
+
+    /// Conductor terminals for capacitance extraction.
+    /// Each entry: `{ "Index": 1, "Attributes": [1001] }`.
+    #[serde(rename = "Terminals", default)]
+    pub terminals: Vec<TerminalSpec>,
+
+    /// Ground (reference) conductor attributes for capacitance extraction.
+    #[serde(rename = "Ground", default)]
+    pub ground: Vec<u32>,
+
+    /// Adaptive mesh refinement config.
+    #[serde(rename = "Refinement", default)]
+    pub refinement: RefinementConfig,
+
+    /// Converter/extractor metadata (PlanarTechLayers, ViaTechLayers, thick metal, etc.).
+    #[serde(rename = "Metadata", default)]
+    pub metadata: Option<serde_json::Value>,
+
     /// Flattened MoM solver parameters (all `Solver.MoM.*` fields).
     #[serde(flatten)]
     pub solver: super::MomSolverConfig,
 }
+
+/// A single conductor terminal for capacitance extraction.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TerminalSpec {
+    /// Terminal index (0 = ground reference).
+    #[serde(rename = "Index")]
+    pub index: u32,
+    /// Mesh physical-group attributes that belong to this terminal.
+    #[serde(rename = "Attributes", deserialize_with = "crate::schema::deserialize_attributes")]
+    pub attributes: Vec<u32>,
+}
+
+/// Adaptive mesh refinement settings for capacitance extraction.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct RefinementConfig {
+    /// Maximum AMR iterations (0 = no refinement).
+    #[serde(rename = "MaxIter", default)]
+    pub max_iter: usize,
+    /// Relative error tolerance for refinement (0 = disable).
+    #[serde(rename = "Tol", default = "default_ref_tol")]
+    pub tol: f64,
+}
+
+fn default_ref_tol() -> f64 { 0.5 }
 
 /// All MoM solver fields are directly accessible: `cfg.equation`, `cfg.box_config`, etc.
 impl Deref for MomConfig {
@@ -48,6 +98,7 @@ impl Deref for MomConfig {
 }
 
 fn default_l0() -> f64 { 1.0 }
+fn default_output_dir() -> String { "output".to_string() }
 
 /// Load a MoM config from a JSON file path.
 pub fn load_mom_config(path: &std::path::Path) -> Result<MomConfig, crate::RemError> {

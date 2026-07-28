@@ -93,7 +93,7 @@ fn solve() -> (RemMesh, Vec<f64>) {
     let msh = rect_bimaterial_msh(W_MM, H_MM, N_X, N_Y, TAG_BOTTOM, TAG_TOP, TAG_IRON, TAG_AIR);
     let raw = read_msh_str(&msh).expect("bimaterial mesh should parse");
     let cfg = config();
-    let mesh = RemMesh::from_raw(raw, &cfg).expect("RemMesh::from_raw failed");
+    let mesh = RemMesh::from_raw(raw, cfg.model.l0).expect("RemMesh::from_raw failed");
     let dm   = DomainMap::from_config(&cfg).unwrap();
     let az   = solve_one(&cfg, &mesh, &dm, Some(1), &rem_parallel::NoComm).expect("solve failed");
     (mesh, az)
@@ -269,7 +269,7 @@ fn single_material_limit_uniform_az() {
     let cfg  = load_config_from_str(&s, ConfigFormat::Json).unwrap();
     let msh  = rect_bimaterial_msh(W_MM, H_MM, N_X, N_Y, TAG_BOTTOM, TAG_TOP, TAG_IRON, TAG_AIR);
     let raw  = read_msh_str(&msh).unwrap();
-    let mesh = RemMesh::from_raw(raw, &cfg).unwrap();
+    let mesh = RemMesh::from_raw(raw, cfg.model.l0).unwrap();
     let dm   = DomainMap::from_config(&cfg).unwrap();
     let az   = solve_one(&cfg, &mesh, &dm, Some(1), &NoComm).unwrap();
 

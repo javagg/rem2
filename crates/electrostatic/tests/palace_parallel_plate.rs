@@ -49,7 +49,7 @@ fn palace_parallel_plate() {
     let cfg = load_config_from_str(&s, ConfigFormat::Json).unwrap();
     let msh = rect_msh(w_mm, h_mm, n_x, n_y, tag_bottom, tag_top, tag_left, tag_right, tag_vol);
     let raw = read_msh_str(&msh).unwrap();
-    let mesh = RemMesh::from_raw(raw, &cfg).unwrap();
+    let mesh = RemMesh::from_raw(raw, cfg.model.l0).unwrap();
     let dm = DomainMap::from_config(&cfg).unwrap();
 
     let phi = solve_one(&cfg, &mesh, &dm, Some(1), 1.0, &NoComm).unwrap();

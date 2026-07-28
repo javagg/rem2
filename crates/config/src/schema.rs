@@ -2136,6 +2136,25 @@ pub struct SubstrateLayerConfig {
     #[serde(rename = "MetallizationConductivity", default = "default_metallization_conductivity")]
     pub metallization_conductivity: f64,
 
+    /// Current ratio I_top / I_bottom for the Thin Metal loss model.
+    ///
+    /// When set, the SIBC surface impedance is corrected by a factor
+    ///   Zs_eff = Zs · (1 + CR²) / (1 + CR)²
+    /// to account for asymmetric current distribution between top and
+    /// bottom conductor surfaces at high frequency.
+    ///
+    /// Recommended values:
+    /// - `0.5`    — microstrip / CPW signal lines (Sonnet default)
+    /// - `1.0`    — symmetric stripline
+    /// - `≥1000`  — ground plane below the signal line
+    /// - `0.0`    — ground plane above the signal line
+    ///
+    /// `None` (default) disables the correction, preserving the legacy
+    /// behaviour (equivalent to CR=0 or CR=∞ with all current on one
+    /// surface).
+    #[serde(rename = "CurrentRatio", default)]
+    pub current_ratio: Option<f64>,
+
     /// Relative permeability (isotropic)
     #[serde(rename = "Permeability", default = "default_permeability")]
     pub permeability: f64,
@@ -3197,6 +3216,7 @@ mod dispersion_tests {
             loss_tangent: 0.02,
             dielectric_conductivity: 0.0,
             metallization_conductivity: 0.0,
+            current_ratio: None,
             permeability: 1.0,
             thickness: 1e-3,
             name: String::new(),
@@ -3220,6 +3240,7 @@ mod dispersion_tests {
             loss_tangent: 0.004,
             dielectric_conductivity: 0.0,
             metallization_conductivity: 0.0,
+            current_ratio: None,
             permeability: 1.0,
             thickness: 0.254e-3,
             name: "Rogers4350B".to_string(),
@@ -3242,6 +3263,7 @@ mod dispersion_tests {
             loss_tangent: 0.02,
             dielectric_conductivity: 0.0,
             metallization_conductivity: 0.0,
+            current_ratio: None,
             permeability: 1.0,
             thickness: 1e-3,
             name: String::new(),
