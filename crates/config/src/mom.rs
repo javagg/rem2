@@ -267,3 +267,37 @@ mod tests {
         assert_eq!(cfg.basis, "Rooftop"); // serde default
     }
 }
+
+    #[test]
+    fn mom_config_serialize_roundtrip_keeps_box_and_bricks() {
+        // Round-trip a full MomSolverConfig (with Box) through JSON: this is
+        // the contract the Sonnet19 converter relies on when it serializes
+        // sonnet19_build_rem_config's output and the CLI loads it back.
+        let json = r#"{
+            "Mesh":"test.msh","Preset":"Custom","Equation":"EFIE","Basis":"Rooftop",
+            "FreqMin":1e8,"FreqMax":2e9,"FreqStep":1e7,"FastSolver":"UFFT",
+            "Box":{
+                "Width":6.4e-4,"Height":6.4e-4,"CellsX":64,"CellsY":64,
+                "TopCover":true,"BottomCover":true,"Symmetry":"X",
+                "DielectricBricks":[{
+                    "IxStart":29,"IxEnd":35,"IyStart":28,"IyEnd":36,
+                    "NzLayers":1,"Permittivity":7.5,"Thickness":2e-7
+                }]
+            }
+        }"#;
+        let cfg: MomConfig = serde_json::from_str(json).unwrap();
+        let box_cfg = cfg.box_config.as_ref().unwrap();
+        assert_eq!(box_cfg.dielectric_bricks.len(), 1);
+        assert!((box_cfg.dielectric_bricks[0].eps_r - 7.5).abs() < 1e-9);
+        assert!((box_cfg.dielectric_bricks[0].thickness - 2e-7).abs() < 1e-12);
+        assert_eq!(box_cfg.symmetry, Some(crate::SymmetryAxis::X));
+
+        // Serialize and re-deserialize.
+        let text = serde_json::to_string(&cfg.solver).unwrap();
+        let back: crate::MomSolverConfig = serde_json::from_str(&text).unwrap();
+        let b2 = back.box_config.unwrap();
+        assert_eq!(b2.dielectric_bricks.len(), 1);
+        assert!((b2.dielectric_bricks[0].eps_r - 7.5).abs() < 1e-9);
+        assert!((b2.dielectric_bricks[0].thickness - 2e-7).abs() < 1e-12);
+        assert_eq!(b2.symmetry, Some(crate::SymmetryAxis::X));
+    }

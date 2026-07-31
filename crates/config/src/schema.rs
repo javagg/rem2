@@ -1,6 +1,6 @@
 use crate::preprocess::expand_ranges;
 use rem_core::EPS0;
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Deserialize a JSON value that may be either a scalar `f64` or an array `[f64, ...]`.
 /// When an array is given, the first element is used (anisotropic �?isotropic fallback).
@@ -1021,7 +1021,7 @@ where
 // ---------------------------------------------------------------------------
 
 /// MoM solver parameters, placed under `Solver.MoM` in the config file.
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct MomSolverConfig {
     /// Model preset: "Sonnet19" | "ADS" | "Q3D"
     ///
@@ -1448,7 +1448,7 @@ fn default_mom_preset() -> String { "Sonnet19".to_string() }
 /// A symmetry-plane definition for MoM DOF elimination.
 ///
 /// The `Plane` field accepts strings of the form `"x=0"`, `"y=0.5"`, `"z=-0.1"`.
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct SymmetryPlaneConfig {
     /// Plane specification, e.g. `"x=0"`, `"y=0"`, `"z=0"`.
     #[serde(rename = "Plane", default)]
@@ -1456,7 +1456,7 @@ pub struct SymmetryPlaneConfig {
 }
 
 /// TRL calibration kit configuration for 2-port S-parameter correction.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TrlKitConfig {
     /// Physical length of the thru standard [m].
     #[serde(rename = "ThruLength")]
@@ -1497,7 +1497,7 @@ pub struct TrlKitConfig {
 /// the Open as Γ_O = +1 · exp(2j·ω·C_open·Z0) with fringing capacitance,
 /// and the Load as a resistively-terminated line with possible offset delay.
 /// The Thru is modeled as a zero-length connection (S₂₁=S₁₂=1, S₁₁=S₂₂=0).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SoltKitConfig {
     /// Short offset inductance [H]. Default 0.
     #[serde(rename = "ShortInductance", default)]
@@ -1554,7 +1554,7 @@ fn default_mom_kernel()   -> String { "Cavity".to_string() }
 fn default_mesh_format()  -> String { "RectGrid".to_string() }
 
 /// A near-field probe point for E-field evaluation during S-parameter sweep.
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct NearFieldProbePoint {
     /// X coordinate [m].
     #[serde(rename = "X", default)]
@@ -1575,7 +1575,7 @@ pub struct NearFieldProbePoint {
 /// Maps a pec_tag to the surface impedance model parameters for that
 /// conductor.  The surface impedance is:
 ///   Zs(f) = Rdc + Rrf·√f + j·(2πf·Ls + Xdc)
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct PerTagSurfaceConfig {
     /// Conductor pec_tag matching the mesh/box cell tag.
     #[serde(rename = "Tag")]
@@ -1599,7 +1599,7 @@ pub struct PerTagSurfaceConfig {
 }
 
 /// A lumped port definition for MoM S-parameter extraction.
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct MomPort {
     /// Port index (1-based), matches Touchstone port ordering.
     #[serde(rename = "Index")]
@@ -1695,7 +1695,7 @@ pub struct MomPort {
 /// Embedded calibration moves the S-parameter reference plane from the
 /// raw port location to the calibration standard's reference plane,
 /// removing parasitic port discontinuity.
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct CalibrationConfig {
     /// Calibration type: "TRL" | "LRM" | "SOLT" | "NONE".
     #[serde(rename = "Type")]
@@ -1729,7 +1729,7 @@ pub struct CalibrationConfig {
 /// Stratified dielectric substrate for layered Green's function in MoM.
 /// Defines a stack of horizontal dielectric layers, with the bottom being
 /// either PEC or transmission to semi-infinite space.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SubstrateConfig {
     /// List of dielectric layers from bottom to top.
     /// Typically the bottom layer is ground or substrate, top layer is air.
@@ -1757,7 +1757,7 @@ pub struct SubstrateConfig {
 ///
 /// When set on `BoxConfig.symmetry`, the solver decomposes the problem into
 /// even and odd mode sub-problems on a half-grid, giving ~2× speedup.
-#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, Serialize)]
 pub enum SymmetryAxis {
     #[serde(rename = "X")]
     X,
@@ -1770,7 +1770,7 @@ pub enum SymmetryAxis {
 /// When present under `Solver.MoM.Box`, the solver switches from the free-space /
 /// layered Green's function to a rectangular waveguide mode expansion with FFT-based
 /// coupling (Sonnet-style). All conductors and ports must lie within the box extents.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BoxConfig {
     /// Box width (x-direction) [m].
     #[serde(rename = "Width")]
@@ -1891,7 +1891,7 @@ pub struct BoxConfig {
 }
 
 /// A signal layer in the multi-layer stack.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SignalLayerConfig {
     /// Layer name (e.g. "Metal1", "M2").
     #[serde(rename = "Name", default)]
@@ -1907,7 +1907,7 @@ pub struct SignalLayerConfig {
 }
 
 /// A via port connecting two signal layers.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ViaConfig {
     /// Port index (1-based).
     #[serde(rename = "Index")]
@@ -1980,7 +1980,7 @@ fn default_copper_conductivity() -> f64 { 5.8e7 }
 fn default_tm_strategy() -> String { "SingleSurface".into() }
 
 /// A circuit component attached to boxed solver ports (R-10.1).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ComponentConfig {
     /// Component name (for logging / debugging).
     #[serde(rename = "Name", default)]
@@ -2001,7 +2001,7 @@ pub struct ComponentConfig {
 }
 
 /// A parameter definition for the parametric sweep engine (R-10.2).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ParamDefConfig {
     /// Parameter name (e.g. "W", "L", "freq").
     #[serde(rename = "Name")]
@@ -2022,7 +2022,7 @@ pub struct ParamDefConfig {
 fn default_param_steps() -> usize { 5 }
 
 /// Configuration for a single dielectric brick in the boxed VIE solver.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DielectricBrickConfig {
     /// First cell x-index (inclusive).
     #[serde(rename = "IxStart")]
@@ -2060,7 +2060,7 @@ fn default_nz_layers() -> usize { 1 }
 /// The port is placed between `cell_a` and `cell_b` (must be adjacent
 /// in either x or y direction). The delta-gap excitation applies ±1V
 /// across the edge, and the port current is J_a �?J_b.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BoxPortConfig {
     /// Port index (1-based).
     #[serde(rename = "Index")]
@@ -2089,6 +2089,16 @@ pub struct BoxPortConfig {
     /// future implementation of complex reference impedance.
     #[serde(rename = "Reactance", default)]
     pub reactance: f64,
+
+    /// Ground-reference flag: true for negative-number ports (CPW /
+    /// differential ground references).  These merge into the GndRefPort
+    /// of their paired signal port instead of becoming standalone ports.
+    #[serde(rename = "GndRef", default)]
+    pub gnd_ref: bool,
+
+    /// For ground-reference ports: the paired signal port number.
+    #[serde(rename = "PairWith", default)]
+    pub pair_with: Option<u32>,
 }
 
 fn default_evanescent_modes() -> usize { 10 }
@@ -2096,7 +2106,7 @@ fn default_conformal_level() -> u32 { 2 }
 fn default_side_wall_pec() -> bool { true }
 
 /// Single dielectric layer in the substrate stack.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SubstrateLayerConfig {
     /// Relative permittivity (isotropic for now)
     #[serde(rename = "Permittivity", default = "default_permittivity")]
@@ -2189,7 +2199,7 @@ pub struct SubstrateLayerConfig {
 }
 
 /// Frequency-dependent permittivity dispersion model for a substrate layer.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "Type")]
 pub enum DispersionModel {
     /// Debye relaxation:  ε(ω) = ε_�?+ (ε_s �?ε_�? / (1 + jωτ)
