@@ -1390,6 +1390,13 @@ pub struct MomSolverConfig {
     #[serde(rename = "Box", default)]
     pub box_config: Option<BoxConfig>,
 
+    /// Internal: symmetry half-grid mode during a solve_mom symmetry pass.
+    /// 0 = even (PMC plane), 1 = odd (PEC plane).  Not part of the config
+    /// file (skipped on serialize); set by solve_mom when it decomposes a
+    /// symmetric geometry into even/odd sub-problems on the unified path.
+    #[serde(skip)]
+    pub symmetry_mode: Option<u8>,
+
     /// When true, disable the automatic co-calibration of closely-spaced
     /// ports in the boxed solver.  Co-calibration removes parasitic
     /// port-to-port coupling and is enabled by default for multi-port
